@@ -292,6 +292,20 @@
       lpDnsProbes: function (n) { return n + ' DNS lookups of test addresses (bash.ws)'; },
       lpDnsResult: 'DNS test result. This site passes the test code and your IP to bash.ws.',
       lpHibp: 'Password lookup (Pwned Passwords)',
+      lpStun: 'WebRTC address check (STUN, UDP 3478). A STUN request (no personal data).',
+      webrtcTitle: 'WebRTC leak',
+      webrtcQ: 'Can sites see your real IP through WebRTC?',
+      webrtcOk: 'WebRTC shows the same public address as your connection. No leak.',
+      webrtcBlocked: 'WebRTC is turned off or blocked in this browser, so it cannot expose your IP.',
+      webrtcNone: 'WebRTC did not reveal any address.',
+      webrtcLeak: 'WebRTC revealed a different public address than your connection. Your real IP may be leaking past your VPN or proxy.',
+      webrtcLocal: 'No public leak, but WebRTC shows your address on the local network.',
+      webrtcNoCompare: "Couldn't compare: the connection check didn't return your public IP.",
+      webrtcNote: 'With a VPN on, the public address here should be the VPN’s, not your home one.',
+      fixWebrtc: 'Turn on your VPN’s WebRTC leak protection, or block WebRTC: Firefox about:config media.peerconnection.enabled = false; Chrome/Edge an extension such as WebRTC Leak Shield; Brave Settings > Privacy > WebRTC IP handling policy.',
+      fixWebrtcLocal: 'Most browsers hide local addresses by default. If you changed WebRTC settings or flags, restore the defaults.',
+      fWebrtcPublic: 'Public address via WebRTC',
+      fWebrtcLocal: 'Local address via WebRTC',
 
       aboutTitle: 'How it works',
       aboutPw: 'Password: your browser turns the password into a code (SHA-1 hash) and sends only the first 5 characters. Pwned Passwords returns hundreds of codes that start the same way, and the comparison happens here. Not even the service knows which password you checked.',
@@ -318,6 +332,7 @@
       browser: blankCheck(),
       connection: blankCheck(),
       dns: blankCheck(),
+      webrtc: blankCheck(),
       password: blankCheck()
     },
     ledger: [],
@@ -885,6 +900,92 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Check: WebRTC leak (STUN through Cloudflare, compared with the trace IP)
+  // ---------------------------------------------------------------------------
+  function isIPv6(ip) { return String(ip).indexOf(':') !== -1; }
+
+  function isPrivateIp(ip) {
+    return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|fe80:|f[cd][0-9a-f]{2}:)/i.test(String(ip));
+  }
+
+  function parseCandidate(line) {
+    var p = String(line).split(' ');
+    var i = p.indexOf('typ');
+    if (p.length < 8 || i < 0) return null;
+    return { ip: p[4], type: p[i + 1] };
+  }
+
+  function rtcConstructor() {
+    var PC = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+    return typeof PC === 'function' ? PC : null;
+  }
+
+  function gatherWebRtc(timeoutMs) {
+    return new Promise(function (resolve) {
+      var PC = rtcConstructor();
+      var srflx = [];
+      var host = [];
+      var pc;
+      var done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        try { pc.close(); } catch (e) { /* already closed */ }
+        resolve({ supported: true, srflx: srflx, host: host });
+      }
+      if (!PC) { resolve({ supported: false, srflx: [], host: [] }); return; }
+      try {
+        pc = new PC({ iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] });
+      } catch (e) {
+        resolve({ supported: false, srflx: [], host: [] });
+        return;
+      }
+      pc.onicecandidate = function (event) {
+        if (!event || !event.candidate) { finish(); return; }
+        var c = parseCandidate(event.candidate.candidate);
+        if (!c || !c.ip) return;
+        if (c.type === 'srflx' && srflx.indexOf(c.ip) === -1) srflx.push(c.ip);
+        if (c.type === 'host' && !/\.local$/i.test(c.ip) && host.indexOf(c.ip) === -1) host.push(c.ip);
+      };
+      try {
+        pc.createDataChannel('pc-check');
+        pc.createOffer().then(function (offer) { return pc.setLocalDescription(offer); }).catch(finish);
+      } catch (e) {
+        finish();
+      }
+      setTimeout(finish, timeoutMs);
+    });
+  }
+
+  function evaluateWebRtc(result, traceIp) {
+    var facts = [{ label: ['fYourIp'], value: traceIp || t('unknown'), data: !!traceIp }];
+    if (result.srflx.length) facts.push({ label: ['fWebrtcPublic'], list: result.srflx.map(function (ip) { return { data: ip }; }) });
+    if (result.host.length) facts.push({ label: ['fWebrtcLocal'], list: result.host.map(function (ip) { return { data: ip }; }) });
+
+    if (!result.supported) return { status: 'ok', verdict: ['webrtcBlocked'], facts: facts };
+    if (!result.srflx.length && !result.host.length) return { status: 'ok', verdict: ['webrtcNone'], facts: facts };
+    if (result.srflx.length && !traceIp) return { status: 'info', verdict: ['webrtcNoCompare'], facts: facts, note: ['webrtcNote'] };
+
+    // Compare per address family: an IPv4 and an IPv6 address of the same visitor are not a leak.
+    var leaks = result.srflx.filter(function (ip) {
+      return traceIp && isIPv6(ip) === isIPv6(traceIp) && ip.toLowerCase() !== traceIp.toLowerCase();
+    });
+    if (leaks.length) return { status: 'risk', verdict: ['webrtcLeak'], facts: facts, note: ['webrtcNote'], fix: ['fixWebrtc'] };
+    if (result.host.some(isPrivateIp)) return { status: 'warn', verdict: ['webrtcLocal'], facts: facts, fix: ['fixWebrtcLocal'] };
+    return { status: 'ok', verdict: ['webrtcOk'], facts: facts, note: ['webrtcNote'] };
+  }
+
+  function runWebRtc(tracePromise) {
+    if (rtcConstructor()) logOutbound('stun.cloudflare.com', ['lpStun'], []);
+    return gatherWebRtc(3000).then(function (result) {
+      return withTimeout(tracePromise, 4000).then(function (tr) { return tr.ip || null; }, function () { return null; })
+        .then(function (ip) { setCheck('webrtc', evaluateWebRtc(result, ip)); });
+    }, function () {
+      setCheck('webrtc', { status: 'error', verdict: ['webrtcNone'] });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Check 4: password (Pwned Passwords range API, k-anonymity)
   // ---------------------------------------------------------------------------
   function sha1Hex(text) {
@@ -959,18 +1060,18 @@
     if (state.running) return;
     state.running = true;
     state.summaryCounts = null;
-    ['browser', 'connection', 'dns'].forEach(function (id) { setCheck(id, { status: 'running' }); });
+    ['browser', 'connection', 'dns', 'webrtc'].forEach(function (id) { setCheck(id, { status: 'running' }); });
     renderRunButton();
 
     var tracePromise = fetchTrace();
     tracePromise.catch(function () {});
 
-    var tasks = [runBrowser(), runConnection(tracePromise), runDns(tracePromise)];
+    var tasks = [runBrowser(), runConnection(tracePromise), runDns(tracePromise), runWebRtc(tracePromise)];
     Promise.all(tasks.map(function (p) { return p.catch(function () {}); })).then(function () {
       state.running = false;
       state.ranOnce = true;
       var counts = { ok: 0, warn: 0, risk: 0, info: 0, error: 0 };
-      ['browser', 'connection', 'dns'].forEach(function (id) {
+      ['browser', 'connection', 'dns', 'webrtc'].forEach(function (id) {
         var s = state.checks[id].status;
         if (Object.prototype.hasOwnProperty.call(counts, s)) counts[s]++;
       });
@@ -1030,6 +1131,7 @@
     evaluateBrowser: evaluateBrowser,
     evaluateConnection: evaluateConnection,
     evaluateDns: evaluateDns,
+    evaluateWebRtc: evaluateWebRtc,
     sha1Hex: sha1Hex,
     shortVersion: shortVersion
   };

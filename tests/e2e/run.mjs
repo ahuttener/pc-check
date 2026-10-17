@@ -39,8 +39,32 @@ const VERSIONS = {
 const DNS = { servers: [{ ip: '8.8.8.8', country: 'US', country_name: 'United States', asn: 'Google LLC' }], conclusion: 'DNS is not leaking.', conclusion_code: 'no_leak' };
 
 // mode: 'ok' | 'fail' | 'rate'
+// WebRTC is stubbed in every page: real STUN traffic would leave the machine during tests.
+// window.__rtcCandidates (set by an extra init script) overrides the candidates; null = WebRTC unavailable.
+const RTC_STUB = `(() => {
+  const list = () => (window.__rtcCandidates !== undefined ? window.__rtcCandidates : ['candidate:1 1 udp 1 203.0.113.7 5000 typ srflx raddr 0.0.0.0 rport 0']);
+  if (list() === null) { delete window.RTCPeerConnection; window.RTCPeerConnection = undefined; return; }
+  window.RTCPeerConnection = function () {
+    const self = this;
+    this.onicecandidate = null;
+    this.createDataChannel = () => ({ close() {} });
+    this.createOffer = () => Promise.resolve({ type: 'offer', sdp: 'v=0' });
+    this.setLocalDescription = () => {
+      setTimeout(() => {
+        (list() || []).forEach((c) => self.onicecandidate && self.onicecandidate({ candidate: { candidate: c } }));
+        if (self.onicecandidate) self.onicecandidate({ candidate: null });
+      }, 50);
+      return Promise.resolve();
+    };
+    this.close = () => {};
+  };
+})();`;
+
 async function newPage(mode, opts = {}, engine = browser) {
-  const context = await engine.newContext(Object.assign({ locale: 'en-IE' }, opts));
+  const { initScript, ...contextOpts } = opts;
+  const context = await engine.newContext(Object.assign({ locale: 'en-IE' }, contextOpts));
+  if (initScript) await context.addInitScript(initScript);
+  await context.addInitScript(RTC_STUB);
   const page = await context.newPage();
   const seen = { external: [], hibp: [], errors: [], consoleErrors: [] };
   page.on('pageerror', (e) => seen.errors.push(String(e)));
@@ -159,6 +183,45 @@ try {
     check('no release date -> old verdict (warn)', cases.noDate === 'warn:browserBehind', cases.noDate);
     check('pending patch, fresh -> info rolling', cases.patchFresh === 'info:browserRolling', cases.patchFresh);
     check('Firefox one behind, fresh -> info rolling', cases.firefoxFresh === 'info:browserRolling', cases.firefoxFresh);
+    await context.close();
+  }
+
+  // 3c. WebRTC leak: pure verdicts, then the flow with the stub
+  console.log('WebRTC leak');
+  {
+    const { page, context, seen } = await newPage('ok');
+    const r = await page.evaluate(() => {
+      const ev = window.__bsc.evaluateWebRtc;
+      const pick = (x) => x.status + ':' + x.verdict[0];
+      return {
+        unsupported: pick(ev({ supported: false, srflx: [], host: [] }, '203.0.113.7')),
+        same: pick(ev({ supported: true, srflx: ['203.0.113.7'], host: [] }, '203.0.113.7')),
+        leak: pick(ev({ supported: true, srflx: ['198.51.100.9'], host: [] }, '203.0.113.7')),
+        families: pick(ev({ supported: true, srflx: ['203.0.113.7'], host: [] }, '2001:db8::1')),
+        dual: pick(ev({ supported: true, srflx: ['198.51.100.9', '2001:db8::1'], host: [] }, '2001:db8::1')),
+        local: pick(ev({ supported: true, srflx: ['203.0.113.7'], host: ['192.168.1.20'] }, '203.0.113.7')),
+        noTrace: ev({ supported: true, srflx: ['198.51.100.9'], host: [] }, null)
+      };
+    });
+    check('webrtc unsupported -> ok', r.unsupported.startsWith('ok:'), r.unsupported);
+    check('webrtc same IP -> ok', r.same.startsWith('ok:'), r.same);
+    check('webrtc different IP same family -> risk', r.leak.startsWith('risk:'), r.leak);
+    check('webrtc different families -> ok', r.families.startsWith('ok:'), r.families);
+    check('webrtc dual-stack, matching v6 -> ok', r.dual.startsWith('ok:'), r.dual);
+    check('webrtc private host address -> warn', r.local.startsWith('warn:'), r.local);
+    check('webrtc no trace -> info webrtcNoCompare', r.noTrace.status === 'info' && r.noTrace.verdict[0] === 'webrtcNoCompare', r.noTrace);
+    check('webrtc no trace still lists the addresses', JSON.stringify(r.noTrace.facts).includes('198.51.100.9'));
+
+    await runChecks(page);
+    check('webrtc card = ok in the flow', (await status(page, 'webrtc')) === 'ok', await status(page, 'webrtc'));
+    check('ledger lists stun.cloudflare.com', (await page.locator('#ledger-list').innerText()).includes('stun.cloudflare.com'));
+    check('webrtc: no page errors', seen.errors.length === 0, seen.errors);
+    await context.close();
+  }
+  {
+    const { page, context } = await newPage('ok', { initScript: 'window.__rtcCandidates = ["candidate:1 1 udp 1 198.51.100.9 5000 typ srflx raddr 0.0.0.0 rport 0"];' });
+    await runChecks(page);
+    check('webrtc leak flow -> risk', (await status(page, 'webrtc')) === 'risk', await status(page, 'webrtc'));
     await context.close();
   }
 
