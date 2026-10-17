@@ -1,0 +1,11 @@
+{
+  "name": "pc-check-tests",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "playwright": "^1.61.1"
+  },
+  "scripts": {
+    "test": "node --check ../assets/app.js && php php/parsers_test.php && php php/ratelimit_test.php && node api/run.mjs && node e2e/run.mjs"
+  }
+}

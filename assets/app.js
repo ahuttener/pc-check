@@ -1,0 +1,1028 @@
+/*!
+ * PC Check | CyberSecInfo
+ * Four checks that run in the visitor's browser. MIT License.
+ * Written in ES2017 on purpose, so that older browsers can still run it and be told they are old.
+ */
+(function () {
+  'use strict';
+
+  var CONFIG = {
+    versionsUrl: 'api/versions.php',
+    dnsResultUrl: 'api/dnsleak.php',
+    traceUrls: ['https://one.one.one.one/cdn-cgi/trace', 'https://www.cloudflare.com/cdn-cgi/trace'],
+    hibpRangeUrl: 'https://api.pwnedpasswords.com/range/',
+    dnsProbeCount: 20,
+    timeoutMs: 10000
+  };
+
+  var STATUS_ORDER = ['risk', 'warn', 'error', 'info', 'ok'];
+
+  // ---------------------------------------------------------------------------
+  // Text (PT-BR and EN). Functions receive values; nothing here touches the DOM.
+  // ---------------------------------------------------------------------------
+  var STR = {
+    pt: {
+      docTitle: 'Checagem de segurança do navegador | CyberSecInfo',
+      skip: 'Pular para as verificações',
+      langLabel: 'Idioma',
+      title: 'Checagem de segurança do navegador',
+      lead: 'Quatro verificações rápidas, feitas aqui no navegador, sem instalar nada. Nada sai do seu aparelho antes de você clicar, e tudo o que sair fica listado no registro de saída.',
+      run: 'Verificar agora',
+      running: 'Verificando…',
+      runAgain: 'Verificar de novo',
+      ledgerJump: 'Registro de saída',
+      oldBrowser: 'Se o botão não responder, este navegador é antigo demais para rodar a página. Isso já é um sinal de que ele precisa de atualização.',
+      checksTitle: 'Verificações',
+
+      browserTitle: 'Navegador',
+      browserQ: 'Seu navegador está atualizado?',
+      connTitle: 'Conexão',
+      connQ: 'A conexão usa criptografia moderna?',
+      dnsTitle: 'DNS',
+      dnsQ: 'Quem responde as suas consultas de DNS?',
+      pwTitle: 'Senha',
+      pwQ: 'Essa senha já apareceu em vazamentos?',
+
+      st_idle: 'Não verificado',
+      st_running: 'Verificando',
+      st_ok: 'Tudo certo',
+      st_warn: 'Atenção',
+      st_risk: 'Risco',
+      st_info: 'Informativo',
+      st_error: 'Não deu para verificar',
+
+      summary: function (c) {
+        var parts = [];
+        if (c.ok) parts.push('sem problemas: ' + c.ok);
+        if (c.warn) parts.push('atenção: ' + c.warn);
+        if (c.risk) parts.push('risco: ' + c.risk);
+        if (c.info) parts.push('informativo: ' + c.info);
+        if (c.error) parts.push('não verificado: ' + c.error);
+        return 'Concluído. ' + capitalize(parts.join('; ')) + '.';
+      },
+
+      // Facts
+      fBrowser: 'Navegador',
+      fVersion: 'Sua versão',
+      fEngine: 'Motor',
+      fLatest: 'Mais recente',
+      fLatestEsr: 'Mais recente (ESR)',
+      fTls: 'Criptografia',
+      fEch: 'Nome do site escondido (ECH)',
+      fPq: 'Proteção pós-quântica',
+      fHttp: 'Protocolo',
+      fWarp: 'Cloudflare WARP',
+      fPage: 'Esta página',
+      fYourIp: 'Seu IP público',
+      fDnsServers: 'Servidores de DNS',
+      yes: 'Sim',
+      no: 'Não',
+      on: 'Ativo',
+      unknown: 'Não informado',
+      httpsOk: 'Aberta com HTTPS',
+      httpsNo: 'Aberta sem HTTPS',
+
+      // Browser
+      browserOk: function (name, version) { return name + ' ' + version + ' está em dia.'; },
+      browserPatch: function (name) { return 'Existe uma atualização de segurança do ' + name + ' que ainda não foi instalada.'; },
+      browserBehind: function (name) { return 'Existe uma versão mais nova do ' + name + ' que ainda não foi instalada.'; },
+      browserOld: function (name) { return 'Este ' + name + ' está desatualizado e pode ter falhas de segurança já conhecidas.'; },
+      browserEsrMaybe: function (version) { return 'Firefox ' + version + ': se for a edição ESR, de suporte estendido, está em dia. Se for a edição comum, está desatualizado.'; },
+      browserIos: 'No iPhone e no iPad, todo navegador usa o motor do sistema. Ele fica seguro quando o iOS está atualizado.',
+      browserSafari: 'O Safari se atualiza junto com o macOS, então a versão mais recente não dá para confirmar daqui.',
+      browserSamsung: 'O Samsung Internet usa uma base própria e recebe correções pela Galaxy Store.',
+      browserUnknown: 'Não reconhecemos este navegador, então não dá para comparar a versão.',
+      browserVersionsError: 'Não conseguimos buscar as versões mais recentes agora. Tente de novo em instantes.',
+      fixUpdate: 'Abra o menu do navegador, entre em Ajuda e depois em Sobre. Ele procura a atualização sozinho; reinicie quando terminar.',
+      fixFirefoxAbout: 'Abra o menu do Firefox, entre em Ajuda e depois em Sobre o Firefox para ver a edição e atualizar.',
+      fixIos: 'Ajustes > Geral > Atualização de Software.',
+      fixSafari: 'Menu Apple > Ajustes do Sistema > Geral > Atualização de Software.',
+      fixSamsung: 'Galaxy Store > Menu > Atualizações.',
+
+      // Connection
+      connOk: 'A conexão usou TLS 1.3, a versão mais moderna da criptografia da web.',
+      connTls12: 'A conexão usou TLS 1.2 com um servidor que aceita o 1.3. Antivírus ou proxies que inspecionam o tráfego HTTPS costumam causar isso.',
+      connOld: function (v) { return 'A conexão usou ' + v + ', uma versão antiga e vulnerável.'; },
+      connPageHttp: 'Esta página abriu sem HTTPS, então o que passa por ela pode ser lido no caminho.',
+      connUnknown: 'A Cloudflare respondeu, mas não informou a versão da criptografia.',
+      connError: 'Não conseguimos falar com a Cloudflare. Um bloqueador de anúncios ou a rede pode ter impedido o teste.',
+      connEchNote: 'O ECH esconde de quem observa a rede qual site você visita. Ainda é pouco usado, então “Não” é o resultado mais comum.',
+      connPqNote: 'A proteção pós-quântica impede que alguém grave o tráfego hoje para decifrar no futuro com computadores quânticos.',
+      fixTlsInspect: 'Se você usa antivírus com “verificação de HTTPS” ou “proteção web”, veja se dá para desligar essa função. Em computador da empresa, fale com a TI.',
+      fixConnError: 'Tente de novo ou use o teste da própria Cloudflare.',
+      cfCheckLink: 'Abrir o teste da Cloudflare',
+
+      // DNS
+      dnsOk: function (n) { return n === 1 ? '1 servidor de DNS respondeu as consultas e não há sinal de vazamento.' : n + ' servidores de DNS responderam as consultas e não há sinal de vazamento.'; },
+      dnsLeak: 'Possível vazamento: as consultas de DNS saíram por uma rede diferente da sua conexão.',
+      dnsDone: function (n) { return n === 1 ? '1 servidor de DNS respondeu as consultas.' : n + ' servidores de DNS responderam as consultas.'; },
+      dnsNone: 'Nenhuma consulta chegou ao servidor de teste. Um bloqueador ou o DNS seguro do navegador pode ter filtrado os endereços de teste.',
+      dnsError: 'O teste de DNS não respondeu agora. Tente de novo em instantes.',
+      dnsRate: 'Muitos testes seguidos. Espere alguns minutos e tente de novo.',
+      dnsNote: 'Sem VPN, ver aqui o DNS da sua operadora é normal. Com VPN ligada, ele não deveria aparecer.',
+      fixDns: 'Se você usa VPN, ative a proteção contra vazamento de DNS no app dela. Também dá para ligar o DNS seguro nas configurações de privacidade do navegador.',
+
+      // Password
+      pwLabel: 'Senha para verificar',
+      pwShow: 'Mostrar',
+      pwHide: 'Ocultar',
+      pwHint: 'A senha não sai do aparelho. Só os 5 primeiros caracteres do código dela (o hash) são enviados.',
+      pwCheck: 'Verificar senha',
+      pwChecking: 'Verificando…',
+      pwEmpty: 'Digite uma senha para verificar.',
+      pwNoCrypto: 'Este navegador não permite calcular o código da senha aqui. A página precisa estar em HTTPS.',
+      pwFound: function (n) { return 'Essa senha apareceu ' + n + (n === '1' ? ' vez' : ' vezes') + ' em vazamentos. Não use mais em lugar nenhum.'; },
+      pwNotFound: 'Essa senha não aparece nos vazamentos conhecidos. Isso não quer dizer que ela seja forte.',
+      pwError: 'Não conseguimos consultar a base de vazamentos agora. Tente de novo.',
+      fixPw: 'Troque essa senha em todos os sites onde ela é usada e ative a verificação em duas etapas. Um gerenciador de senhas ajuda a ter uma diferente para cada site.',
+      notePwOk: 'Use uma senha longa e diferente em cada site. Uma frase com quatro ou mais palavras funciona bem.',
+      hashOut: 'Saiu do aparelho',
+      hashKept: 'Ficou no aparelho',
+      hashCaption: function (n) { return 'Código SHA-1 da senha. Só os 5 primeiros caracteres foram enviados. O serviço devolveu ' + n + ' códigos parecidos, e a comparação foi feita aqui.'; },
+
+      // Ledger
+      ledgerTitle: 'O que saiu do seu aparelho',
+      ledgerEmpty: 'Nada ainda. Cada pedido aparece aqui no momento em que acontece.',
+      ledgerNote: 'Qualquer pedido revela ao destino o seu endereço IP e o tipo de navegador. Isso faz parte de toda conexão na internet.',
+      ledgerCount: function (n) { return n === 0 ? 'Nenhum pedido até agora.' : (n === 1 ? '1 pedido até agora.' : n + ' pedidos até agora.'); },
+      ledgerSent: 'Enviado:',
+      ledgerNothing: 'nada além do pedido',
+      lpVersions: 'Versões mais recentes dos navegadores (este site)',
+      lpTrace: 'Diagnóstico da conexão (Cloudflare)',
+      lpDnsProbes: function (n) { return n + ' consultas de DNS a endereços de teste (bash.ws)'; },
+      lpDnsResult: 'Resultado do teste de DNS. Este site repassa o código do teste e o seu IP à bash.ws.',
+      lpHibp: 'Consulta da senha (Pwned Passwords)',
+
+      // About
+      aboutTitle: 'Como funciona',
+      aboutPw: 'Senha: o navegador transforma a senha num código (hash SHA-1) e envia só os 5 primeiros caracteres. O serviço Pwned Passwords devolve centenas de códigos que começam igual, e a comparação acontece aqui. Nem o serviço sabe qual senha você testou.',
+      aboutDns: 'DNS: o navegador consulta 20 endereços de teste que só existem para você. O serviço bash.ws registra quais servidores de DNS fizeram essas consultas e compara com a rede da sua conexão.',
+      aboutConn: 'Conexão: a Cloudflare informa como o seu navegador se conectou a ela, com a versão do TLS e se o nome do site foi escondido (ECH).',
+      aboutBrowser: 'Navegador: a versão é lida aqui mesmo e comparada com a versão mais recente publicada pelo Google e pela Mozilla.',
+      aboutPrivacy: 'Esta página não usa cookies, analytics nem scripts de terceiros.',
+      creditsLead: 'Serviços usados:',
+      creditsAnd: 'e',
+      footMade: 'Feito por Adriano Huttener para o CyberSecInfo.',
+      footCode: 'Código aberto no GitHub'
+    },
+
+    en: {
+      docTitle: 'PC Check | CyberSecInfo',
+      skip: 'Skip to the checks',
+      langLabel: 'Language',
+      title: 'PC Check',
+      lead: 'Four quick checks that run right here in your browser, with nothing to install. Nothing leaves your device until you click, and everything that does is listed in the outbound log.',
+      run: 'Check now',
+      running: 'Checking…',
+      runAgain: 'Check again',
+      ledgerJump: 'Outbound log',
+      oldBrowser: 'If the button does nothing, this browser is too old to run the page. That alone is a sign it needs updating.',
+      checksTitle: 'Checks',
+
+      browserTitle: 'Browser',
+      browserQ: 'Is your browser up to date?',
+      connTitle: 'Connection',
+      connQ: 'Does the connection use modern encryption?',
+      dnsTitle: 'DNS',
+      dnsQ: 'Who answers your DNS lookups?',
+      pwTitle: 'Password',
+      pwQ: 'Has this password shown up in data breaches?',
+
+      st_idle: 'Not checked',
+      st_running: 'Checking',
+      st_ok: 'All good',
+      st_warn: 'Attention',
+      st_risk: 'Risk',
+      st_info: 'For your info',
+      st_error: "Couldn't check",
+
+      summary: function (c) {
+        var parts = [];
+        if (c.ok) parts.push('all good: ' + c.ok);
+        if (c.warn) parts.push('attention: ' + c.warn);
+        if (c.risk) parts.push('risk: ' + c.risk);
+        if (c.info) parts.push('for your info: ' + c.info);
+        if (c.error) parts.push("couldn't check: " + c.error);
+        return 'Done. ' + capitalize(parts.join('; ')) + '.';
+      },
+
+      fBrowser: 'Browser',
+      fVersion: 'Your version',
+      fEngine: 'Engine',
+      fLatest: 'Latest',
+      fLatestEsr: 'Latest (ESR)',
+      fTls: 'Encryption',
+      fEch: 'Site name hidden (ECH)',
+      fPq: 'Post-quantum protection',
+      fHttp: 'Protocol',
+      fWarp: 'Cloudflare WARP',
+      fPage: 'This page',
+      fYourIp: 'Your public IP',
+      fDnsServers: 'DNS servers',
+      yes: 'Yes',
+      no: 'No',
+      on: 'On',
+      unknown: 'Not reported',
+      httpsOk: 'Loaded over HTTPS',
+      httpsNo: 'Loaded without HTTPS',
+
+      browserOk: function (name, version) { return name + ' ' + version + ' is up to date.'; },
+      browserPatch: function (name) { return 'A security update for ' + name + ' is available but not installed yet.'; },
+      browserBehind: function (name) { return 'A newer version of ' + name + ' is available but not installed yet.'; },
+      browserOld: function (name) { return 'This ' + name + ' is out of date and may have publicly known security flaws.'; },
+      browserEsrMaybe: function (version) { return 'Firefox ' + version + ': if this is the ESR (extended support) edition, it is up to date. If it is the regular edition, it is out of date.'; },
+      browserIos: 'On iPhone and iPad, every browser uses the system engine. It stays safe when iOS is up to date.',
+      browserSafari: 'Safari updates together with macOS, so the latest version cannot be confirmed from here.',
+      browserSamsung: 'Samsung Internet uses its own base and gets fixes through the Galaxy Store.',
+      browserUnknown: "We don't recognise this browser, so its version can't be compared.",
+      browserVersionsError: "We couldn't fetch the latest versions right now. Try again in a moment.",
+      fixUpdate: 'Open the browser menu, then Help and About. It looks for the update on its own; restart when it finishes.',
+      fixFirefoxAbout: 'Open the Firefox menu, then Help and About Firefox, to see the edition and update.',
+      fixIos: 'Settings > General > Software Update.',
+      fixSafari: 'Apple menu > System Settings > General > Software Update.',
+      fixSamsung: 'Galaxy Store > Menu > Updates.',
+
+      connOk: 'The connection used TLS 1.3, the most modern version of web encryption.',
+      connTls12: 'The connection used TLS 1.2 with a server that supports 1.3. Antivirus tools or proxies that inspect HTTPS traffic often cause this.',
+      connOld: function (v) { return 'The connection used ' + v + ', an old and vulnerable version.'; },
+      connPageHttp: 'This page loaded without HTTPS, so what passes through it can be read along the way.',
+      connUnknown: 'Cloudflare answered but did not report the encryption version.',
+      connError: "We couldn't reach Cloudflare. An ad blocker or the network may have stopped the test.",
+      connEchNote: 'ECH hides which site you visit from anyone watching the network. It is still rare, so “No” is the most common result.',
+      connPqNote: 'Post-quantum protection stops someone from recording traffic today to decrypt it later with quantum computers.',
+      fixTlsInspect: 'If your antivirus has “HTTPS scanning” or “web protection”, see if you can turn that feature off. On a work computer, ask IT.',
+      fixConnError: "Try again or use Cloudflare's own test.",
+      cfCheckLink: "Open Cloudflare's test",
+
+      dnsOk: function (n) { return n === 1 ? '1 DNS server answered the lookups, with no sign of a leak.' : n + ' DNS servers answered the lookups, with no sign of a leak.'; },
+      dnsLeak: 'Possible leak: your DNS lookups went out through a different network than your connection.',
+      dnsDone: function (n) { return n === 1 ? '1 DNS server answered the lookups.' : n + ' DNS servers answered the lookups.'; },
+      dnsNone: "No lookups reached the test server. A blocker or the browser's secure DNS may have filtered the test addresses.",
+      dnsError: "The DNS test didn't respond right now. Try again in a moment.",
+      dnsRate: 'Too many tests in a row. Wait a few minutes and try again.',
+      dnsNote: "Without a VPN, seeing your internet provider's DNS here is normal. With a VPN on, it shouldn't appear.",
+      fixDns: "If you use a VPN, turn on DNS leak protection in its app. You can also turn on secure DNS in the browser's privacy settings.",
+
+      pwLabel: 'Password to check',
+      pwShow: 'Show',
+      pwHide: 'Hide',
+      pwHint: 'The password never leaves your device. Only the first 5 characters of its code (the hash) are sent.',
+      pwCheck: 'Check password',
+      pwChecking: 'Checking…',
+      pwEmpty: 'Type a password to check.',
+      pwNoCrypto: "This browser can't compute the password code here. The page needs HTTPS.",
+      pwFound: function (n) { return 'This password has appeared ' + n + (n === '1' ? ' time' : ' times') + ' in data breaches. Stop using it everywhere.'; },
+      pwNotFound: "This password isn't in known breaches. That doesn't mean it is strong.",
+      pwError: "We couldn't reach the breach database right now. Try again.",
+      fixPw: 'Change this password on every site that uses it and turn on two-step verification. A password manager makes it easy to have a different one per site.',
+      notePwOk: 'Use a long, different password for each site. A phrase of four or more words works well.',
+      hashOut: 'Left your device',
+      hashKept: 'Stayed on your device',
+      hashCaption: function (n) { return 'SHA-1 code of the password. Only the first 5 characters were sent. The service returned ' + n + ' similar codes, and the comparison happened here.'; },
+
+      ledgerTitle: 'What left your device',
+      ledgerEmpty: 'Nothing yet. Each request appears here the moment it happens.',
+      ledgerNote: 'Every request reveals your IP address and browser type to the destination. That is part of every connection on the internet.',
+      ledgerCount: function (n) { return n === 0 ? 'No requests so far.' : (n === 1 ? '1 request so far.' : n + ' requests so far.'); },
+      ledgerSent: 'Sent:',
+      ledgerNothing: 'nothing beyond the request',
+      lpVersions: 'Latest browser versions (this site)',
+      lpTrace: 'Connection diagnostics (Cloudflare)',
+      lpDnsProbes: function (n) { return n + ' DNS lookups of test addresses (bash.ws)'; },
+      lpDnsResult: 'DNS test result. This site passes the test code and your IP to bash.ws.',
+      lpHibp: 'Password lookup (Pwned Passwords)',
+
+      aboutTitle: 'How it works',
+      aboutPw: 'Password: your browser turns the password into a code (SHA-1 hash) and sends only the first 5 characters. Pwned Passwords returns hundreds of codes that start the same way, and the comparison happens here. Not even the service knows which password you checked.',
+      aboutDns: 'DNS: your browser looks up 20 test addresses that exist only for you. The bash.ws service records which DNS servers made those lookups and compares them with your connection’s network.',
+      aboutConn: 'Connection: Cloudflare reports how your browser connected to it, including the TLS version and whether the site name was hidden (ECH).',
+      aboutBrowser: 'Browser: the version is read right here and compared with the latest version published by Google and Mozilla.',
+      aboutPrivacy: 'This page uses no cookies, no analytics and no third-party scripts.',
+      creditsLead: 'Services used:',
+      creditsAnd: 'and',
+      footMade: 'Made by Adriano Huttener for CyberSecInfo.',
+      footCode: 'Open source on GitHub'
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
+  var state = {
+    lang: 'en',
+    running: false,
+    ranOnce: false,
+    summaryCounts: null,
+    checks: {
+      browser: blankCheck(),
+      connection: blankCheck(),
+      dns: blankCheck(),
+      password: blankCheck()
+    },
+    ledger: [],
+    hash: null,
+    pwVisible: false,
+    pwBusy: false,
+    pwError: null
+  };
+
+  function blankCheck() {
+    return { status: 'idle', verdict: null, facts: [], note: null, fix: null, link: null };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Small helpers
+  // ---------------------------------------------------------------------------
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+  function t(key) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    var table = STR[state.lang] || STR.en;
+    var value = Object.prototype.hasOwnProperty.call(table, key) ? table[key] : STR.en[key];
+    if (typeof value === 'function') return value.apply(null, args);
+    return value == null ? key : value;
+  }
+
+  // A "spec" is either plain text or [key, ...args] resolved in the current language.
+  function resolve(spec) {
+    if (spec == null) return '';
+    if (Array.isArray(spec)) return t.apply(null, spec);
+    return String(spec);
+  }
+
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function withTimeout(promise, ms) {
+    return new Promise(function (resolveFn, rejectFn) {
+      var timer = setTimeout(function () { rejectFn(new Error('timeout')); }, ms);
+      promise.then(function (v) { clearTimeout(timer); resolveFn(v); }, function (e) { clearTimeout(timer); rejectFn(e); });
+    });
+  }
+
+  function request(url, options) {
+    var opts = Object.assign({ cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error' }, options || {});
+    var controller = typeof AbortController === 'function' ? new AbortController() : null;
+    if (controller) opts.signal = controller.signal;
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, CONFIG.timeoutMs);
+    return fetch(url, opts).then(function (res) {
+      clearTimeout(timer);
+      return res;
+    }, function (err) {
+      clearTimeout(timer);
+      throw err;
+    });
+  }
+
+  function getJSON(url) {
+    return request(url, { headers: { Accept: 'application/json' } }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (!res.ok) {
+          var err = new Error('http_' + res.status);
+          err.status = res.status;
+          err.body = body;
+          throw err;
+        }
+        return body;
+      });
+    });
+  }
+
+  function getText(url, headers) {
+    return request(url, headers ? { headers: headers } : null).then(function (res) {
+      if (!res.ok) throw new Error('http_' + res.status);
+      return res.text();
+    });
+  }
+
+  function formatNumber(n) {
+    try { return Number(n).toLocaleString(state.lang === 'pt' ? 'pt-BR' : 'en-IE'); } catch (e) { return String(n); }
+  }
+
+  function formatTime(date) {
+    try {
+      return date.toLocaleTimeString(state.lang === 'pt' ? 'pt-BR' : 'en-IE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch (e) {
+      return date.toTimeString().slice(0, 8);
+    }
+  }
+
+  function isLocalHost() {
+    return /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  }
+
+  function compareVersions(a, b) {
+    var pa = String(a).split('.').map(function (x) { return parseInt(x, 10) || 0; });
+    var pb = String(b).split('.').map(function (x) { return parseInt(x, 10) || 0; });
+    var len = Math.max(pa.length, pb.length);
+    for (var i = 0; i < len; i++) {
+      var x = pa[i] || 0;
+      var y = pb[i] || 0;
+      if (x !== y) return x < y ? -1 : 1;
+    }
+    return 0;
+  }
+
+  function majorOf(v) { var n = parseInt(String(v), 10); return isNaN(n) ? null : n; }
+
+  // ---------------------------------------------------------------------------
+  // Outbound ledger
+  // ---------------------------------------------------------------------------
+  function logOutbound(host, purpose, data) {
+    state.ledger.push({ ts: new Date(), host: host, purpose: purpose, data: data || [], isNew: true });
+    renderLedger();
+  }
+
+  function renderLedger() {
+    var list = $('#ledger-list');
+    list.textContent = '';
+    state.ledger.forEach(function (entry) {
+      var li = el('li', 'ledger-item' + (entry.isNew ? ' is-new' : ''));
+      li.appendChild(el('span', 'ledger-time', formatTime(entry.ts)));
+      li.appendChild(el('div', 'ledger-host', entry.host));
+      li.appendChild(el('p', 'ledger-purpose', resolve(entry.purpose)));
+      var sent = el('p', 'ledger-sent', t('ledgerSent'));
+      if (entry.data.length) {
+        entry.data.forEach(function (value) { sent.appendChild(el('span', 'data', value)); });
+      } else {
+        sent.appendChild(document.createTextNode(' ' + t('ledgerNothing')));
+      }
+      li.appendChild(sent);
+      list.appendChild(li);
+      entry.isNew = false;
+    });
+    var n = state.ledger.length;
+    $('#ledger-empty').hidden = n > 0;
+    $('#ledger-count').textContent = t('ledgerCount', n);
+    $('#ledger-count-inline').textContent = String(n);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Check rendering
+  // ---------------------------------------------------------------------------
+  function setCheck(id, patch) {
+    state.checks[id] = Object.assign(blankCheck(), patch);
+    renderCheck(id);
+  }
+
+  function renderCheck(id) {
+    var data = state.checks[id];
+    var root = document.getElementById('check-' + id);
+    root.setAttribute('data-status', data.status);
+    $('.mark use', root).setAttribute('href', '#i-' + data.status);
+    $('[data-role="pill"]', root).textContent = t('st_' + data.status);
+    $('[data-role="verdict"]', root).textContent = resolve(data.verdict);
+
+    var facts = $('[data-role="facts"]', root);
+    // The password card has no facts list (it shows the hash instead).
+    if (facts) facts.textContent = '';
+    if (facts) data.facts.forEach(function (f) {
+      facts.appendChild(el('dt', null, resolve(f.label)));
+      var dd = el('dd');
+      if (f.list) {
+        var ul = el('ul');
+        f.list.forEach(function (item) {
+          var li = el('li');
+          if (item.data) li.appendChild(el('span', 'data', item.data));
+          if (item.text) li.appendChild(document.createTextNode((item.data ? ' ' : '') + item.text));
+          ul.appendChild(li);
+        });
+        dd.appendChild(ul);
+      } else if (f.data) {
+        dd.appendChild(el('span', 'data', resolve(f.value)));
+      } else {
+        dd.textContent = resolve(f.value);
+      }
+      facts.appendChild(dd);
+    });
+
+    $('[data-role="note"]', root).textContent = resolve(data.note);
+
+    var fix = $('[data-role="fix"]', root);
+    fix.textContent = resolve(data.fix);
+    if (data.link && data.fix) {
+      fix.appendChild(document.createTextNode(' '));
+      var a = el('a', null, t(data.link.text));
+      a.href = data.link.href;
+      a.rel = 'noopener noreferrer';
+      fix.appendChild(a);
+    }
+
+    if (id === 'password') renderHash();
+  }
+
+  function renderHash() {
+    var root = document.getElementById('check-password');
+    var box = $('[data-role="hash"]', root);
+    if (!state.hash) { box.hidden = true; return; }
+    box.hidden = false;
+    $('[data-role="hash-out"]', root).textContent = state.hash.prefix;
+    $('[data-role="hash-kept"]', root).textContent = new Array(36).join('•');
+    $('[data-role="hash-caption"]', root).textContent = t('hashCaption', formatNumber(state.hash.returned));
+  }
+
+  function renderStatic() {
+    var html = document.documentElement;
+    html.lang = state.lang === 'pt' ? 'pt-BR' : 'en';
+    document.title = t('docTitle');
+    $all('[data-i18n]').forEach(function (node) {
+      node.textContent = t(node.getAttribute('data-i18n'));
+    });
+    $all('[data-i18n-aria]').forEach(function (node) {
+      node.setAttribute('aria-label', t(node.getAttribute('data-i18n-aria')));
+    });
+    $all('.lang button').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-lang') === state.lang));
+    });
+    renderRunButton();
+    renderPasswordForm();
+  }
+
+  function renderRunButton() {
+    var btn = $('#run');
+    btn.disabled = state.running;
+    btn.textContent = state.running ? t('running') : (state.ranOnce ? t('runAgain') : t('run'));
+    $('#run-status').textContent = (!state.running && state.summaryCounts) ? t('summary', state.summaryCounts) : '';
+  }
+
+  function renderPasswordForm() {
+    var input = $('#pw');
+    var toggle = $('#pw-toggle');
+    input.type = state.pwVisible ? 'text' : 'password';
+    toggle.setAttribute('aria-pressed', String(state.pwVisible));
+    toggle.textContent = state.pwVisible ? t('pwHide') : t('pwShow');
+    var submit = $('#pw-submit');
+    submit.disabled = state.pwBusy;
+    submit.textContent = state.pwBusy ? t('pwChecking') : t('pwCheck');
+    $('#pw-error').textContent = state.pwError ? t(state.pwError) : '';
+  }
+
+  function renderAll() {
+    renderStatic();
+    Object.keys(state.checks).forEach(renderCheck);
+    renderLedger();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Check 1: browser version
+  // ---------------------------------------------------------------------------
+  var PREFERRED_BRANDS = ['Microsoft Edge', 'Brave', 'Opera', 'Opera GX', 'Vivaldi', 'Samsung Internet', 'YaBrowser', 'DuckDuckGo', 'Google Chrome'];
+
+  function detectBrowser() {
+    var ua = navigator.userAgent || '';
+    var info = { name: null, version: null, family: 'unknown', engineMajor: null, platform: null };
+    var isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var m;
+
+    if (isIOS) {
+      info.family = 'ios';
+      if ((m = ua.match(/CriOS\/([\d.]+)/))) { info.name = 'Chrome'; info.version = m[1]; }
+      else if ((m = ua.match(/FxiOS\/([\d.]+)/))) { info.name = 'Firefox'; info.version = m[1]; }
+      else if ((m = ua.match(/EdgiOS\/([\d.]+)/))) { info.name = 'Edge'; info.version = m[1]; }
+      else if ((m = ua.match(/Version\/([\d.]+).*Safari/))) { info.name = 'Safari'; info.version = m[1]; }
+      else { info.name = 'WebKit'; }
+      return Promise.resolve(info);
+    }
+
+    var uad = navigator.userAgentData;
+    if (uad && Array.isArray(uad.brands) && uad.brands.length) {
+      var high = typeof uad.getHighEntropyValues === 'function'
+        ? uad.getHighEntropyValues(['fullVersionList', 'platform']).catch(function () { return {}; })
+        : Promise.resolve({});
+      return high.then(function (hev) {
+        var list = (hev && hev.fullVersionList && hev.fullVersionList.length) ? hev.fullVersionList : uad.brands;
+        var real = list.filter(function (b) {
+          return b && b.brand && !/^not.a.brand$/i.test(String(b.brand).replace(/\s+/g, ' ').trim());
+        });
+        var chromium = find(real, function (b) { return b.brand === 'Chromium'; });
+        var named = null;
+        for (var i = 0; i < PREFERRED_BRANDS.length && !named; i++) {
+          named = find(real, sameBrand(PREFERRED_BRANDS[i]));
+        }
+        if (!named) named = find(real, function (b) { return b.brand !== 'Chromium'; }) || chromium;
+        if (!named) return fromUserAgent(ua, info);
+
+        info.family = /Samsung/i.test(named.brand) ? 'samsung' : 'chromium';
+        info.name = named.brand.replace(/^Google /, '');
+        info.version = named.version;
+        info.engineMajor = majorOf((chromium || named).version);
+        info.platform = mapPlatform((hev && hev.platform) || uad.platform);
+        return info;
+      });
+    }
+
+    return Promise.resolve(fromUserAgent(ua, info));
+  }
+
+  function find(arr, fn) {
+    for (var i = 0; i < arr.length; i++) if (fn(arr[i])) return arr[i];
+    return null;
+  }
+
+  function sameBrand(name) { return function (b) { return b.brand === name; }; }
+
+  function mapPlatform(p) {
+    switch (String(p || '')) {
+      case 'Windows': return 'win';
+      case 'macOS': return 'mac';
+      case 'Linux': return 'linux';
+      case 'Android': return 'android';
+      default: return null;
+    }
+  }
+
+  function fromUserAgent(ua, info) {
+    var m;
+    var chrome = ua.match(/Chrom(?:e|ium)\/([\d.]+)/);
+    if ((m = ua.match(/SamsungBrowser\/([\d.]+)/))) {
+      info.family = 'samsung'; info.name = 'Samsung Internet'; info.version = m[1];
+    } else if ((m = ua.match(/Firefox\/([\d.]+)/)) && !/Seamonkey/i.test(ua)) {
+      info.family = 'firefox'; info.name = 'Firefox'; info.version = m[1]; info.engineMajor = majorOf(m[1]);
+    } else if ((m = ua.match(/Edg(?:e|A)?\/([\d.]+)/))) {
+      info.family = 'chromium'; info.name = 'Edge'; info.version = m[1]; info.engineMajor = majorOf((chrome || m)[1]);
+    } else if ((m = ua.match(/OPR\/([\d.]+)/))) {
+      info.family = 'chromium'; info.name = 'Opera'; info.version = m[1]; info.engineMajor = chrome ? majorOf(chrome[1]) : null;
+    } else if (chrome) {
+      info.family = 'chromium'; info.name = /Chromium\//.test(ua) ? 'Chromium' : 'Chrome'; info.version = chrome[1]; info.engineMajor = majorOf(chrome[1]);
+    } else if ((m = ua.match(/Version\/([\d.]+).*Safari/))) {
+      info.family = 'safari'; info.name = 'Safari'; info.version = m[1];
+    }
+    if (/Windows/.test(ua)) info.platform = 'win';
+    else if (/Android/.test(ua)) info.platform = 'android';
+    else if (/Mac OS X/.test(ua)) info.platform = 'mac';
+    else if (/Linux/.test(ua)) info.platform = 'linux';
+    return info;
+  }
+
+  function shortVersion(v) {
+    if (!v) return '';
+    var parts = String(v).split('.');
+    // Reduced user-agent strings end in .0.0.0; show only the meaningful part.
+    while (parts.length > 1 && parts[parts.length - 1] === '0') parts.pop();
+    return parts.join('.');
+  }
+
+  function evaluateBrowser(b, v) {
+    var facts = [{ label: ['fBrowser'], value: b.name || t('unknown') }];
+    if (b.version) facts.push({ label: ['fVersion'], value: shortVersion(b.version), data: true });
+
+    if (b.family === 'ios') return { status: 'info', verdict: ['browserIos'], facts: facts, fix: ['fixIos'] };
+    if (b.family === 'samsung') return { status: 'info', verdict: ['browserSamsung'], facts: facts, fix: ['fixSamsung'] };
+    if (b.family === 'safari') return { status: 'info', verdict: ['browserSafari'], facts: facts, fix: ['fixSafari'] };
+
+    if (b.family === 'chromium' && b.engineMajor && v && v.chrome) {
+      var isChrome = b.name === 'Chrome';
+      var platformLatest = (b.platform && v.chrome[b.platform]) || v.chrome.win || null;
+      if (!platformLatest) return { status: 'error', verdict: ['browserVersionsError'], facts: facts };
+      if (!isChrome) facts.push({ label: ['fEngine'], value: 'Chromium ' + b.engineMajor, data: true });
+      facts.push({ label: ['fLatest'], value: isChrome ? platformLatest.version : 'Chromium ' + platformLatest.major, data: true });
+
+      var diff = platformLatest.major - b.engineMajor;
+      if (diff >= 2) return { status: 'risk', verdict: ['browserOld', b.name], facts: facts, fix: ['fixUpdate'] };
+      if (diff === 1) return { status: 'warn', verdict: ['browserBehind', b.name], facts: facts, fix: ['fixUpdate'] };
+      // Same major. Chrome reports its full version, so pending security patches are visible too.
+      if (isChrome && diff === 0 && compareVersions(b.version, platformLatest.version) < 0 && !/\.0\.0\.0$/.test(b.version)) {
+        return { status: 'warn', verdict: ['browserPatch', b.name], facts: facts, fix: ['fixUpdate'] };
+      }
+      return { status: 'ok', verdict: ['browserOk', b.name, shortVersion(b.version)], facts: facts };
+    }
+
+    if (b.family === 'firefox' && b.engineMajor && v && v.firefox) {
+      var f = v.firefox;
+      if (f.esr_major && b.engineMajor === f.esr_major && b.engineMajor < f.latest_major) {
+        facts.push({ label: ['fLatest'], value: f.latest, data: true });
+        facts.push({ label: ['fLatestEsr'], value: f.esr, data: true });
+        return { status: 'info', verdict: ['browserEsrMaybe', String(b.engineMajor)], facts: facts, fix: ['fixFirefoxAbout'] };
+      }
+      facts.push({ label: ['fLatest'], value: f.latest, data: true });
+      var fdiff = f.latest_major - b.engineMajor;
+      if (fdiff >= 2) return { status: 'risk', verdict: ['browserOld', 'Firefox'], facts: facts, fix: ['fixUpdate'] };
+      if (fdiff === 1) return { status: 'warn', verdict: ['browserBehind', 'Firefox'], facts: facts, fix: ['fixUpdate'] };
+      return { status: 'ok', verdict: ['browserOk', 'Firefox', shortVersion(b.version)], facts: facts };
+    }
+
+    if (b.family === 'chromium' || b.family === 'firefox') {
+      return { status: 'error', verdict: ['browserVersionsError'], facts: facts };
+    }
+    return { status: 'info', verdict: ['browserUnknown'], facts: facts };
+  }
+
+  function runBrowser() {
+    return detectBrowser().then(function (b) {
+      var needsVersions = b.family === 'chromium' || b.family === 'firefox';
+      if (!needsVersions) return evaluateBrowser(b, null);
+      logOutbound(location.host || 'localhost', ['lpVersions'], []);
+      return getJSON(CONFIG.versionsUrl).then(function (v) {
+        return evaluateBrowser(b, v);
+      }, function () {
+        return evaluateBrowser(b, null);
+      });
+    }).then(function (result) {
+      setCheck('browser', result);
+    }, function () {
+      setCheck('browser', { status: 'error', verdict: ['browserVersionsError'] });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Check 2: connection (Cloudflare trace)
+  // ---------------------------------------------------------------------------
+  function parseTrace(text) {
+    var out = {};
+    String(text).split('\n').forEach(function (line) {
+      var i = line.indexOf('=');
+      if (i > 0) out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    });
+    return out;
+  }
+
+  function fetchTrace() {
+    var urls = CONFIG.traceUrls.slice();
+    function attempt() {
+      var url = urls.shift();
+      if (!url) return Promise.reject(new Error('trace_unavailable'));
+      logOutbound(new URL(url).host, ['lpTrace'], []);
+      return getText(url).then(function (text) {
+        var data = parseTrace(text);
+        if (!data.ip && !data.tls) throw new Error('trace_invalid');
+        return data;
+      }).catch(function () { return attempt(); });
+    }
+    return attempt();
+  }
+
+  function prettyTls(v) {
+    var m = /^TLSv?(\d(?:\.\d)?)$/i.exec(v || '');
+    return m ? 'TLS ' + m[1] : (v || '');
+  }
+
+  function evaluateConnection(trace) {
+    var pageHttps = location.protocol === 'https:';
+    var facts = [];
+    var tls = trace.tls || '';
+    facts.push({ label: ['fTls'], value: tls ? prettyTls(tls) : t('unknown'), data: !!tls });
+    if (trace.sni) facts.push({ label: ['fEch'], value: trace.sni === 'encrypted' ? ['yes'] : ['no'] });
+    if (trace.kex) {
+      var pq = /mlkem|kyber/i.test(trace.kex);
+      facts.push({ label: ['fPq'], value: (pq ? t('yes') : t('no')) + ' (' + trace.kex + ')' });
+    }
+    if (trace.http) facts.push({ label: ['fHttp'], value: trace.http.toUpperCase().replace('HTTP/', 'HTTP/'), data: true });
+    if (trace.warp && trace.warp !== 'off') facts.push({ label: ['fWarp'], value: ['on'] });
+    facts.push({ label: ['fPage'], value: pageHttps ? ['httpsOk'] : ['httpsNo'] });
+
+    var note = trace.kex && /mlkem|kyber/i.test(trace.kex) ? ['connPqNote'] : (trace.sni ? ['connEchNote'] : null);
+
+    if (!pageHttps && !isLocalHost()) return { status: 'risk', verdict: ['connPageHttp'], facts: facts, note: note };
+    if (/^TLSv?1\.3$/i.test(tls)) return { status: 'ok', verdict: ['connOk'], facts: facts, note: note };
+    if (/^TLSv?1\.2$/i.test(tls)) return { status: 'warn', verdict: ['connTls12'], facts: facts, note: note, fix: ['fixTlsInspect'] };
+    if (tls) return { status: 'risk', verdict: ['connOld', prettyTls(tls)], facts: facts, note: note, fix: ['fixTlsInspect'] };
+    return { status: 'info', verdict: ['connUnknown'], facts: facts, note: note };
+  }
+
+  function runConnection(tracePromise) {
+    return tracePromise.then(function (trace) {
+      setCheck('connection', evaluateConnection(trace));
+    }, function () {
+      setCheck('connection', {
+        status: 'error',
+        verdict: ['connError'],
+        fix: ['fixConnError'],
+        link: { href: 'https://www.cloudflare.com/ssl/encrypted-sni/', text: 'cfCheckLink' }
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Check 3: DNS leak (bash.ws, via this site's PHP endpoint)
+  // ---------------------------------------------------------------------------
+  function randomTestId() {
+    // 9-digit numeric id, the format bash.ws expects.
+    var buf = new Uint32Array(1);
+    window.crypto.getRandomValues(buf);
+    return String(100000000 + (buf[0] % 900000000));
+  }
+
+  function probe(url) {
+    return new Promise(function (resolveFn) {
+      var img = new Image();
+      var done = false;
+      function finish() { if (!done) { done = true; resolveFn(); } }
+      img.onload = finish;
+      img.onerror = finish;
+      img.referrerPolicy = 'no-referrer';
+      setTimeout(finish, 5000);
+      img.src = url;
+    });
+  }
+
+  function evaluateDns(result, ip) {
+    var servers = Array.isArray(result.servers) ? result.servers : [];
+    var facts = [{ label: ['fYourIp'], value: ip || t('unknown'), data: !!ip }];
+    if (servers.length) {
+      facts.push({
+        label: ['fDnsServers'],
+        list: servers.map(function (s) {
+          return { data: s.ip, text: [s.asn, s.country_name].filter(Boolean).join(', ') };
+        })
+      });
+    }
+    if (!servers.length) return { status: 'info', verdict: ['dnsNone'], facts: facts };
+    if (result.conclusion_code === 'no_leak') return { status: 'ok', verdict: ['dnsOk', servers.length], facts: facts, note: ['dnsNote'] };
+    if (result.conclusion_code === 'leak') return { status: 'warn', verdict: ['dnsLeak'], facts: facts, note: ['dnsNote'], fix: ['fixDns'] };
+    return { status: 'info', verdict: ['dnsDone', servers.length], facts: facts, note: ['dnsNote'] };
+  }
+
+  function runDns(tracePromise) {
+    var id = randomTestId();
+    var count = CONFIG.dnsProbeCount;
+    var probes = [];
+    var nonce = Date.now().toString(36);
+    logOutbound('*.' + id + '.bash.ws', ['lpDnsProbes', count], ['1.' + id + '.bash.ws']);
+    for (var i = 1; i <= count; i++) {
+      probes.push(probe('https://' + i + '.' + id + '.bash.ws/img.png?n=' + nonce));
+    }
+
+    var ip = null;
+    return Promise.all(probes)
+      .then(function () { return withTimeout(tracePromise, 4000).then(function (tr) { ip = tr.ip || null; }, function () {}); })
+      .then(function () { return sleep(1200); })
+      .then(function () {
+        var url = CONFIG.dnsResultUrl + '?id=' + id + (ip ? '&ip=' + encodeURIComponent(ip) : '');
+        function ask() {
+          logOutbound(location.host || 'localhost', ['lpDnsResult'], ip ? [id, ip] : [id]);
+          return getJSON(url);
+        }
+        return ask().then(function (result) {
+          if (result && Array.isArray(result.servers) && result.servers.length) return result;
+          return sleep(2500).then(ask);
+        });
+      })
+      .then(function (result) {
+        setCheck('dns', evaluateDns(result || {}, ip));
+      }, function (err) {
+        setCheck('dns', { status: 'error', verdict: [err && err.status === 429 ? 'dnsRate' : 'dnsError'] });
+      });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Check 4: password (Pwned Passwords range API, k-anonymity)
+  // ---------------------------------------------------------------------------
+  function sha1Hex(text) {
+    var bytes = new TextEncoder().encode(text);
+    return window.crypto.subtle.digest('SHA-1', bytes).then(function (buf) {
+      var view = new Uint8Array(buf);
+      var hex = '';
+      for (var i = 0; i < view.length; i++) hex += ('0' + view[i].toString(16)).slice(-2);
+      return hex.toUpperCase();
+    });
+  }
+
+  function countInRange(body, suffix) {
+    var lines = String(body).split('\n');
+    var returned = 0;
+    var found = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      var sep = line.indexOf(':');
+      if (sep !== 35) continue;
+      var count = parseInt(line.slice(sep + 1), 10) || 0;
+      if (count > 0) returned++;
+      if (line.slice(0, sep).toUpperCase() === suffix) found = count;
+    }
+    return { found: found, returned: returned };
+  }
+
+  function fetchRange(prefix) {
+    var url = CONFIG.hibpRangeUrl + prefix;
+    // Padding hides the real size of the answer. If the extra header is refused, fall back to a plain request.
+    return getText(url, { 'Add-Padding': 'true' }).catch(function () { return getText(url); });
+  }
+
+  function runPassword(password) {
+    state.pwError = null;
+    if (!password) { state.pwError = 'pwEmpty'; renderPasswordForm(); $('#pw').focus(); return Promise.resolve(); }
+    if (!window.crypto || !window.crypto.subtle || typeof TextEncoder !== 'function') {
+      setCheck('password', { status: 'error', verdict: ['pwNoCrypto'] });
+      return Promise.resolve();
+    }
+    state.pwBusy = true;
+    state.hash = null;
+    renderPasswordForm();
+    setCheck('password', { status: 'running' });
+
+    return sha1Hex(password).then(function (hash) {
+      var prefix = hash.slice(0, 5);
+      var suffix = hash.slice(5);
+      logOutbound('api.pwnedpasswords.com', ['lpHibp'], [prefix]);
+      return fetchRange(prefix).then(function (body) {
+        var r = countInRange(body, suffix);
+        state.hash = { prefix: prefix, returned: r.returned };
+        if (r.found > 0) {
+          setCheck('password', { status: 'risk', verdict: ['pwFound', formatNumber(r.found)], fix: ['fixPw'] });
+        } else {
+          setCheck('password', { status: 'ok', verdict: ['pwNotFound'], note: ['notePwOk'] });
+        }
+      });
+    }).catch(function () {
+      state.hash = null;
+      setCheck('password', { status: 'error', verdict: ['pwError'] });
+    }).then(function () {
+      state.pwBusy = false;
+      renderPasswordForm();
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Orchestration
+  // ---------------------------------------------------------------------------
+  function runAll() {
+    if (state.running) return;
+    state.running = true;
+    state.summaryCounts = null;
+    ['browser', 'connection', 'dns'].forEach(function (id) { setCheck(id, { status: 'running' }); });
+    renderRunButton();
+
+    var tracePromise = fetchTrace();
+    tracePromise.catch(function () {});
+
+    var tasks = [runBrowser(), runConnection(tracePromise), runDns(tracePromise)];
+    Promise.all(tasks.map(function (p) { return p.catch(function () {}); })).then(function () {
+      state.running = false;
+      state.ranOnce = true;
+      var counts = { ok: 0, warn: 0, risk: 0, info: 0, error: 0 };
+      ['browser', 'connection', 'dns'].forEach(function (id) {
+        var s = state.checks[id].status;
+        if (Object.prototype.hasOwnProperty.call(counts, s)) counts[s]++;
+      });
+      state.summaryCounts = counts;
+      renderRunButton();
+    });
+  }
+
+  function detectLang() {
+    // cybersecinfo.com is English-only. The PT texts stay in STR so the page can be bilingual again later.
+    return 'en';
+  }
+
+  function setLang(lang) {
+    state.lang = lang;
+    try { window.localStorage.setItem('bsc-lang', lang); } catch (e) { /* ignore */ }
+    renderAll();
+  }
+
+  function init() {
+    document.documentElement.classList.add('js');
+    state.lang = detectLang();
+
+    $('#run').addEventListener('click', runAll);
+
+    $all('.lang button').forEach(function (b) {
+      b.addEventListener('click', function () { setLang(b.getAttribute('data-lang')); });
+    });
+
+    $('#pw-toggle').addEventListener('click', function () {
+      state.pwVisible = !state.pwVisible;
+      renderPasswordForm();
+    });
+
+    $('#pw').addEventListener('input', function () {
+      if (state.pwError) { state.pwError = null; renderPasswordForm(); }
+    });
+
+    $('#pw-form').addEventListener('submit', function (event) {
+      event.preventDefault();
+      var input = $('#pw');
+      var value = input.value;
+      input.value = '';
+      state.pwVisible = false;
+      runPassword(value);
+      value = null;
+    });
+
+    renderAll();
+  }
+
+  // Exposed only for automated tests; harmless in production.
+  window.__bsc = {
+    compareVersions: compareVersions,
+    parseTrace: parseTrace,
+    countInRange: countInRange,
+    evaluateBrowser: evaluateBrowser,
+    evaluateConnection: evaluateConnection,
+    evaluateDns: evaluateDns,
+    sha1Hex: sha1Hex,
+    shortVersion: shortVersion
+  };
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();

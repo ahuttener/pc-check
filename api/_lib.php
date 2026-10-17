@@ -1,0 +1,350 @@
+<?php
+/**
+ * PC Check | CyberSecInfo
+ * Shared helpers for the two API endpoints. MIT License.
+ * PHP 7.4+ on purpose: no match, no str_contains, no nullsafe operator.
+ */
+
+if (!defined('BSC_API')) {
+    http_response_code(404);
+    exit;
+}
+
+define('BSC_USER_AGENT', 'CyberSecInfo-PCCheck/1.0 (+https://cybersecinfo.com/pccheck/)');
+define('BSC_MAX_BYTES', 1048576);
+define('BSC_TIMEOUT', 9);
+
+// ---------------------------------------------------------------------------
+// Responses
+// ---------------------------------------------------------------------------
+
+function bsc_json($status, $data, $cacheControl = 'no-store', $extraHeaders = array())
+{
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: no-referrer');
+    header('Cache-Control: ' . $cacheControl);
+    foreach ($extraHeaders as $name => $value) {
+        header($name . ': ' . $value);
+    }
+    echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+function bsc_require_get()
+{
+    $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+    if ($method !== 'GET' && $method !== 'HEAD') {
+        bsc_json(405, array('error' => 'method_not_allowed'), 'no-store', array('Allow' => 'GET'));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Outbound HTTP: HTTPS only, certificate checked, no redirects, timeout, size cap
+// ---------------------------------------------------------------------------
+
+function bsc_is_https_url($url)
+{
+    return is_string($url) && stripos($url, 'https://') === 0;
+}
+
+function bsc_http_request($url, $postFields = null)
+{
+    if (!bsc_is_https_url($url)) {
+        return null;
+    }
+    $body = is_array($postFields) ? http_build_query($postFields, '', '&') : null;
+
+    if (function_exists('curl_init')) {
+        $buffer = '';
+        $tooBig = false;
+        $ch = curl_init($url);
+        $opts = array(
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => BSC_TIMEOUT,
+            CURLOPT_USERAGENT => BSC_USER_AGENT,
+            CURLOPT_HTTPHEADER => array('Accept: application/json'),
+            CURLOPT_WRITEFUNCTION => function ($handle, $chunk) use (&$buffer, &$tooBig) {
+                if (strlen($buffer) + strlen($chunk) > BSC_MAX_BYTES) {
+                    $tooBig = true;
+                    return -1;
+                }
+                $buffer .= $chunk;
+                return strlen($chunk);
+            },
+        );
+        if ($body !== null) {
+            $opts[CURLOPT_POST] = true;
+            $opts[CURLOPT_POSTFIELDS] = $body;
+        }
+        curl_setopt_array($ch, $opts);
+        $ok = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        if ($ok === false || $tooBig || $code !== 200) {
+            return null;
+        }
+        return $buffer;
+    }
+
+    $http = array(
+        'method' => $body !== null ? 'POST' : 'GET',
+        'timeout' => BSC_TIMEOUT,
+        'follow_location' => 0,
+        'max_redirects' => 0,
+        'ignore_errors' => true,
+        'header' => "User-Agent: " . BSC_USER_AGENT . "\r\nAccept: application/json\r\n"
+            . ($body !== null ? "Content-Type: application/x-www-form-urlencoded\r\n" : ''),
+    );
+    if ($body !== null) {
+        $http['content'] = $body;
+    }
+    $context = stream_context_create(array(
+        'http' => $http,
+        'ssl' => array('verify_peer' => true, 'verify_peer_name' => true),
+    ));
+    $data = @file_get_contents($url, false, $context, 0, BSC_MAX_BYTES + 1);
+    if ($data === false || strlen($data) > BSC_MAX_BYTES) {
+        return null;
+    }
+    $statusLine = isset($http_response_header[0]) ? $http_response_header[0] : '';
+    if (!preg_match('#^HTTP/\S+\s+200\b#', $statusLine)) {
+        return null;
+    }
+    return $data;
+}
+
+function bsc_http_get($url)
+{
+    return bsc_http_request($url, null);
+}
+
+function bsc_http_post_form($url, $fields)
+{
+    return bsc_http_request($url, $fields);
+}
+
+// ---------------------------------------------------------------------------
+// File cache and rate limit (api/cache/, denied by .htaccess; falls back to the system temp dir)
+// ---------------------------------------------------------------------------
+
+function bsc_cache_dir()
+{
+    static $dir = null;
+    if ($dir !== null) {
+        return $dir;
+    }
+    $local = __DIR__ . DIRECTORY_SEPARATOR . 'cache';
+    if ((is_dir($local) || @mkdir($local, 0750, true)) && is_writable($local)) {
+        $dir = $local;
+    } else {
+        $dir = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'bsc-cache';
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0700, true);
+        }
+    }
+    return $dir;
+}
+
+function bsc_cache_read($key, &$ageSeconds)
+{
+    $file = bsc_cache_dir() . DIRECTORY_SEPARATOR . $key . '.json';
+    if (!is_file($file)) {
+        return null;
+    }
+    $raw = @file_get_contents($file);
+    $data = is_string($raw) ? json_decode($raw, true) : null;
+    if (!is_array($data)) {
+        return null;
+    }
+    $ageSeconds = time() - (int) @filemtime($file);
+    return $data;
+}
+
+function bsc_cache_write($key, $data)
+{
+    $file = bsc_cache_dir() . DIRECTORY_SEPARATOR . $key . '.json';
+    $tmp = $file . '.' . getmypid() . '.tmp';
+    if (@file_put_contents($tmp, json_encode($data, JSON_UNESCAPED_SLASHES)) !== false) {
+        @rename($tmp, $file);
+    }
+}
+
+function bsc_client_ip()
+{
+    return isset($_SERVER['REMOTE_ADDR']) ? (string) $_SERVER['REMOTE_ADDR'] : '0.0.0.0';
+}
+
+/**
+ * Sliding window per IP. The IP is stored only as a salted SHA-256 hash.
+ * Returns 0 when allowed, or the number of seconds to wait.
+ */
+function bsc_rate_limit($bucket, $max, $windowSeconds)
+{
+    $dir = bsc_cache_dir() . DIRECTORY_SEPARATOR . 'rl';
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0750, true);
+    }
+    if (mt_rand(1, 100) === 1) {
+        // Now and then, drop windows nobody has touched for a while.
+        foreach ((array) glob($dir . DIRECTORY_SEPARATOR . $bucket . '-*') as $old) {
+            if (is_file($old) && filemtime($old) < time() - 2 * $windowSeconds) {
+                @unlink($old);
+            }
+        }
+    }
+    $hash = hash('sha256', $bucket . '|' . bsc_client_ip() . '|' . __DIR__);
+    $file = $dir . DIRECTORY_SEPARATOR . $bucket . '-' . substr($hash, 0, 40);
+    $fh = @fopen($file, 'c+');
+    if (!$fh) {
+        return 0; // fail open: the limit protects the free upstream, not the visitor
+    }
+    flock($fh, LOCK_EX);
+    $now = time();
+    $raw = stream_get_contents($fh);
+    $hits = array();
+    foreach (explode(',', (string) $raw) as $t) {
+        $t = (int) $t;
+        if ($t > $now - $windowSeconds) {
+            $hits[] = $t;
+        }
+    }
+    $wait = 0;
+    if (count($hits) >= $max) {
+        $wait = max(1, $hits[0] + $windowSeconds - $now);
+    } else {
+        $hits[] = $now;
+    }
+    ftruncate($fh, 0);
+    rewind($fh);
+    fwrite($fh, implode(',', $hits));
+    fflush($fh);
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    return $wait;
+}
+
+// ---------------------------------------------------------------------------
+// Parsers (pure functions, covered by tests/php/parsers_test.php)
+// ---------------------------------------------------------------------------
+
+function bsc_clean_text($value, $maxLen)
+{
+    if (!is_string($value) && !is_numeric($value)) {
+        return '';
+    }
+    $value = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', (string) $value);
+    if ($value === null) {
+        return ''; // invalid UTF-8
+    }
+    $value = trim(preg_replace('/ {2,}/', ' ', $value));
+    if (function_exists('mb_substr')) {
+        return mb_substr($value, 0, $maxLen, 'UTF-8');
+    }
+    return preg_replace('/^(.{0,' . (int) $maxLen . '}).*$/us', '$1', $value);
+}
+
+function bsc_is_version($v)
+{
+    return is_string($v) && preg_match('/^\d{1,4}(\.\d{1,6}){0,3}$/', $v);
+}
+
+/** versionhistory.googleapis.com body -> array('version' => ..., 'major' => int) or null */
+function bsc_parse_chrome_versions($json)
+{
+    $data = json_decode((string) $json, true);
+    if (!is_array($data) || !isset($data['versions']) || !is_array($data['versions'])) {
+        return null;
+    }
+    $best = null;
+    foreach ($data['versions'] as $row) {
+        $v = is_array($row) && isset($row['version']) ? $row['version'] : null;
+        if (!bsc_is_version($v)) {
+            continue;
+        }
+        if ($best === null || version_compare($v, $best, '>')) {
+            $best = $v;
+        }
+    }
+    if ($best === null) {
+        return null;
+    }
+    return array('version' => $best, 'major' => (int) $best);
+}
+
+/** product-details firefox_versions.json body -> latest/esr or null */
+function bsc_parse_firefox_versions($json)
+{
+    $data = json_decode((string) $json, true);
+    if (!is_array($data)) {
+        return null;
+    }
+    $latest = isset($data['LATEST_FIREFOX_VERSION']) ? $data['LATEST_FIREFOX_VERSION'] : null;
+    $esr = isset($data['FIREFOX_ESR']) ? preg_replace('/esr$/i', '', (string) $data['FIREFOX_ESR']) : null;
+    if (!bsc_is_version($latest)) {
+        return null;
+    }
+    $out = array('latest' => $latest, 'latest_major' => (int) $latest, 'esr' => null, 'esr_major' => null);
+    if (bsc_is_version($esr)) {
+        $out['esr'] = $esr;
+        $out['esr_major'] = (int) $esr;
+    }
+    return $out;
+}
+
+function bsc_conclusion_code($text)
+{
+    $t = strtolower((string) $text);
+    if (strpos($t, 'not leaking') !== false || strpos($t, 'no leak') !== false) {
+        return 'no_leak';
+    }
+    if (strpos($t, 'may be leaking') !== false || strpos($t, 'leak') !== false) {
+        return 'leak';
+    }
+    return 'unknown';
+}
+
+/** bash.ws dnsleak JSON body -> array('servers', 'conclusion', 'conclusion_code') or null on error */
+function bsc_parse_dnsleak($json)
+{
+    $data = json_decode((string) $json, true);
+    if (!is_array($data) || isset($data['error'])) {
+        return null;
+    }
+    $servers = array();
+    $conclusion = '';
+    foreach ($data as $row) {
+        if (!is_array($row) || !isset($row['type'])) {
+            continue;
+        }
+        if ($row['type'] === 'dns') {
+            if (count($servers) >= 30) {
+                continue;
+            }
+            $ip = isset($row['ip']) ? filter_var($row['ip'], FILTER_VALIDATE_IP) : false;
+            if ($ip === false) {
+                continue;
+            }
+            $country = isset($row['country']) ? strtoupper(bsc_clean_text($row['country'], 2)) : '';
+            $servers[] = array(
+                'ip' => $ip,
+                'country' => preg_match('/^[A-Z]{2}$/', $country) ? $country : '',
+                'country_name' => bsc_clean_text(isset($row['country_name']) ? $row['country_name'] : '', 80),
+                'asn' => bsc_clean_text(isset($row['asn']) ? $row['asn'] : '', 120),
+            );
+        } elseif ($row['type'] === 'conclusion' && $conclusion === '') {
+            $conclusion = bsc_clean_text(isset($row['ip']) ? $row['ip'] : '', 200);
+        }
+    }
+    return array(
+        'servers' => $servers,
+        'conclusion' => $conclusion,
+        'conclusion_code' => $conclusion === '' ? 'unknown' : bsc_conclusion_code($conclusion),
+    );
+}

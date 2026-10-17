@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: https://*.bash.ws; connect-src 'self' https://api.pwnedpasswords.com https://one.one.one.one https://www.cloudflare.com; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>PC Check | CyberSecInfo</title>
+  <meta name="description" content="Four checks that run in your own browser: browser version, connection encryption, DNS leaks and leaked passwords, with nothing to install.">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a0a1a">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="assets/fonts/roboto-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/orbitron-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/styles.css?v=3">
+  <script src="assets/app.js?v=3" defer></script>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-idle" viewBox="0 0 28 28"><circle cx="14" cy="14" r="11.5" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3.2 3.6"/></symbol>
+    <symbol id="i-running" viewBox="0 0 28 28"><circle cx="14" cy="14" r="11.5" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="2.5"/><path d="M14 2.5a11.5 11.5 0 0 1 11.5 11.5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-ok" viewBox="0 0 28 28"><circle cx="14" cy="14" r="12.5" fill="currentColor"/><path d="M8.5 14.5l3.8 3.8 7.4-8" fill="none" stroke="var(--on-status)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 28 28"><path d="M14 2.8L26.3 24.2H1.7z" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M14 10.2v6.4" stroke="var(--on-status)" stroke-width="2.6" stroke-linecap="round"/><circle cx="14" cy="20.4" r="1.6" fill="var(--on-status)"/></symbol>
+    <symbol id="i-risk" viewBox="0 0 28 28"><path d="M9.2 1.8h9.6l7.4 7.4v9.6l-7.4 7.4H9.2l-7.4-7.4V9.2z" fill="currentColor"/><path d="M10 10l8 8M18 10l-8 8" stroke="var(--on-status)" stroke-width="2.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-info" viewBox="0 0 28 28"><circle cx="14" cy="14" r="11.5" fill="none" stroke="currentColor" stroke-width="2.5"/><circle cx="14" cy="8.9" r="1.7" fill="currentColor"/><path d="M14 13v7.4" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-error" viewBox="0 0 28 28"><circle cx="14" cy="14" r="11.5" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M6 22L22 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></symbol>
+    <symbol id="n-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="n-github" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4M9 18c-4.51 2-5-2-7-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="n-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="n-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7zM14 2v4a2 2 0 0 0 2 2h4M10 9H8M16 13H8M16 17H8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="n-pulse" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <a class="skip" href="#checks" data-i18n="skip">Skip to the checks</a>
+
+  <header class="site-head">
+    <div class="site-head-in">
+      <a class="back" href="https://cybersecinfo.com/" aria-label="Back to CyberSecInfo"><svg aria-hidden="true"><use href="#n-back"></use></svg>Back</a>
+      <nav class="site-nav" aria-label="CyberSecInfo">
+        <ul>
+          <li><a href="https://github.com/ahuttener"><svg aria-hidden="true"><use href="#n-github"></use></svg>GitHub</a></li>
+          <li><a href="https://cybersecinfo.com/grcaudit/"><svg aria-hidden="true"><use href="#n-shield"></use></svg>GRC Audit</a></li>
+          <li><a href="https://cybersecinfo.com/editor-pdf/"><svg aria-hidden="true"><use href="#n-file"></use></svg>Editor PDF</a></li>
+          <li><a href="https://cybersecinfo.com/#threats">Topics</a></li>
+          <li><a href="https://cybersecinfo.com/#protection">Protection</a></li>
+          <li><a href="https://cybersecinfo.com/pccheck/" aria-current="page"><svg aria-hidden="true"><use href="#n-pulse"></use></svg>PC Check</a></li>
+          <li><a href="https://cybersecinfo.com/#chatbot">AI Chat</a></li>
+          <li><a href="https://cybersecinfo.com/#quiz">Quiz</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="hero">
+    <div class="banner"><img src="assets/banner.jpg" width="1600" height="800" alt="PC Check by CyberSecInfo: system diagnostics, starting with browser, connection, DNS and password checks"></div>
+    <div class="title-row">
+      <div class="title-brand">
+        <img class="emblem" src="assets/emblem.png" width="256" height="256" alt="CyberSecInfo — Information Security">
+        <div>
+          <h1 data-i18n="title">PC Check</h1>
+          <p class="kicker">Browser · Connection · DNS · Password</p>
+        </div>
+      </div>
+      <ul class="chips" aria-label="What it checks">
+        <li>TLS 1.3</li>
+        <li>ECH</li>
+        <li>Post-quantum</li>
+        <li>DNS leak</li>
+        <li>k-anonymity</li>
+      </ul>
+    </div>
+  </div>
+
+  <main class="layout">
+    <section class="intro">
+      <p class="lead" data-i18n="lead">Four quick checks that run right here in your browser, with nothing to install. Nothing leaves your device until you click, and everything that does is listed in the outbound log.</p>
+      <div class="run">
+        <button id="run" class="btn btn-primary" type="button" data-i18n="run">Check now</button>
+        <p id="run-status" class="run-status" role="status" aria-live="polite"></p>
+      </div>
+      <a class="ledger-jump" href="#ledger"><span data-i18n="ledgerJump">Outbound log</span>: <span id="ledger-count-inline">0</span></a>
+      <p id="old-browser" class="old-browser" data-i18n="oldBrowser">If the button does nothing, this browser is too old to run the page. That alone is a sign it needs updating.</p>
+    </section>
+
+    <section id="checks" class="checks" aria-labelledby="checks-title" tabindex="-1">
+      <h2 id="checks-title" class="visually-hidden" data-i18n="checksTitle">Checks</h2>
+
+      <article class="check" id="check-browser" data-status="idle">
+        <div class="check-head">
+          <svg class="mark" aria-hidden="true"><use href="#i-idle"></use></svg>
+          <div class="check-title">
+            <h3 data-i18n="browserTitle">Browser</h3>
+            <p class="question" data-i18n="browserQ">Is your browser up to date?</p>
+          </div>
+          <span class="pill" data-role="pill">Not checked</span>
+        </div>
+        <div class="check-body" aria-live="polite">
+          <p class="verdict" data-role="verdict"></p>
+          <dl class="facts" data-role="facts"></dl>
+          <p class="note" data-role="note"></p>
+          <p class="fix" data-role="fix"></p>
+        </div>
+      </article>
+
+      <article class="check" id="check-connection" data-status="idle">
+        <div class="check-head">
+          <svg class="mark" aria-hidden="true"><use href="#i-idle"></use></svg>
+          <div class="check-title">
+            <h3 data-i18n="connTitle">Connection</h3>
+            <p class="question" data-i18n="connQ">Does the connection use modern encryption?</p>
+          </div>
+          <span class="pill" data-role="pill">Not checked</span>
+        </div>
+        <div class="check-body" aria-live="polite">
+          <p class="verdict" data-role="verdict"></p>
+          <dl class="facts" data-role="facts"></dl>
+          <p class="note" data-role="note"></p>
+          <p class="fix" data-role="fix"></p>
+        </div>
+      </article>
+
+      <article class="check" id="check-dns" data-status="idle">
+        <div class="check-head">
+          <svg class="mark" aria-hidden="true"><use href="#i-idle"></use></svg>
+          <div class="check-title">
+            <h3 data-i18n="dnsTitle">DNS</h3>
+            <p class="question" data-i18n="dnsQ">Who answers your DNS lookups?</p>
+          </div>
+          <span class="pill" data-role="pill">Not checked</span>
+        </div>
+        <div class="check-body" aria-live="polite">
+          <p class="verdict" data-role="verdict"></p>
+          <dl class="facts" data-role="facts"></dl>
+          <p class="note" data-role="note"></p>
+          <p class="fix" data-role="fix"></p>
+        </div>
+      </article>
+
+      <article class="check" id="check-password" data-status="idle">
+        <div class="check-head">
+          <svg class="mark" aria-hidden="true"><use href="#i-idle"></use></svg>
+          <div class="check-title">
+            <h3 data-i18n="pwTitle">Password</h3>
+            <p class="question" data-i18n="pwQ">Has this password shown up in data breaches?</p>
+          </div>
+          <span class="pill" data-role="pill">Not checked</span>
+        </div>
+        <form id="pw-form" class="pw-form" autocomplete="off" novalidate>
+          <label for="pw" data-i18n="pwLabel">Password to check</label>
+          <div class="pw-row">
+            <input id="pw" name="pw" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="pw-hint pw-error">
+            <button id="pw-toggle" class="btn btn-ghost" type="button" aria-pressed="false" aria-controls="pw" data-i18n="pwShow">Show</button>
+          </div>
+          <p id="pw-hint" class="pw-hint" data-i18n="pwHint">The password never leaves your device. Only the first 5 characters of its code (the hash) are sent.</p>
+          <p id="pw-error" class="pw-error" role="alert"></p>
+          <button id="pw-submit" class="btn btn-secondary" type="submit" data-i18n="pwCheck">Check password</button>
+        </form>
+        <div class="check-body" aria-live="polite">
+          <p class="verdict" data-role="verdict"></p>
+          <div class="hash" data-role="hash" hidden>
+            <p class="hash-code" aria-hidden="true"><span class="hash-out" data-role="hash-out"></span><span class="hash-kept" data-role="hash-kept"></span></p>
+            <p class="hash-legend"><span class="k-out" data-i18n="hashOut">Left your device</span><span class="k-kept" data-i18n="hashKept">Stayed on your device</span></p>
+            <p class="hash-caption" data-role="hash-caption"></p>
+          </div>
+          <p class="note" data-role="note"></p>
+          <p class="fix" data-role="fix"></p>
+        </div>
+      </article>
+    </section>
+
+    <aside id="ledger" class="ledger" aria-labelledby="ledger-title" tabindex="-1">
+      <h2 id="ledger-title" data-i18n="ledgerTitle">What left your device</h2>
+      <p id="ledger-count" class="ledger-count"></p>
+      <p id="ledger-empty" class="ledger-empty" data-i18n="ledgerEmpty">Nothing yet. Each request appears here the moment it happens.</p>
+      <ol id="ledger-list" class="ledger-list"></ol>
+      <p class="ledger-note" data-i18n="ledgerNote">Every request shows the destination your IP address and browser type. That is part of every connection on the internet.</p>
+    </aside>
+
+    <section class="about" aria-labelledby="about-title">
+      <h2 id="about-title" data-i18n="aboutTitle">How it works</h2>
+      <p data-i18n="aboutPw">Password: your browser turns the password into a code (SHA-1 hash) and sends only the first 5 characters. Pwned Passwords returns hundreds of codes that start the same way, and the comparison happens here. Not even the service knows which password you checked.</p>
+      <p data-i18n="aboutDns">DNS: your browser looks up 20 test addresses that exist only for you. The bash.ws service records which DNS servers made those lookups and compares them with your connection’s network.</p>
+      <p data-i18n="aboutConn">Connection: Cloudflare reports how your browser connected to it, including the TLS version and whether the site name was hidden (ECH).</p>
+      <p data-i18n="aboutBrowser">Browser: the version is read right here and compared with the latest version published by Google and Mozilla.</p>
+      <p data-i18n="aboutPrivacy">This page uses no cookies, no analytics and no third-party scripts.</p>
+      <p class="credits"><span data-i18n="creditsLead">Services used:</span> <a href="https://haveibeenpwned.com/Passwords" rel="noopener noreferrer">Pwned Passwords</a>, <a href="https://www.cloudflare.com/ssl/encrypted-sni/" rel="noopener noreferrer">Cloudflare</a> <span data-i18n="creditsAnd">and</span> <a href="https://bash.ws/dnsleak" rel="noopener noreferrer">bash.ws</a>.</p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p><span data-i18n="footMade">Made by Adriano Huttener for CyberSecInfo.</span> <a href="https://github.com/ahuttener/pc-check" rel="noopener noreferrer" data-i18n="footCode">Open source on GitHub</a></p>
+  </footer>
+</body>
+</html>

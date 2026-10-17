@@ -1,0 +1,4 @@
+[{"ip":"203.0.113.7","country":"IE","country_name":"Ireland","asn":"Virgin Media Ireland","type":"ip"},
+ {"ip":"8.8.8.8","country":"US","country_name":"United States","asn":"Google LLC","type":"dns"},
+ {"ip":"2001:4860:4860::8888","country":"US","country_name":"United States","asn":"Google LLC","type":"dns"},
+ {"ip":"DNS is not leaking.","country":"","country_name":"","asn":"","type":"conclusion"}]
