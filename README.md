@@ -1,4 +1,4 @@
-<img src="assets/banner.jpg" alt="PC Check by CyberSecInfo" width="100%" />
+<img src="assets/banner.jpg" alt="PC Check: browser and connection security check by CyberSecInfo" width="100%" />
 
 # PC Check — Browser, Connection, DNS & Password Security
 
