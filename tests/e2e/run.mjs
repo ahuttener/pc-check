@@ -540,6 +540,61 @@ try {
     await context.close();
   }
 
+  // 8b. System report rules, score, anonymiser and AI summary
+  console.log('System report rules');
+  {
+    const fx = (f) => fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', f)).toString('base64');
+    const files = { rel: fx('reliability.xml'), bat: fx('battery-report.html'), msi: fx('msinfo32-head.txt') };
+    const { page, context } = await newPage('ok');
+    const r = await page.evaluate((files) => {
+      const S = window.PCSys;
+      if (!S || !S.evaluateWindows) return null;
+      const buf = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
+      const now = new Date('2026-10-18T09:00:00Z');
+      const real = S.evaluateWindows({ reliability: S.parseReliability(S.decode(buf(files.rel))), battery: S.parseBattery(S.decode(buf(files.bat))), msinfo: S.parseMsinfo(S.decode(buf(files.msi))) }, now);
+      const gen = new Date('2026-10-17T12:00:00Z');
+      const ev = (days, problem, source) => ({ time: new Date(gen.getTime() - days * 86400000), impact: 'Critical', source: source || 'Windows', problem });
+      const rel = (events, now2) => ({ generated: gen, stabilityNow: 8, stabilityMin30d: 8, events });
+      const ids = (e) => e.findings.map((f) => f.id + ':' + f.severity);
+      const planted = S.buildSummary(S.evaluateWindows({
+        reliability: rel([ev(1, 'Stopped working', 'C:\\Users\\JohnDoe\\AppData\\app.exe'), ev(2, 'Stopped working', 'john@x.com tool'),
+          ev(3, 'Stopped working', 'AA:BB:CC:DD:EE:FF'), ev(4, 'Stopped working', 'PF3ABC1234XY helper'), ev(5, 'Stopped working', 'DESKTOP-JD123 svc')]),
+        msinfo: { os: 'Microsoft Windows 11 Pro', model: 'DESKTOP-JD123 Model', cpu: 'x', ramGb: 16, problemDevices: [] },
+        names: ['DESKTOP-JD123', 'JohnDoe']
+      }, now));
+      return {
+        real: { score: real.score, ids: ids(real), text: JSON.stringify(real.findings), formula: 100 - 25 * real.findings.filter((f) => f.severity === 'risk').length - 10 * real.findings.filter((f) => f.severity === 'warn').length },
+        three: ids(S.evaluateWindows({ reliability: rel([ev(1, 'Shut down unexpectedly'), ev(5, 'Shut down unexpectedly'), ev(9, 'Shut down unexpectedly'), ev(40, 'Shut down unexpectedly')]) }, now)),
+        one: ids(S.evaluateWindows({ reliability: rel([ev(3, 'Shut down unexpectedly')]) }, now)),
+        old: ids(S.evaluateWindows({ reliability: rel([ev(3, 'Shut down unexpectedly')]) }, new Date('2026-12-30T00:00:00Z'))),
+        bat70: ids(S.evaluateWindows({ battery: { designMWh: 100, fullMWh: 70, cycles: 300, healthPct: 70 } }, now)),
+        bat55: ids(S.evaluateWindows({ battery: { designMWh: 100, fullMWh: 55, cycles: 900, healthPct: 55 } }, now)),
+        win10: ids(S.evaluateWindows({ msinfo: { os: 'Microsoft Windows 10 Home', ramGb: 8, problemDevices: [] } }, now)),
+        devices: ids(S.evaluateWindows({ msinfo: { os: 'Microsoft Windows 11 Home', ramGb: 8, problemDevices: ['Unknown device'] } }, now)),
+        planted: JSON.stringify(planted),
+        keys: Object.keys(S.buildSummary(real)).sort()
+      };
+    }, files);
+    check('PCSys.evaluateWindows exists', r !== null);
+    if (r) {
+      check('real PC: crashing background helpers flagged (MiracastPowerManager)', r.real.ids.includes('crashes:warn') && /MiracastPowerManager/.test(r.real.text), r.real.ids);
+      check('real PC: hardware errors flagged', r.real.ids.includes('hardware:warn'), r.real.ids);
+      check('real PC: low stability flagged', r.real.ids.includes('stability:warn'), r.real.ids);
+      check('real PC: healthy battery (90 %) not flagged', !r.real.ids.some((i) => i.startsWith('battery')), r.real.ids);
+      check('score follows the formula', r.real.score === Math.max(0, r.real.formula) && r.real.score < 80, [r.real.score, r.real.formula]);
+      check('3 unexpected shutdowns in 30 days -> risk', r.three.includes('shutdowns:risk'), r.three);
+      check('1 unexpected shutdown -> warn', r.one.includes('shutdowns:warn'), r.one);
+      check('report older than 30 days adds an info note', r.old.includes('old_report:info'), r.old);
+      check('battery 70 % -> warn, 55 % -> risk', r.bat70.includes('battery:warn') && r.bat55.includes('battery:risk'), [r.bat70, r.bat55]);
+      check('Windows 10 -> warn', r.win10.includes('windows10:warn'), r.win10);
+      check('problem devices -> warn', r.devices.includes('devices:warn'), r.devices);
+      check('anonymiser: planted name/path/serial/MAC/email never appear in summary JSON',
+        !/JohnDoe|john@x\.com|AA:BB:CC:DD:EE:FF|PF3ABC1234XY|DESKTOP-JD123/i.test(r.planted), r.planted);
+      check('summary has only whitelisted fields', JSON.stringify(r.keys) === JSON.stringify(['batteryHealthPct', 'findings', 'hardwareErrors30d', 'model', 'os', 'ramGb', 'score', 'shutdowns30d', 'stabilityNow', 'topCrashApps']), r.keys);
+    }
+    await context.close();
+  }
+
   // 6c1. Link previews (WhatsApp, LinkedIn, Instagram read Open Graph tags)
   console.log('Link preview');
   {
