@@ -1246,8 +1246,13 @@
     var go = $('#speed-go');
     var cancel = $('#speed-cancel');
     if (!go) return;
+    var again = !!state.speed.result || state.checks.speed.status !== 'idle';
     go.disabled = state.speed.running;
-    go.textContent = t(state.speed.result || state.checks.speed.status !== 'idle' ? 'speedAgain' : 'speedGo');
+    go.textContent = t(again ? 'speedAgain' : 'speedGo');
+    go.classList.toggle('again', again && !state.speed.running);
+    // The 'again' button sits under the gauge, so it must leave the gauge box.
+    var home = again ? $('.speed-actions') : $('#gauge');
+    if (home && go.parentNode !== home) home.insertBefore(go, home.firstChild);
     cancel.hidden = !state.speed.running;
   }
 
@@ -1257,7 +1262,6 @@
     state.speed = { running: true, result: null, controller: controller };
     setCheck('speed', { status: 'running' });
     renderSpeedButtons();
-    if (window.PCGauge && !gauge && $('#gauge')) gauge = window.PCGauge.create($('#gauge'));
     if (gauge) gauge.reset();
     var logged = {};
     measureSpeed(function (phase, value) {
@@ -1265,6 +1269,7 @@
       if (gauge) { gauge.phase(phase); if (phase !== 'ping') gauge.set(value); }
     }, controller.signal).then(function (result) {
       state.speed.result = result;
+      if (gauge && result.downMbps !== null) gauge.set(result.downMbps);
       setCheck('speed', evaluateSpeed(result));
     }, function () {
       setCheck('speed', controller.signal.aborted ? { status: 'info', verdict: ['speedCancelled'] } : { status: 'error', verdict: ['speedFail'], fix: ['fixSpeed'] });
@@ -1391,6 +1396,7 @@
 
     $('#run').addEventListener('click', runAll);
     $('#speed-go').addEventListener('click', runSpeed);
+    if (window.PCGauge && $('#gauge')) gauge = window.PCGauge.create($('#gauge'));
     $('#speed-cancel').addEventListener('click', cancelSpeed);
 
     $all('.lang button').forEach(function (b) {

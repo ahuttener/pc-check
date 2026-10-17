@@ -418,6 +418,41 @@ try {
     await context.close();
   }
 
+  // 6b. Animated gauge
+  console.log('Gauge');
+  {
+    const { page, context } = await newPage('ok');
+    const f = await page.evaluate(() => {
+      const fr = window.PCGauge && window.PCGauge.fraction;
+      return fr ? [fr(0), fr(100), fr(1000), fr(5000), fr(-1), fr(7.5)] : null;
+    });
+    check('gauge.fraction scale', f && f[0] === 0 && f[1] === 0.5 && f[2] === 1 && f[3] === 1 && f[4] === 0, f);
+    check('gauge.fraction is piecewise linear between ticks (7.5 -> 1.5/8)', f && Math.abs(f[5] - 1.5 / 8) < 1e-9, f && f[5]);
+    check('gauge SVG is drawn', (await page.locator('#gauge svg').count()) === 1);
+    await page.click('#speed-go');
+    await page.waitForFunction(() => !['running', 'idle'].includes(document.getElementById('check-speed').getAttribute('data-status')), null, { timeout: 40000 });
+    const shown = await page.locator('#gauge [data-role="gauge-value"]').textContent();
+    check('gauge shows the final download number', /^\d+(\.\d)?$/.test(shown.trim()) && parseFloat(shown) > 0, shown);
+    await page.locator('#check-speed').screenshot({ path: path.join(shots, 'speed-desktop.png') });
+    await context.close();
+  }
+  for (const [label, opts, engineName] of [['375 px', { viewport: { width: 375, height: 812 } }, 'chromium'], ['iPhone', devices['iPhone 14'], 'webkit']]) {
+    const eng = engineName === 'webkit' ? await webkit.launch() : browser;
+    try {
+      const { page, context } = await newPage('ok', opts, eng);
+      const box = await page.locator('#speed-go').boundingBox();
+      check('gauge: fits ' + label + ' — GO is tappable (>= 44 px)', box && box.height >= 44 && box.width >= 44, box);
+      await page.click('#speed-go');
+      await page.waitForFunction(() => !['running', 'idle'].includes(document.getElementById('check-speed').getAttribute('data-status')), null, { timeout: 40000 });
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      check('gauge: fits ' + label + ' — no horizontal scroll', overflow <= 0, overflow);
+      await page.locator('#check-speed').screenshot({ path: path.join(shots, engineName === 'webkit' ? 'speed-iphone.png' : 'speed-375.png') });
+      await context.close();
+    } finally {
+      if (eng !== browser) await eng.close();
+    }
+  }
+
   // 7. iPhone (WebKit, the engine every iOS browser must use): full run, no sideways scroll
   console.log('iPhone (WebKit)');
   {

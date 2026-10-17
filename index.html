@@ -12,8 +12,9 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/fonts/roboto-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/orbitron-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/styles.css?v=4">
-  <script src="assets/app.js?v=3" defer></script>
+  <link rel="stylesheet" href="assets/styles.css?v=5">
+  <script src="assets/gauge.js?v=1" defer></script>
+  <script src="assets/app.js?v=4" defer></script>
 </head>
 <body>
   <svg class="sprite" aria-hidden="true" focusable="false">
@@ -183,9 +184,10 @@
         </div>
         <div class="check-body" aria-live="polite">
           <div class="speed-ui">
-            <div class="gauge" id="gauge"></div>
+            <div class="gauge" id="gauge">
+              <button id="speed-go" class="go" type="button" data-i18n="speedGo">GO</button>
+            </div>
             <div class="speed-actions">
-              <button id="speed-go" class="btn btn-primary" type="button" data-i18n="speedGo">GO</button>
               <button id="speed-cancel" class="btn btn-secondary" type="button" data-i18n="speedCancel" hidden>Cancel</button>
             </div>
             <p class="speed-warn" data-i18n="speedWarn">Runs only when you press GO. Uses up to about 55 MB of data.</p>
