@@ -345,6 +345,7 @@
       speedSlow: function (d) { return 'Slow connection: ' + d + ' Mbps download. HD video and large downloads will struggle.'; },
       speedFail: "We couldn't measure the speed. The connection dropped or the test was blocked.",
       speedCancelled: 'Speed test cancelled.',
+      speedOld: 'This browser is too old to run the speed test. That alone is a sign it needs updating.',
       speedNote: 'Measured to the nearest Cloudflare data centre. Wi-Fi signal and other devices on your network affect the result.',
       speedPingHigh: 'Ping is above 100 ms: calls and games may feel laggy.',
       speedPartial: 'The connection slowed down during the test, so this result uses the parts that finished.',
@@ -1156,6 +1157,7 @@
     upSizes: [1000000, 5000000, 10000000],
     downBudgetMs: 8000,
     upBudgetMs: 6000,
+    pingBudgetMs: 4000,
     requestTimeoutMs: 10000,
     pings: 10
   };
@@ -1194,9 +1196,10 @@
     function stop(err) { if (aborted()) throw err; out.partial = true; }
 
     var pings = [];
+    var pingStart = now();
     onProgress('ping', null);
     function ping(i) {
-      if (i >= SPEED.pings || aborted()) return Promise.resolve();
+      if (i >= SPEED.pings || aborted() || (i > 0 && now() - pingStart > SPEED.pingBudgetMs)) return Promise.resolve();
       return speedFetch(SPEED.base + '__down?bytes=0', {}, signal).then(function (r) {
         if (!out.colo) out.colo = r.res.headers.get('cf-meta-colo');
         pings.push(r.ms);
@@ -1270,6 +1273,11 @@
 
   function runSpeed() {
     if (state.speed.running) return;
+    if (typeof AbortController !== 'function' || typeof fetch !== 'function') {
+      setCheck('speed', { status: 'error', verdict: ['speedOld'], fix: ['fixUpdate'] });
+      renderSpeedButtons();
+      return;
+    }
     var controller = new AbortController();
     state.speed = { running: true, result: null, controller: controller };
     setCheck('speed', { status: 'running' });
@@ -1482,9 +1490,14 @@
 
     $('#run').addEventListener('click', runAll);
     $('#speed-go').addEventListener('click', runSpeed);
-    if (window.PCGauge && $('#gauge')) gauge = window.PCGauge.create($('#gauge'));
+    try {
+      if (window.PCGauge && $('#gauge')) gauge = window.PCGauge.create($('#gauge'));
+    } catch (e) {
+      gauge = null; // the speed test still works, just without the dial
+    }
     $('#speed-cancel').addEventListener('click', cancelSpeed);
     $('#pdf').addEventListener('click', printReport);
+    window.addEventListener('beforeprint', buildReport);
 
     $all('.lang button').forEach(function (b) {
       b.addEventListener('click', function () { setLang(b.getAttribute('data-lang')); });

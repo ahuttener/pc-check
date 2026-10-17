@@ -100,6 +100,7 @@ async function newPage(mode, opts = {}, engine = browser) {
     const bytes = parseInt((url.match(/bytes=(\d+)/) || [])[1] || '0', 10);
     if (speed === 'stall' && bytes === 25000000) return; // never answered: the page's own timeout must end it
     if (speed === 'down') return r.fulfill({ status: 503, headers, body: 'down' });
+    if (speed === 'slowping' && bytes === 0) await new Promise((res) => setTimeout(res, 1500));
     await new Promise((res) => setTimeout(res, 20));
     return r.fulfill({ status: 200, contentType: 'application/octet-stream', headers, body: url.includes('__down') ? Buffer.alloc(bytes) : '' });
   });
@@ -490,6 +491,48 @@ try {
     await page.pdf({ path: path.join(shots, 'report.pdf'), format: 'A4', printBackground: true });
     await page.emulateMedia({ media: 'screen' });
     check('pdf: report hidden again on screen', !(await page.locator('#report').isVisible()));
+    await context.close();
+  }
+
+  // 6d. Robustness: old browsers, Ctrl+P, slow pings, a failing gauge
+  console.log('Robustness');
+  {
+    const { page, context, seen } = await newPage('ok', { initScript: 'window.AbortController = undefined;' });
+    await page.click('#speed-go');
+    await page.waitForFunction(() => document.getElementById('check-speed').getAttribute('data-status') !== 'idle', null, { timeout: 5000 }).catch(() => {});
+    check('old browser: GO explains instead of doing nothing', (await status(page, 'speed')) === 'error' &&
+      /too old/i.test(await page.locator('#check-speed [data-role="verdict"]').innerText()), await status(page, 'speed'));
+    check('old browser: no page errors', seen.errors.length === 0, seen.errors);
+    await context.close();
+  }
+  {
+    const { page, context } = await newPage('ok');
+    await runChecks(page);
+    await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+    check('Ctrl+P: the report is built before printing', (await page.locator('#report').innerText()).includes('PC Check report'));
+    await context.close();
+  }
+  {
+    const { page, context, seen } = await newPage('ok', { speed: 'slowping' });
+    const t0 = Date.now();
+    await page.click('#speed-go');
+    await page.waitForFunction(() => window.__dlStarted === true || false, null, { timeout: 1 }).catch(() => {});
+    let firstDownloadAt = null;
+    for (let i = 0; i < 100 && firstDownloadAt === null; i++) {
+      if (seen.speed.some((u) => /bytes=100000\b/.test(u))) firstDownloadAt = Date.now() - t0;
+      else await page.waitForTimeout(200);
+    }
+    check('slow pings: download starts within ~6 s (ping time budget)', firstDownloadAt !== null && firstDownloadAt < 8000, firstDownloadAt);
+    await context.close();
+  }
+  {
+    const { page, context, seen } = await newPage('ok', { initScript: 'Object.defineProperty(window, "PCGauge", { configurable: true, get() { return { create() { throw new Error("gauge broke"); }, fraction() { return 0; } }; }, set() {} });' });
+    await runChecks(page);
+    await page.fill('#pw', 'password');
+    await page.click('#pw-submit');
+    await page.waitForFunction(() => document.getElementById('check-password').getAttribute('data-status') === 'risk', null, { timeout: 10000 }).catch(() => {});
+    check('broken gauge: the rest of the page still works', (await status(page, 'password')) === 'risk' && (await status(page, 'dns')) === 'ok', await status(page, 'password'));
+    check('broken gauge: no uncaught error', seen.errors.length === 0, seen.errors);
     await context.close();
   }
 

@@ -59,9 +59,6 @@
 
     node('path', { d: arcPath(R), fill: 'none', stroke: '#1f2937', 'stroke-width': '16', 'stroke-linecap': 'round' }, svg);
     var value = node('path', { d: arcPath(R), fill: 'none', stroke: 'url(#gauge-grad)', 'stroke-width': '16', 'stroke-linecap': 'round', filter: 'url(#gauge-glow)' }, svg);
-    var length = value.getTotalLength ? value.getTotalLength() : 2 * Math.PI * R * SWEEP / 360;
-    value.setAttribute('stroke-dasharray', length.toFixed(2));
-    value.setAttribute('stroke-dashoffset', length.toFixed(2));
 
     TICKS.forEach(function (tick, i) {
       var ang = START + SWEEP * i / (TICKS.length - 1);
@@ -88,6 +85,11 @@
     });
 
     container.insertBefore(svg, container.firstChild);
+    // Measured after insertion: some engines return 0 for a detached path.
+    var measured = value.getTotalLength ? value.getTotalLength() : 0;
+    var length = measured > 0 ? measured : 2 * Math.PI * R * SWEEP / 360;
+    value.setAttribute('stroke-dasharray', length.toFixed(2));
+    value.setAttribute('stroke-dashoffset', length.toFixed(2));
 
     var shown = 0;
     var target = 0;
