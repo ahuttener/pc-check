@@ -132,6 +132,36 @@ try {
     await context.close();
   }
 
+  // 3b. Fairer browser verdict while an update is still rolling out (pure function, fixed clock)
+  console.log('Browser verdict');
+  {
+    const { page, context } = await newPage('ok');
+    const cases = await page.evaluate(() => {
+      const now = new Date('2026-10-17T12:00:00Z');
+      const daysAgo = (d) => new Date(now.getTime() - d * 86400000).toISOString().replace(/\.\d+Z$/, 'Z');
+      const chrome = (version) => ({ family: 'chromium', name: 'Chrome', version, engineMajor: parseInt(version, 10), platform: 'win' });
+      const v = (released) => ({ chrome: { win: { version: '156.0.8078.36', major: 156, released } } });
+      const ev = window.__bsc.evaluateBrowser;
+      const pick = (r) => r.status + ':' + r.verdict[0];
+      const ff = { family: 'firefox', name: 'Firefox', version: '157.0', engineMajor: 157 };
+      return {
+        oneBehindFresh: pick(ev(chrome('155.0.8059.82'), v(daysAgo(3)), now)),
+        oneBehindOld: pick(ev(chrome('155.0.8059.82'), v(daysAgo(20)), now)),
+        twoBehindFresh: pick(ev(chrome('154.0.8037.100'), v(daysAgo(3)), now)),
+        noDate: pick(ev(chrome('155.0.8059.82'), v(undefined), now)),
+        patchFresh: pick(ev(chrome('156.0.8078.20'), v(daysAgo(3)), now)),
+        firefoxFresh: pick(ev(ff, { firefox: { latest: '158.0', latest_major: 158, esr: '153.5.0', esr_major: 153, released: daysAgo(3).slice(0, 10) } }, now))
+      };
+    });
+    check('one major behind, released 3 days ago -> info rolling', cases.oneBehindFresh === 'info:browserRolling', cases.oneBehindFresh);
+    check('one major behind, released 20 days ago -> warn', cases.oneBehindOld === 'warn:browserBehind', cases.oneBehindOld);
+    check('two majors behind stays risk even if fresh', cases.twoBehindFresh === 'risk:browserOld', cases.twoBehindFresh);
+    check('no release date -> old verdict (warn)', cases.noDate === 'warn:browserBehind', cases.noDate);
+    check('pending patch, fresh -> info rolling', cases.patchFresh === 'info:browserRolling', cases.patchFresh);
+    check('Firefox one behind, fresh -> info rolling', cases.firefoxFresh === 'info:browserRolling', cases.firefoxFresh);
+    await context.close();
+  }
+
   // 4. Every outside service fails: each check shows "Couldn't check", page keeps working
   console.log('Errors');
   {

@@ -229,6 +229,7 @@
       browserOk: function (name, version) { return name + ' ' + version + ' is up to date.'; },
       browserPatch: function (name) { return 'A security update for ' + name + ' is available but not installed yet.'; },
       browserBehind: function (name) { return 'A newer version of ' + name + ' is available but not installed yet.'; },
+      browserRolling: function (name) { return 'A new version of ' + name + ' is rolling out and should reach you in the next days.'; },
       browserOld: function (name) { return 'This ' + name + ' is out of date and may have publicly known security flaws.'; },
       browserEsrMaybe: function (version) { return 'Firefox ' + version + ': if this is the ESR (extended support) edition, it is up to date. If it is the regular edition, it is out of date.'; },
       browserIos: 'On iPhone and iPad, every browser uses the system engine. It stays safe when iOS is up to date.',
@@ -671,7 +672,15 @@
     return parts.join('.');
   }
 
-  function evaluateBrowser(b, v) {
+  // A new release reaches everyone gradually; under 14 days old it is still "rolling out".
+  var ROLLOUT_DAYS = 14;
+  function isRollingOut(released, now) {
+    var when = released ? Date.parse(released) : NaN;
+    if (isNaN(when)) return false;
+    return (now || new Date()).getTime() - when < ROLLOUT_DAYS * 86400000;
+  }
+
+  function evaluateBrowser(b, v, now) {
     var facts = [{ label: ['fBrowser'], value: b.name || t('unknown') }];
     if (b.version) facts.push({ label: ['fVersion'], value: shortVersion(b.version), data: true });
 
@@ -688,10 +697,11 @@
 
       var diff = platformLatest.major - b.engineMajor;
       if (diff >= 2) return { status: 'risk', verdict: ['browserOld', b.name], facts: facts, fix: ['fixUpdate'] };
-      if (diff === 1) return { status: 'warn', verdict: ['browserBehind', b.name], facts: facts, fix: ['fixUpdate'] };
+      var rolling = isRollingOut(platformLatest.released, now);
+      if (diff === 1) return { status: rolling ? 'info' : 'warn', verdict: [rolling ? 'browserRolling' : 'browserBehind', b.name], facts: facts, fix: ['fixUpdate'] };
       // Same major. Chrome reports its full version, so pending security patches are visible too.
       if (isChrome && diff === 0 && compareVersions(b.version, platformLatest.version) < 0 && !/\.0\.0\.0$/.test(b.version)) {
-        return { status: 'warn', verdict: ['browserPatch', b.name], facts: facts, fix: ['fixUpdate'] };
+        return { status: rolling ? 'info' : 'warn', verdict: [rolling ? 'browserRolling' : 'browserPatch', b.name], facts: facts, fix: ['fixUpdate'] };
       }
       return { status: 'ok', verdict: ['browserOk', b.name, shortVersion(b.version)], facts: facts };
     }
@@ -706,7 +716,8 @@
       facts.push({ label: ['fLatest'], value: f.latest, data: true });
       var fdiff = f.latest_major - b.engineMajor;
       if (fdiff >= 2) return { status: 'risk', verdict: ['browserOld', 'Firefox'], facts: facts, fix: ['fixUpdate'] };
-      if (fdiff === 1) return { status: 'warn', verdict: ['browserBehind', 'Firefox'], facts: facts, fix: ['fixUpdate'] };
+      var frolling = isRollingOut(f.released, now);
+      if (fdiff === 1) return { status: frolling ? 'info' : 'warn', verdict: [frolling ? 'browserRolling' : 'browserBehind', 'Firefox'], facts: facts, fix: ['fixUpdate'] };
       return { status: 'ok', verdict: ['browserOk', 'Firefox', shortVersion(b.version)], facts: facts };
     }
 
