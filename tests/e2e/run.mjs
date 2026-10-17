@@ -494,6 +494,23 @@ try {
     await context.close();
   }
 
+  // 6c1. Link previews (WhatsApp, LinkedIn, Instagram read Open Graph tags)
+  console.log('Link preview');
+  {
+    const { page, context } = await newPage('ok');
+    const og = await page.evaluate(() => {
+      const m = (sel) => (document.querySelector(sel) || {}).content || null;
+      return { title: m('meta[property="og:title"]'), desc: m('meta[property="og:description"]'), image: m('meta[property="og:image"]'),
+        url: m('meta[property="og:url"]'), type: m('meta[property="og:type"]'), w: m('meta[property="og:image:width"]'),
+        h: m('meta[property="og:image:height"]'), card: m('meta[name="twitter:card"]') };
+    });
+    check('og:title and og:description set', !!og.title && og.title.includes('PC Check') && !!og.desc, og);
+    check('og:image is an absolute https URL to the banner', og.image === 'https://cybersecinfo.com/pccheck/assets/banner.jpg', og.image);
+    check('og:url is the clean page URL', og.url === 'https://cybersecinfo.com/pccheck/', og.url);
+    check('og:type, image size and large card set', og.type === 'website' && og.w === '1600' && og.h === '800' && og.card === 'summary_large_image', og);
+    await context.close();
+  }
+
   // 6c2. Layout: speed card in the right column, above the outbound log (desktop); stacked on phones
   console.log('Speed card placement');
   {
