@@ -1,7 +1,7 @@
 Options -Indexes
 
 <IfModule mod_headers.c>
-  Header always set Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: https://*.bash.ws; connect-src 'self' https://api.pwnedpasswords.com https://one.one.one.one https://www.cloudflare.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+  Header always set Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: https://*.bash.ws; connect-src 'self' https://api.pwnedpasswords.com https://one.one.one.one https://www.cloudflare.com https://speed.cloudflare.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
   Header always set X-Content-Type-Options "nosniff"
   Header always set Referrer-Policy "no-referrer"
   Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"

@@ -333,6 +333,27 @@
       vDetected: 'Detected',
       vNotDetected: 'Not detected',
       vRandomised: 'Randomised (protected)',
+      speedTitle: 'Internet speed',
+      speedQ: 'How fast is your connection right now?',
+      speedGo: 'GO',
+      speedAgain: 'Test again',
+      speedCancel: 'Cancel',
+      speedWarn: 'Runs only when you press GO. Uses up to about 55 MB of data.',
+      speedFast: function (d) { return 'Fast connection: ' + d + ' Mbps download.'; },
+      speedOk: function (d) { return 'Good for browsing and video: ' + d + ' Mbps download.'; },
+      speedSlow: function (d) { return 'Slow connection: ' + d + ' Mbps download. HD video and large downloads will struggle.'; },
+      speedFail: "We couldn't measure the speed. The connection dropped or the test was blocked.",
+      speedCancelled: 'Speed test cancelled.',
+      speedNote: 'Measured to the nearest Cloudflare data centre. Wi-Fi signal and other devices on your network affect the result.',
+      speedPingHigh: 'Ping is above 100 ms: calls and games may feel laggy.',
+      speedPartial: 'The connection slowed down during the test, so this result uses the parts that finished.',
+      fixSpeed: 'Test again close to the router or with a cable. If it stays slow, restart the router and check your plan with your provider.',
+      fDown: 'Download',
+      fUp: 'Upload',
+      fPing: 'Ping',
+      fJitter: 'Jitter',
+      fColo: 'Cloudflare data centre',
+      lpSpeed: function (phase) { return 'Speed test, ' + phase + ' (Cloudflare)'; },
 
       aboutTitle: 'How it works',
       aboutPw: 'Password: your browser turns the password into a code (SHA-1 hash) and sends only the first 5 characters. Pwned Passwords returns hundreds of codes that start the same way, and the comparison happens here. Not even the service knows which password you checked.',
@@ -361,13 +382,15 @@
       dns: blankCheck(),
       webrtc: blankCheck(),
       tracking: blankCheck(),
+      speed: blankCheck(),
       password: blankCheck()
     },
     ledger: [],
     hash: null,
     pwVisible: false,
     pwBusy: false,
-    pwError: null
+    pwError: null,
+    speed: { running: false, result: null, controller: null }
   };
 
   function blankCheck() {
@@ -612,6 +635,7 @@
 
   function renderAll() {
     renderStatic();
+    renderSpeedButtons();
     Object.keys(state.checks).forEach(renderCheck);
     renderLedger();
   }
@@ -1114,6 +1138,148 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Speed test (Cloudflare speed endpoints; only from its own GO button)
+  // ---------------------------------------------------------------------------
+  var SPEED = {
+    base: 'https://speed.cloudflare.com/',
+    downSizes: [100000, 1000000, 10000000, 25000000],
+    upSizes: [1000000, 5000000, 10000000],
+    downBudgetMs: 8000,
+    upBudgetMs: 6000,
+    requestTimeoutMs: 10000,
+    pings: 10
+  };
+
+  function now() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+
+  // One request with its own 10 s timeout, also aborted by the outer Cancel signal.
+  function speedFetch(url, opts, outer) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, SPEED.requestTimeoutMs);
+    function onOuter() { controller.abort(); }
+    if (outer) outer.addEventListener('abort', onOuter);
+    var t0 = now();
+    return fetch(url, Object.assign({ cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error', signal: controller.signal }, opts))
+      .then(function (res) {
+        if (!res.ok) throw new Error('http_' + res.status);
+        return res.arrayBuffer().then(function (buf) { return { ms: Math.max(now() - t0, 1), bytes: buf.byteLength, res: res }; });
+      })
+      .then(function (out) { clearTimeout(timer); if (outer) outer.removeEventListener('abort', onOuter); return out; },
+        function (err) { clearTimeout(timer); if (outer) outer.removeEventListener('abort', onOuter); throw err; });
+  }
+
+  function median(xs) {
+    var s = xs.slice().sort(function (a, b) { return a - b; });
+    return s.length ? s[Math.floor((s.length - 1) / 2)] : null;
+  }
+  function p90(xs) {
+    var s = xs.slice().sort(function (a, b) { return a - b; });
+    return s.length ? s[Math.max(Math.ceil(0.9 * s.length) - 1, 0)] : null;
+  }
+  function round1(n) { return n === null ? null : Math.round(n * 10) / 10; }
+
+  function measureSpeed(onProgress, signal) {
+    var out = { pingMs: null, jitterMs: null, downMbps: null, upMbps: null, colo: null, partial: false };
+    function aborted() { return signal && signal.aborted; }
+    function stop(err) { if (aborted()) throw err; out.partial = true; }
+
+    var pings = [];
+    function ping(i) {
+      if (i >= SPEED.pings || aborted()) return Promise.resolve();
+      return speedFetch(SPEED.base + '__down?bytes=0', {}, signal).then(function (r) {
+        if (!out.colo) out.colo = r.res.headers.get('cf-meta-colo');
+        pings.push(r.ms);
+        onProgress('ping', r.ms);
+        return ping(i + 1);
+      });
+    }
+
+    function phase(sizes, budget, send) {
+      var samples = [];
+      var start = now();
+      function step(i) {
+        if (i >= sizes.length || now() - start > budget || aborted()) return Promise.resolve(samples);
+        return send(sizes[i]).then(function (r) {
+          var mbps = (sizes[i] * 8) / (r.ms / 1000) / 1e6;
+          samples.push(mbps);
+          onProgress(send.phaseName, mbps);
+          return step(i + 1);
+        }, function (err) { stop(err); return samples; });
+      }
+      return step(0);
+    }
+    function down(size) { return speedFetch(SPEED.base + '__down?bytes=' + size, {}, signal); }
+    down.phaseName = 'download';
+    function up(size) { return speedFetch(SPEED.base + '__up', { method: 'POST', body: new Uint8Array(size) }, signal); }
+    up.phaseName = 'upload';
+
+    return ping(0).catch(function (err) { stop(err); })
+      .then(function () {
+        out.pingMs = round1(median(pings));
+        if (pings.length > 1) {
+          var diffs = 0;
+          for (var i = 1; i < pings.length; i++) diffs += Math.abs(pings[i] - pings[i - 1]);
+          out.jitterMs = round1(diffs / (pings.length - 1));
+        }
+        return phase(SPEED.downSizes, SPEED.downBudgetMs, down);
+      })
+      .then(function (s) { out.downMbps = round1(p90(s)); return phase(SPEED.upSizes, SPEED.upBudgetMs, up); })
+      .then(function (s) { out.upMbps = round1(p90(s)); return out; });
+  }
+
+  function evaluateSpeed(r) {
+    if (!r || r.downMbps === null || r.downMbps === undefined) return { status: 'error', verdict: ['speedFail'], fix: ['fixSpeed'] };
+    var facts = [{ label: ['fDown'], value: r.downMbps + ' Mbps', data: true }];
+    if (r.upMbps !== null) facts.push({ label: ['fUp'], value: r.upMbps + ' Mbps', data: true });
+    if (r.pingMs !== null) facts.push({ label: ['fPing'], value: r.pingMs + ' ms', data: true });
+    if (r.jitterMs !== null) facts.push({ label: ['fJitter'], value: r.jitterMs + ' ms', data: true });
+    if (r.colo) facts.push({ label: ['fColo'], value: r.colo, data: true });
+    var note = r.partial ? ['speedPartial'] : (r.pingMs > 100 ? ['speedPingHigh'] : ['speedNote']);
+    if (r.downMbps >= 25) return { status: 'ok', verdict: ['speedFast', r.downMbps], facts: facts, note: note };
+    if (r.downMbps >= 10) return { status: 'info', verdict: ['speedOk', r.downMbps], facts: facts, note: note, fix: ['fixSpeed'] };
+    return { status: 'warn', verdict: ['speedSlow', r.downMbps], facts: facts, note: note, fix: ['fixSpeed'] };
+  }
+
+  var gauge = null;
+
+  function renderSpeedButtons() {
+    var go = $('#speed-go');
+    var cancel = $('#speed-cancel');
+    if (!go) return;
+    go.disabled = state.speed.running;
+    go.textContent = t(state.speed.result || state.checks.speed.status !== 'idle' ? 'speedAgain' : 'speedGo');
+    cancel.hidden = !state.speed.running;
+  }
+
+  function runSpeed() {
+    if (state.speed.running) return;
+    var controller = new AbortController();
+    state.speed = { running: true, result: null, controller: controller };
+    setCheck('speed', { status: 'running' });
+    renderSpeedButtons();
+    if (window.PCGauge && !gauge && $('#gauge')) gauge = window.PCGauge.create($('#gauge'));
+    if (gauge) gauge.reset();
+    var logged = {};
+    measureSpeed(function (phase, value) {
+      if (!logged[phase]) { logged[phase] = true; logOutbound('speed.cloudflare.com', ['lpSpeed', phase], ['test bytes only']); }
+      if (gauge) { gauge.phase(phase); if (phase !== 'ping') gauge.set(value); }
+    }, controller.signal).then(function (result) {
+      state.speed.result = result;
+      setCheck('speed', evaluateSpeed(result));
+    }, function () {
+      setCheck('speed', controller.signal.aborted ? { status: 'info', verdict: ['speedCancelled'] } : { status: 'error', verdict: ['speedFail'], fix: ['fixSpeed'] });
+    }).then(function () {
+      state.speed.running = false;
+      if (gauge) gauge.phase('done');
+      renderSpeedButtons();
+    });
+  }
+
+  function cancelSpeed() {
+    if (state.speed.running && state.speed.controller) state.speed.controller.abort();
+  }
+
+  // ---------------------------------------------------------------------------
   // Check 4: password (Pwned Passwords range API, k-anonymity)
   // ---------------------------------------------------------------------------
   function sha1Hex(text) {
@@ -1224,6 +1390,8 @@
     state.lang = detectLang();
 
     $('#run').addEventListener('click', runAll);
+    $('#speed-go').addEventListener('click', runSpeed);
+    $('#speed-cancel').addEventListener('click', cancelSpeed);
 
     $all('.lang button').forEach(function (b) {
       b.addEventListener('click', function () { setLang(b.getAttribute('data-lang')); });
@@ -1261,6 +1429,7 @@
     evaluateDns: evaluateDns,
     evaluateWebRtc: evaluateWebRtc,
     evaluateTracking: evaluateTracking,
+    evaluateSpeed: evaluateSpeed,
     sha1Hex: sha1Hex,
     shortVersion: shortVersion
   };

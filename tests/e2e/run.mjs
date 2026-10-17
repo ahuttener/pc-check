@@ -61,12 +61,12 @@ const RTC_STUB = `(() => {
 })();`;
 
 async function newPage(mode, opts = {}, engine = browser) {
-  const { initScript, ...contextOpts } = opts;
+  const { initScript, speed = 'ok', ...contextOpts } = opts;
   const context = await engine.newContext(Object.assign({ locale: 'en-IE' }, contextOpts));
   if (initScript) await context.addInitScript(initScript);
   await context.addInitScript(RTC_STUB);
   const page = await context.newPage();
-  const seen = { external: [], hibp: [], errors: [], consoleErrors: [] };
+  const seen = { external: [], hibp: [], errors: [], consoleErrors: [], speed: [] };
   page.on('pageerror', (e) => seen.errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') seen.consoleErrors.push(m.text()); });
 
@@ -89,6 +89,18 @@ async function newPage(mode, opts = {}, engine = browser) {
     if (mode === 'ok') return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DNS) });
     if (mode === 'rate') return r.fulfill({ status: 429, contentType: 'application/json', headers: { 'Retry-After': '60' }, body: '{"error":"rate_limited"}' });
     return r.fulfill({ status: 502, contentType: 'application/json', body: '{"error":"upstream"}' });
+  });
+
+  // Cloudflare speed test: zero-filled bodies after a short delay. speed: 'stall' never answers the 25 MB download.
+  await page.route(/speed\.cloudflare\.com\//, async (r) => {
+    const url = r.request().url();
+    seen.speed.push(url);
+    const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'cf-meta-colo', 'cf-meta-colo': 'DUB' };
+    if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: Object.assign({ 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'content-type' }, headers) });
+    const bytes = parseInt((url.match(/bytes=(\d+)/) || [])[1] || '0', 10);
+    if (speed === 'stall' && bytes === 25000000) return; // never answered: the page's own timeout must end it
+    await new Promise((res) => setTimeout(res, 20));
+    return r.fulfill({ status: 200, contentType: 'application/octet-stream', headers, body: url.includes('__down') ? Buffer.alloc(bytes) : '' });
   });
 
   await page.goto(BASE);
@@ -262,6 +274,68 @@ try {
     check('tracking: GPC on is reported', /Global Privacy Control\s*On/i.test(gFacts), gFacts);
     check('tracking sends nothing (same ledger size with or without GPC)', (await g.page.locator('#ledger-list li').count()) === ledger1);
     await g.context.close();
+  }
+
+  // 3e. Speed test (own GO button, Cloudflare mocked)
+  console.log('Speed test');
+  {
+    const { page, context } = await newPage('ok');
+    const r = await page.evaluate(() => {
+      const ev = window.__bsc.evaluateSpeed;
+      return {
+        fast: ev({ downMbps: 120, upMbps: 20, pingMs: 15, jitterMs: 2, colo: 'DUB', partial: false }),
+        mid: ev({ downMbps: 15, upMbps: 5, pingMs: 20, jitterMs: 2, colo: 'DUB', partial: false }).status,
+        slow: ev({ downMbps: 4, upMbps: 1, pingMs: 20, jitterMs: 2, colo: 'DUB', partial: false }).status,
+        lag: ev({ downMbps: 120, upMbps: 20, pingMs: 180, jitterMs: 9, colo: 'DUB', partial: false }),
+        none: ev({ downMbps: null, upMbps: null, pingMs: null, jitterMs: null, colo: null, partial: true }).status
+      };
+    });
+    check('speed: 120 Mbps -> ok', r.fast.status === 'ok', r.fast.status);
+    check('speed: 15 Mbps -> info', r.mid === 'info', r.mid);
+    check('speed: 4 Mbps -> warn', r.slow === 'warn', r.slow);
+    check('speed: ping 180 ms adds a note', !!r.lag.note && r.lag.note[0] === 'speedPingHigh', r.lag.note);
+    check('speed: no samples -> error', r.none === 'error', r.none);
+
+    await context.close();
+  }
+  {
+    const { page, context, seen } = await newPage('ok');
+    await runChecks(page);
+    check('Check now never requests speed.cloudflare.com', seen.speed.length === 0, seen.speed);
+    check('speed card is idle until GO', (await status(page, 'speed')) === 'idle');
+    check('data warning shown', (await page.locator('#check-speed').innerText()).includes('55 MB'));
+    await page.click('#speed-go');
+    check('speed: GO is disabled while running', await page.locator('#speed-go').isDisabled());
+    await page.click('#run'); // Check now still works during the speed test
+    await page.waitForFunction(() => !['running', 'idle'].includes(document.getElementById('check-speed').getAttribute('data-status')), null, { timeout: 40000 });
+    check('speed: Check now unaffected (DNS done)', (await status(page, 'dns')) === 'ok', await status(page, 'dns'));
+    check('speed: result ok with mocked fast link', (await status(page, 'speed')) === 'ok', await status(page, 'speed'));
+    const facts = await page.locator('#check-speed [data-role="facts"]').innerText();
+    check('speed facts show Mbps, ping and the data centre', facts.includes('Mbps') && facts.includes(' ms') && facts.includes('DUB'), facts);
+    check('ledger lists speed.cloudflare.com', (await page.locator('#ledger-list').innerText()).includes('speed.cloudflare.com'));
+    check('speed: GO is enabled again', !(await page.locator('#speed-go').isDisabled()));
+    await context.close();
+  }
+  {
+    const { page, context } = await newPage('ok', { speed: 'stall' });
+    const t0 = Date.now();
+    await page.click('#speed-go');
+    await page.waitForFunction(() => document.getElementById('check-speed').getAttribute('data-status') !== 'running' &&
+      document.getElementById('check-speed').getAttribute('data-status') !== 'idle', null, { timeout: 25000 });
+    const facts = await page.locator('#check-speed [data-role="facts"]').innerText();
+    check('speed: stalled download ends with partial result', Date.now() - t0 < 25000 && /Download/.test(facts) && /Mbps/.test(facts), facts);
+    await context.close();
+  }
+  {
+    const { page, context, seen } = await newPage('ok');
+    await page.click('#speed-go');
+    await page.waitForTimeout(150);
+    await page.click('#speed-cancel');
+    await page.waitForFunction(() => document.getElementById('check-speed').getAttribute('data-status') !== 'running', null, { timeout: 5000 });
+    const n = seen.speed.length;
+    await page.waitForTimeout(800);
+    check('speed: Cancel stops the test', seen.speed.length === n, [n, seen.speed.length]);
+    await context.close();
   }
 
   // 4. Every outside service fails: each check shows "Couldn't check", page keeps working

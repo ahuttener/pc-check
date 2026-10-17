@@ -273,6 +273,12 @@ h1 {
 .check[data-status="warn"] .fix { border-left-color: var(--warn); background: var(--warn-soft); }
 .check[data-status="risk"] .fix { border-left-color: var(--risk); background: var(--risk-soft); }
 
+/* Speed test */
+.speed-ui { margin: 16px 0 4px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.speed-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.speed-actions .btn[hidden] { display: none; }
+.speed-warn { margin: 0; font-size: 0.875rem; color: var(--muted); text-align: center; }
+
 /* Password form */
 .pw-form { margin: 18px 0 0 44px; max-width: 32rem; }
 .pw-form label { display: block; font-weight: 700; margin-bottom: 6px; }
