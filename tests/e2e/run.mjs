@@ -99,6 +99,7 @@ async function newPage(mode, opts = {}, engine = browser) {
     if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: Object.assign({ 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'content-type' }, headers) });
     const bytes = parseInt((url.match(/bytes=(\d+)/) || [])[1] || '0', 10);
     if (speed === 'stall' && bytes === 25000000) return; // never answered: the page's own timeout must end it
+    if (speed === 'down') return r.fulfill({ status: 503, headers, body: 'down' });
     await new Promise((res) => setTimeout(res, 20));
     return r.fulfill({ status: 200, contentType: 'application/octet-stream', headers, body: url.includes('__down') ? Buffer.alloc(bytes) : '' });
   });
@@ -189,12 +190,12 @@ try {
         firefoxFresh: pick(ev(ff, { firefox: { latest: '158.0', latest_major: 158, esr: '153.5.0', esr_major: 153, released: daysAgo(3).slice(0, 10) } }, now))
       };
     });
-    check('one major behind, released 3 days ago -> info rolling', cases.oneBehindFresh === 'info:browserRolling', cases.oneBehindFresh);
+    check('one major behind stays warn even if the release is fresh (rollout dates are unreliable for majors)', cases.oneBehindFresh === 'warn:browserBehind', cases.oneBehindFresh);
     check('one major behind, released 20 days ago -> warn', cases.oneBehindOld === 'warn:browserBehind', cases.oneBehindOld);
     check('two majors behind stays risk even if fresh', cases.twoBehindFresh === 'risk:browserOld', cases.twoBehindFresh);
     check('no release date -> old verdict (warn)', cases.noDate === 'warn:browserBehind', cases.noDate);
     check('pending patch, fresh -> info rolling', cases.patchFresh === 'info:browserRolling', cases.patchFresh);
-    check('Firefox one behind, fresh -> info rolling', cases.firefoxFresh === 'info:browserRolling', cases.firefoxFresh);
+    check('Firefox one major behind stays warn even if a dot release is fresh', cases.firefoxFresh === 'warn:browserBehind', cases.firefoxFresh);
     await context.close();
   }
 
@@ -218,7 +219,7 @@ try {
     check('webrtc unsupported -> ok', r.unsupported.startsWith('ok:'), r.unsupported);
     check('webrtc same IP -> ok', r.same.startsWith('ok:'), r.same);
     check('webrtc different IP same family -> risk', r.leak.startsWith('risk:'), r.leak);
-    check('webrtc different families -> ok', r.families.startsWith('ok:'), r.families);
+    check('webrtc different families -> ok, but says they were not compared', r.families === 'ok:webrtcOtherFamily', r.families);
     check('webrtc dual-stack, matching v6 -> ok', r.dual.startsWith('ok:'), r.dual);
     check('webrtc private host address -> warn', r.local.startsWith('warn:'), r.local);
     check('webrtc no trace -> info webrtcNoCompare', r.noTrace.status === 'info' && r.noTrace.verdict[0] === 'webrtcNoCompare', r.noTrace);
@@ -324,6 +325,14 @@ try {
       document.getElementById('check-speed').getAttribute('data-status') !== 'idle', null, { timeout: 25000 });
     const facts = await page.locator('#check-speed [data-role="facts"]').innerText();
     check('speed: stalled download ends with partial result', Date.now() - t0 < 25000 && /Download/.test(facts) && /Mbps/.test(facts), facts);
+    await context.close();
+  }
+  {
+    const { page, context } = await newPage('ok', { speed: 'down' });
+    await page.click('#speed-go');
+    await page.waitForFunction(() => !['running', 'idle'].includes(document.getElementById('check-speed').getAttribute('data-status')), null, { timeout: 25000 });
+    check('speed: failed requests are still in the outbound log', (await page.locator('#ledger-list').innerText()).includes('speed.cloudflare.com'));
+    check('speed: all requests failing -> error', (await status(page, 'speed')) === 'error', await status(page, 'speed'));
     await context.close();
   }
   {

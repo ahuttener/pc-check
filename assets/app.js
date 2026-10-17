@@ -300,6 +300,7 @@
       webrtcNone: 'WebRTC did not reveal any address.',
       webrtcLeak: 'WebRTC revealed a different public address than your connection. Your real IP may be leaking past your VPN or proxy.',
       webrtcLocal: 'No public leak, but WebRTC shows your address on the local network.',
+      webrtcOtherFamily: 'No leak found. WebRTC only showed an address of the other IP version (IPv4/IPv6), so it could not be compared directly.',
       webrtcNoCompare: "Couldn't compare: the connection check didn't return your public IP.",
       webrtcNote: 'With a VPN on, the public address here should be the VPN’s, not your home one.',
       fixWebrtc: 'Turn on your VPN’s WebRTC leak protection, or block WebRTC: Firefox about:config media.peerconnection.enabled = false; Chrome/Edge an extension such as WebRTC Leak Shield; Brave Settings > Privacy > WebRTC IP handling policy.',
@@ -746,7 +747,8 @@
     return parts.join('.');
   }
 
-  // A new release reaches everyone gradually; under 14 days old it is still "rolling out".
+  // A patch reaches everyone gradually; under 14 days old it is still "rolling out".
+  // Only used for a pending patch: rollout dates change often and say nothing reliable about a whole major version.
   var ROLLOUT_DAYS = 14;
   function isRollingOut(released, now) {
     var when = released ? Date.parse(released) : NaN;
@@ -772,7 +774,7 @@
       var diff = platformLatest.major - b.engineMajor;
       if (diff >= 2) return { status: 'risk', verdict: ['browserOld', b.name], facts: facts, fix: ['fixUpdate'] };
       var rolling = isRollingOut(platformLatest.released, now);
-      if (diff === 1) return { status: rolling ? 'info' : 'warn', verdict: [rolling ? 'browserRolling' : 'browserBehind', b.name], facts: facts, fix: ['fixUpdate'] };
+      if (diff === 1) return { status: 'warn', verdict: ['browserBehind', b.name], facts: facts, fix: ['fixUpdate'] };
       // Same major. Chrome reports its full version, so pending security patches are visible too.
       if (isChrome && diff === 0 && compareVersions(b.version, platformLatest.version) < 0 && !/\.0\.0\.0$/.test(b.version)) {
         return { status: rolling ? 'info' : 'warn', verdict: [rolling ? 'browserRolling' : 'browserPatch', b.name], facts: facts, fix: ['fixUpdate'] };
@@ -790,8 +792,7 @@
       facts.push({ label: ['fLatest'], value: f.latest, data: true });
       var fdiff = f.latest_major - b.engineMajor;
       if (fdiff >= 2) return { status: 'risk', verdict: ['browserOld', 'Firefox'], facts: facts, fix: ['fixUpdate'] };
-      var frolling = isRollingOut(f.released, now);
-      if (fdiff === 1) return { status: frolling ? 'info' : 'warn', verdict: [frolling ? 'browserRolling' : 'browserBehind', 'Firefox'], facts: facts, fix: ['fixUpdate'] };
+      if (fdiff === 1) return { status: 'warn', verdict: ['browserBehind', 'Firefox'], facts: facts, fix: ['fixUpdate'] };
       return { status: 'ok', verdict: ['browserOk', 'Firefox', shortVersion(b.version)], facts: facts };
     }
 
@@ -1031,6 +1032,8 @@
     });
     if (leaks.length) return { status: 'risk', verdict: ['webrtcLeak'], facts: facts, note: ['webrtcNote'], fix: ['fixWebrtc'] };
     if (result.host.some(isPrivateIp)) return { status: 'warn', verdict: ['webrtcLocal'], facts: facts, fix: ['fixWebrtcLocal'] };
+    var comparable = result.srflx.some(function (ip) { return isIPv6(ip) === isIPv6(traceIp); });
+    if (result.srflx.length && !comparable) return { status: 'ok', verdict: ['webrtcOtherFamily'], facts: facts, note: ['webrtcNote'] };
     return { status: 'ok', verdict: ['webrtcOk'], facts: facts, note: ['webrtcNote'] };
   }
 
@@ -1191,6 +1194,7 @@
     function stop(err) { if (aborted()) throw err; out.partial = true; }
 
     var pings = [];
+    onProgress('ping', null);
     function ping(i) {
       if (i >= SPEED.pings || aborted()) return Promise.resolve();
       return speedFetch(SPEED.base + '__down?bytes=0', {}, signal).then(function (r) {
@@ -1204,6 +1208,7 @@
     function phase(sizes, budget, send) {
       var samples = [];
       var start = now();
+      onProgress(send.phaseName, null);
       function step(i) {
         if (i >= sizes.length || now() - start > budget || aborted()) return Promise.resolve(samples);
         return send(sizes[i]).then(function (r) {
@@ -1273,7 +1278,7 @@
     var logged = {};
     measureSpeed(function (phase, value) {
       if (!logged[phase]) { logged[phase] = true; logOutbound('speed.cloudflare.com', ['lpSpeed', phase], ['test bytes only']); }
-      if (gauge) { gauge.phase(phase); if (phase !== 'ping') gauge.set(value); }
+      if (gauge) { gauge.phase(phase); if (phase !== 'ping' && value !== null) gauge.set(value); }
     }, controller.signal).then(function (result) {
       state.speed.result = result;
       if (gauge && result.downMbps !== null) gauge.set(result.downMbps);

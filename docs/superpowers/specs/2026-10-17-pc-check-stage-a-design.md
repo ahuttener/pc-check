@@ -61,7 +61,7 @@ Existing four cards stay. New cards, in this order after them: **Speed**, **WebR
 
 ### 4. Fairer browser verdict
 - `api/versions.php` also returns the release date of the latest stable version per Chrome platform (versionhistory `.../channels/stable/versions/all/releases?filter=endtime=none` → `serving.startTime`) and Firefox `LAST_RELEASE_DATE`. New fields: `chrome.<platform>.released`, `firefox.released` (ISO dates). Cached like the rest.
-- In `app.js`: if the visitor is exactly one major behind, or same major with a pending patch, **and** the latest release is < 14 days old → `info` "A new version is rolling out — it should reach you in the next days" (instead of `warn`). ≥ 2 majors behind stays `risk`.
+- In `app.js`: if the visitor has the same major with a pending patch **and** the latest release is < 14 days old (one major behind always stays `warn`: rollout start times change often and are not a reliable ship date — final review, 17/10) → `info` "A new version is rolling out — it should reach you in the next days" (instead of `warn`). ≥ 2 majors behind stays `risk`.
 
 ### 5. PDF report
 - "Download PDF report" builds a **print-only section** in the page (hidden on screen, shown by `@media print`) and calls `window.print()` — no iframe (CSP forbids frames), no library, nothing leaves the device.
