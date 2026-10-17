@@ -20,9 +20,17 @@ $out = array('chrome' => array(), 'firefox' => null, 'updated' => gmdate('Y-m-d\
 $complete = true;
 
 foreach (array('win', 'mac', 'linux', 'android') as $platform) {
-    $body = bsc_http_get('https://versionhistory.googleapis.com/v1/chrome/platforms/' . $platform
-        . '/channels/stable/versions?order_by=version%20desc');
-    $parsed = $body === null ? null : bsc_parse_chrome_versions($body);
+    $base = 'https://versionhistory.googleapis.com/v1/chrome/platforms/' . $platform . '/channels/stable/versions';
+    // Prefer the newest version Google is actually serving (a listed version can be at 0 % rollout).
+    $body = bsc_http_get($base . '/all/releases?filter=endtime=none');
+    $parsed = $body === null ? null : bsc_parse_chrome_releases($body);
+    if ($parsed === null) {
+        $body = bsc_http_get($base . '?order_by=version%20desc');
+        $parsed = $body === null ? null : bsc_parse_chrome_versions($body);
+        if ($parsed !== null) {
+            $parsed['released'] = null;
+        }
+    }
     if ($parsed === null) {
         $complete = false;
         continue;

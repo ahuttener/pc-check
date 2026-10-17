@@ -278,6 +278,45 @@ function bsc_parse_chrome_versions($json)
     return array('version' => $best, 'major' => (int) $best);
 }
 
+/** 'YYYY-MM-DDTHH:MM:SS(.fraction)Z' -> 'YYYY-MM-DDTHH:MM:SSZ', anything else -> null */
+function bsc_iso_utc($value)
+{
+    if (is_string($value) && preg_match('/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?Z$/', $value, $m)) {
+        return $m[1] . 'Z';
+    }
+    return null;
+}
+
+/**
+ * versionhistory .../releases?filter=endtime=none body -> newest version actually served
+ * (fraction > 0) as array('version', 'major', 'released'), or null.
+ * A listed version with fraction 0 is published but reaches nobody yet.
+ */
+function bsc_parse_chrome_releases($json)
+{
+    $data = json_decode((string) $json, true);
+    if (!is_array($data) || !isset($data['releases']) || !is_array($data['releases'])) {
+        return null;
+    }
+    $best = null;
+    foreach ($data['releases'] as $row) {
+        if (!is_array($row) || !isset($row['version']) || !bsc_is_version($row['version'])) {
+            continue;
+        }
+        if (!isset($row['fraction']) || !is_numeric($row['fraction']) || $row['fraction'] <= 0) {
+            continue;
+        }
+        if ($best === null || version_compare($row['version'], $best['version'], '>')) {
+            $best = $row;
+        }
+    }
+    if ($best === null) {
+        return null;
+    }
+    $start = isset($best['serving']['startTime']) ? $best['serving']['startTime'] : null;
+    return array('version' => $best['version'], 'major' => (int) $best['version'], 'released' => bsc_iso_utc($start));
+}
+
 /** product-details firefox_versions.json body -> latest/esr or null */
 function bsc_parse_firefox_versions($json)
 {
@@ -290,7 +329,9 @@ function bsc_parse_firefox_versions($json)
     if (!bsc_is_version($latest)) {
         return null;
     }
-    $out = array('latest' => $latest, 'latest_major' => (int) $latest, 'esr' => null, 'esr_major' => null);
+    $date = isset($data['LAST_RELEASE_DATE']) ? $data['LAST_RELEASE_DATE'] : null;
+    $out = array('latest' => $latest, 'latest_major' => (int) $latest, 'esr' => null, 'esr_major' => null,
+        'released' => is_string($date) && preg_match('/^\d{4}-\d\d-\d\d$/', $date) ? $date : null);
     if (bsc_is_version($esr)) {
         $out['esr'] = $esr;
         $out['esr_major'] = (int) $esr;

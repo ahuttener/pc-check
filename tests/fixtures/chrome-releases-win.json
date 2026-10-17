@@ -1,0 +1,135 @@
+{
+  "releases": [
+    {
+      "name": "chrome/platforms/win/channels/stable/versions/155.0.8059.80/releases/1792181052",
+      "serving": {
+        "startTime": "2026-10-16T20:04:12.518803Z"
+      },
+      "fraction": 0.5,
+      "version": "155.0.8059.80",
+      "fractionGroup": "156",
+      "pinnable": false,
+      "rolloutData": []
+    },
+    {
+      "name": "chrome/platforms/win/channels/stable/versions/155.0.8059.81/releases/1792181052",
+      "serving": {
+        "startTime": "2026-10-16T20:04:12.518803Z"
+      },
+      "fraction": 0,
+      "version": "155.0.8059.81",
+      "fractionGroup": "156",
+      "pinnable": false,
+      "rolloutData": [
+        {
+          "rolloutName": "156.0.8078.35 Rollout",
+          "tag": [
+            "control"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "chrome/platforms/win/channels/stable/versions/155.0.8059.82/releases/1792181052",
+      "serving": {
+        "startTime": "2026-10-16T20:04:12.518803Z"
+      },
+      "fraction": 0.25,
+      "version": "155.0.8059.82",
+      "fractionGroup": "156",
+      "pinnable": false,
+      "rolloutData": [
+        {
+          "rolloutName": "155.0.8059.84 Rollout",
+          "tag": [
+            "control"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "chrome/platforms/win/channels/stable/versions/155.0.8059.84/releases/1792181052",
+      "serving": {
+        "startTime": "2026-10-16T20:04:12.518803Z"
+      },
+      "fraction": 0.25,
+      "version": "155.0.8059.84",
+      "fractionGroup": "156",
+      "pinnable": false,
+      "rolloutData": [
+        {
+          "rolloutName": "155.0.8059.84 Rollout",
+          "tag": [
+            "rollout"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "chrome/platforms/win/channels/stable/versions/156.0.8078.35/releases/1792181052",
+      "serving": {
+        "startTime": "2026-10-16T20:04:12.518803Z"
+      },
+      "fraction": 0,
+      "version": "156.0.8078.35",
+      "fractionGroup": "156",
+      "pinnable": false,
+      "rolloutData": [
+        {
+          "rolloutName": "156.0.8078.35 Rollout",
+          "tag": [
+            "rollout"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "chrome/platforms/win/channels/stable/versions/155.0.8059.85/releases/1792096715",
+      "serving": {
+        "startTime": "2026-10-15T20:38:35.578468Z"
+      },
+      "fraction": 1,
+      "version": "155.0.8059.85",
+      "fractionGroup": "155",
+      "pinnable": true,
+      "rolloutData": []
+    },
+    {
+      "name": "chrome/platforms/win/channels/stable/versions/156.0.8078.36/releases/1792010708",
+      "serving": {
+        "startTime": "2026-10-14T20:45:08.854467Z"
+      },
+      "fraction": 0,
+      "version": "156.0.8078.36",
+      "fractionGroup": "156",
+      "pinnable": false,
+      "rolloutData": [
+        {
+          "rolloutName": "156.0.8078.12 Rollout",
+          "tag": [
+            "rollout"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "chrome/platforms/win/channels/stable/versions/154.0.8037.100/releases/1792008781",
+      "serving": {
+        "startTime": "2026-10-14T20:13:01.092353Z"
+      },
+      "fraction": 0,
+      "version": "154.0.8037.100",
+      "fractionGroup": "156",
+      "pinnable": false,
+      "rolloutData": [
+        {
+          "rolloutName": "156.0.8078.12 Rollout",
+          "tag": [
+            "control"
+          ]
+        }
+      ]
+    }
+  ],
+  "nextPageToken": ""
+}

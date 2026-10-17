@@ -10,14 +10,14 @@ $fixtures = __DIR__ . '/../fixtures/';
 $failures = 0;
 $passes = 0;
 
-function check($name, $condition)
+function check($name, $condition, $extra = null)
 {
     global $failures, $passes;
     if ($condition) {
         $passes++;
     } else {
         $failures++;
-        fwrite(STDERR, "FAIL: $name\n");
+        fwrite(STDERR, "FAIL: $name" . ($extra !== null ? ' -> ' . json_encode($extra) : '') . "\n");
     }
 }
 
@@ -89,6 +89,23 @@ check('code: not leaking', bsc_conclusion_code('DNS is not leaking.') === 'no_le
 check('code: no leak', bsc_conclusion_code('No leak detected') === 'no_leak');
 check('code: may be leaking', bsc_conclusion_code('DNS may be leaking.') === 'leak');
 check('code: other', bsc_conclusion_code('Something else') === 'unknown');
+
+// Chrome releases actually being served (real answer from versionhistory .../releases?filter=endtime=none)
+$rel = bsc_parse_chrome_releases(fixture('chrome-releases-win.json'));
+check('chrome releases: parsed', is_array($rel));
+check('chrome releases: newest served version, not the unserved 156', $rel['version'] === '155.0.8059.85', $rel);
+check('chrome releases: major', $rel['major'] === 155);
+check('chrome releases: released = startTime of that release, seconds precision', $rel['released'] === '2026-10-15T20:38:35Z', $rel);
+check('chrome releases: all fractions 0 -> null', bsc_parse_chrome_releases('{"releases":[{"version":"9.0.0.1","fraction":0,"serving":{"startTime":"2026-01-01T00:00:00Z"}}]}') === null);
+check('chrome releases: empty -> null', bsc_parse_chrome_releases('{"releases":[]}') === null);
+check('chrome releases: not JSON -> null', bsc_parse_chrome_releases('<html>') === null);
+$noTime = bsc_parse_chrome_releases('{"releases":[{"version":"150.0.1.2","fraction":1}]}');
+check('chrome releases: missing startTime -> released null', $noTime['version'] === '150.0.1.2' && $noTime['released'] === null);
+
+// Firefox release date
+check('firefox real: released', $fx['released'] === $realFx['LAST_RELEASE_DATE']);
+check('firefox: missing release date -> null', bsc_parse_firefox_versions('{"LATEST_FIREFOX_VERSION":"144.0"}')['released'] === null);
+check('firefox: bad release date -> null', bsc_parse_firefox_versions('{"LATEST_FIREFOX_VERSION":"144.0","LAST_RELEASE_DATE":"soon"}')['released'] === null);
 
 // Helpers
 check('https only', bsc_is_https_url('https://x') && !bsc_is_https_url('http://x') && !bsc_is_https_url('file:///etc/passwd'));

@@ -48,10 +48,12 @@ try {
     for (const p of ['win', 'mac', 'linux', 'android']) {
       const c = body.chrome && body.chrome[p];
       check('versions live: chrome ' + p, c && /^\d+\.\d+\.\d+\.\d+$/.test(c.version) && c.major === parseInt(c.version, 10), c);
+      check('versions live: chrome ' + p + ' released is an ISO date', c && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(c.released), c && c.released);
     }
     const f = body.firefox;
     check('versions live: firefox shape', f && typeof f.latest === 'string' && f.latest_major === parseInt(f.latest, 10)
       && !/esr/i.test(f.esr) && f.esr_major === parseInt(f.esr, 10), f);
+    check('versions live: firefox released date', f && /^\d{4}-\d\d-\d\d$/.test(f.released), f && f.released);
     check('versions live: updated ISO date', /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(body.updated), body.updated);
     const again = await fetch(BASE + 'api/versions.php');
     check('versions live: second call served from cache', JSON.stringify(await again.json()) === JSON.stringify(body));
