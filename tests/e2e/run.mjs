@@ -494,6 +494,19 @@ try {
     await context.close();
   }
 
+  // 6c2. Layout: speed card in the right column, above the outbound log (desktop); stacked on phones
+  console.log('Speed card placement');
+  {
+    const { page, context } = await newPage('ok', { viewport: { width: 1280, height: 900 } });
+    const speed = await page.locator('#check-speed').boundingBox();
+    const browserCard = await page.locator('#check-browser').boundingBox();
+    const ledger = await page.locator('#ledger').boundingBox();
+    check('desktop: speed card is in the right column', speed.x > browserCard.x + browserCard.width, [speed.x, browserCard.x + browserCard.width]);
+    check('desktop: speed card sits above the outbound log', speed.y + speed.height <= ledger.y + 1, [speed.y + speed.height, ledger.y]);
+    check('desktop: speed card is about as wide as the log', Math.abs(speed.width - ledger.width) < 2, [speed.width, ledger.width]);
+    await context.close();
+  }
+
   // 6d. Robustness: old browsers, Ctrl+P, slow pings, a failing gauge
   console.log('Robustness');
   {

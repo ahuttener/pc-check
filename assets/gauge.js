@@ -72,7 +72,7 @@
     node('circle', { cx: String(CX), cy: String(CY), r: '7', fill: '#22d3ee' }, svg);
 
     var number = node('text', { x: String(CX), y: '218', 'text-anchor': 'middle', 'font-size': '38', 'font-weight': '900', fill: '#22d3ee', 'font-family': 'Orbitron, Roboto, sans-serif', 'data-role': 'gauge-value' }, svg);
-    number.textContent = '0';
+    number.textContent = ''; // empty until the first reading, so nothing peeks out under the GO button
     var unit = node('text', { x: String(CX), y: '238', 'text-anchor': 'middle', 'font-size': '12', fill: '#9ca3af', 'letter-spacing': '2', 'font-family': 'Roboto, system-ui, sans-serif' }, svg);
     unit.textContent = 'MBPS';
 
@@ -124,6 +124,7 @@
       reset: function () {
         if (frame) { window.cancelAnimationFrame(frame); frame = null; }
         shown = 0; target = 0; draw(0);
+        number.textContent = '';
         this.phase(null);
       }
     };

@@ -168,7 +168,13 @@ a:hover { color: var(--action-hover); }
 }
 .intro { grid-area: intro; padding-bottom: 28px; }
 .checks { grid-area: checks; }
-.ledger { grid-area: ledger; position: sticky; top: 84px; align-self: start; }
+/* Right column: speed test on top, outbound log below (not sticky: together they are taller than a screen) */
+.side { grid-area: ledger; align-self: start; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.side .check { margin-bottom: 0; padding: 18px 18px 20px; }
+.side .check-body { margin-left: 0; }
+.side .gauge { max-width: 280px; }
+.side .go { width: 104px; height: 104px; font-size: 1.4rem; }
+.side .facts { grid-template-columns: minmax(7.5rem, max-content) minmax(0, 1fr); gap: 4px 14px; }
 .about { grid-area: about; margin-top: 8px; padding: 22px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 
 h1 {
@@ -372,7 +378,7 @@ h1 {
     padding: 12px 16px 40px;
   }
   .site-nav { width: 100%; }
-  .ledger { position: static; margin-top: 36px; }
+  .side { margin-top: 36px; }
   .ledger-jump { display: inline-block; }
   .intro { padding-bottom: 28px; }
   .foot { padding: 0 16px 32px; }

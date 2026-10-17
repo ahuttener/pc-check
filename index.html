@@ -12,8 +12,8 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/fonts/roboto-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/orbitron-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/styles.css?v=6">
-  <script src="assets/gauge.js?v=2" defer></script>
+  <link rel="stylesheet" href="assets/styles.css?v=7">
+  <script src="assets/gauge.js?v=3" defer></script>
   <script src="assets/app.js?v=7" defer></script>
 </head>
 <body>
@@ -177,33 +177,6 @@
           <p class="fix" data-role="fix"></p>
         </div>
       </article>
-
-      <article class="check" id="check-speed" data-status="idle">
-        <div class="check-head">
-          <svg class="mark" aria-hidden="true"><use href="#i-idle"></use></svg>
-          <div class="check-title">
-            <h3 data-i18n="speedTitle">Internet speed</h3>
-            <p class="question" data-i18n="speedQ">How fast is your connection right now?</p>
-          </div>
-          <span class="pill" data-role="pill">Not checked</span>
-        </div>
-        <div class="check-body" aria-live="polite">
-          <div class="speed-ui">
-            <div class="gauge" id="gauge">
-              <button id="speed-go" class="go" type="button" data-i18n="speedGo">GO</button>
-            </div>
-            <div class="speed-actions">
-              <button id="speed-cancel" class="btn btn-secondary" type="button" data-i18n="speedCancel" hidden>Cancel</button>
-            </div>
-            <p class="speed-warn" data-i18n="speedWarn">Runs only when you press GO. Uses up to about 55 MB of data.</p>
-          </div>
-          <p class="verdict" data-role="verdict"></p>
-          <dl class="facts" data-role="facts"></dl>
-          <p class="note" data-role="note"></p>
-          <p class="fix" data-role="fix"></p>
-        </div>
-      </article>
-
       <article class="check" id="check-password" data-status="idle">
         <div class="check-head">
           <svg class="mark" aria-hidden="true"><use href="#i-idle"></use></svg>
@@ -236,6 +209,33 @@
       </article>
     </section>
 
+    <div class="side">
+      <article class="check" id="check-speed" data-status="idle">
+        <div class="check-head">
+          <svg class="mark" aria-hidden="true"><use href="#i-idle"></use></svg>
+          <div class="check-title">
+            <h3 data-i18n="speedTitle">Internet speed</h3>
+            <p class="question" data-i18n="speedQ">How fast is your connection right now?</p>
+          </div>
+          <span class="pill" data-role="pill">Not checked</span>
+        </div>
+        <div class="check-body" aria-live="polite">
+          <div class="speed-ui">
+            <div class="gauge" id="gauge">
+              <button id="speed-go" class="go" type="button" data-i18n="speedGo">GO</button>
+            </div>
+            <div class="speed-actions">
+              <button id="speed-cancel" class="btn btn-secondary" type="button" data-i18n="speedCancel" hidden>Cancel</button>
+            </div>
+            <p class="speed-warn" data-i18n="speedWarn">Runs only when you press GO. Uses up to about 55 MB of data.</p>
+          </div>
+          <p class="verdict" data-role="verdict"></p>
+          <dl class="facts" data-role="facts"></dl>
+          <p class="note" data-role="note"></p>
+          <p class="fix" data-role="fix"></p>
+        </div>
+      </article>
+
     <aside id="ledger" class="ledger" aria-labelledby="ledger-title" tabindex="-1">
       <h2 id="ledger-title" data-i18n="ledgerTitle">What left your device</h2>
       <p id="ledger-count" class="ledger-count"></p>
@@ -243,6 +243,7 @@
       <ol id="ledger-list" class="ledger-list"></ol>
       <p class="ledger-note" data-i18n="ledgerNote">Every request shows the destination your IP address and browser type. That is part of every connection on the internet.</p>
     </aside>
+    </div>
 
     <section class="about" aria-labelledby="about-title">
       <h2 id="about-title" data-i18n="aboutTitle">How it works</h2>
