@@ -494,6 +494,52 @@ try {
     await context.close();
   }
 
+  // 8a. System report parsers (Windows), on anonymised real reports
+  console.log('System report parsers');
+  {
+    const fx = (f) => fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', f)).toString('base64');
+    const files = { rel: fx('reliability.xml'), bat: fx('battery-report.html'), msi: fx('msinfo32-head.txt'), pt: fx('msinfo32-pt.txt'), de: fx('msinfo32-de.txt') };
+    const { page, context } = await newPage('ok');
+    const r = await page.evaluate((files) => {
+      const S = window.PCSys;
+      if (!S) return null;
+      const buf = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
+      const text = {}; Object.keys(files).forEach((k) => { text[k] = S.decode(buf(files[k])); });
+      const rel = S.parseReliability(text.rel);
+      const bat = S.parseBattery(text.bat);
+      const msi = S.parseMsinfo(text.msi);
+      const big = text.msi + '\r\n[Software Environment]\r\n' + 'x'.repeat(27000000);
+      const t0 = performance.now();
+      const bigParsed = S.parseMsinfo(big);
+      return {
+        relGenerated: rel.generated && rel.generated.toISOString().slice(0, 10), relNow: rel.stabilityNow,
+        relShutdowns: rel.events ? rel.events.filter((e) => e.problem === 'Shut down unexpectedly').length : -1,
+        relMiracast: rel.events ? rel.events.filter((e) => /Miracast/.test(e.source)).length : -1,
+        bat, msi, pt: S.parseMsinfo(text.pt), de: S.parseMsinfo(text.de),
+        wrong: S.parseReliability(text.bat), wrongBat: S.parseBattery(text.rel), wrongMsi: S.parseMsinfo('hello'),
+        bigMs: performance.now() - t0, bigOs: bigParsed.os
+      };
+    }, files);
+    check('PCSys is loaded', r !== null);
+    if (r) {
+      check('reliability: generated date', r.relGenerated === '2026-10-17', r.relGenerated);
+      check('reliability: stability now ~1.97', Math.abs(r.relNow - 1.97) < 0.01, r.relNow);
+      check('reliability: unexpected shutdowns parsed', r.relShutdowns > 0, r.relShutdowns);
+      check('reliability: MiracastPowerManager crashes parsed', r.relMiracast > 0, r.relMiracast);
+      check('battery: health between 0 and 100 and cycles', r.bat.healthPct > 80 && r.bat.healthPct < 100 && r.bat.cycles === 96, r.bat);
+      check('battery: design and full capacity in mWh', r.bat.designMWh === 76316 && r.bat.fullMWh === 68979, r.bat);
+      check('msinfo: OS, model, CPU, RAM', /Windows 11/.test(r.msi.os) && /Predator/.test(r.msi.model) && /Ultra 7/.test(r.msi.cpu) && r.msi.ramGb === 32, r.msi);
+      check('msinfo: no problem devices on this PC', Array.isArray(r.msi.problemDevices) && r.msi.problemDevices.length === 0, r.msi.problemDevices);
+      check('msinfo: Portuguese labels parse', /Windows 11/.test(r.pt.os) && r.pt.ramGb === 32, r.pt);
+      check('msinfo: German reports unsupported language', r.de.unsupportedLanguage === true, r.de);
+      check('wrong file: battery report is not a reliability file', r.wrong.error === 'not_reliability', r.wrong);
+      check('wrong file: reliability is not a battery report', r.wrongBat.error === 'not_battery', r.wrongBat);
+      check('wrong file: random text is not msinfo', r.wrongMsi.error === 'not_msinfo', r.wrongMsi);
+      check('msinfo: 27 MB file parses in < 2 s and only the head is read', r.bigMs < 2000 && /Windows 11/.test(r.bigOs), [Math.round(r.bigMs), r.bigOs]);
+    }
+    await context.close();
+  }
+
   // 6c1. Link previews (WhatsApp, LinkedIn, Instagram read Open Graph tags)
   console.log('Link preview');
   {
