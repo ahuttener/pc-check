@@ -453,6 +453,37 @@ try {
     }
   }
 
+  // 6c. PDF report, built in the browser and printed
+  console.log('PDF report');
+  {
+    const { page, context } = await newPage('ok', { initScript: 'window.print = () => { window.__printed = (window.__printed || 0) + 1; };' });
+    check('pdf: button hidden before any check', !(await page.locator('#pdf').isVisible()));
+    check('pdf: report empty before any click', (await page.locator('#report').innerHTML()).trim() === '');
+    await runChecks(page);
+    await page.fill('#pw', 'hunter2pc');
+    await page.click('#pw-submit');
+    await page.waitForFunction(() => ['ok', 'risk'].includes(document.getElementById('check-password').getAttribute('data-status')));
+    check('pdf: button shown after the checks', await page.locator('#pdf').isVisible());
+    check('pdf: hint about Save as PDF', /Save as PDF/.test(await page.locator('#check-tools, .run').first().innerText()));
+    await page.click('#pdf');
+    check('pdf: print dialog opened once', (await page.evaluate(() => window.__printed)) === 1);
+    const text = await page.locator('#report').innerText();
+    for (const name of ['PC Check report', 'Browser', 'Connection', 'DNS', 'WebRTC leak', 'Trackability', 'Password', 'What left your device', 'Generated locally in your browser']) {
+      check('pdf: report includes ' + name, text.includes(name));
+    }
+    check('pdf: report shows the 5-character prefix', text.includes('A4F1D'), text.slice(0, 200));
+    const html = await page.locator('#report').innerHTML();
+    check('pdf: never contains password or full hash', !html.includes('hunter2pc') && !html.includes('A4F1D4784D162648E82B5F1FA8C66C3A1257A68F') && !html.includes('4784D162648E82B5F1FA8C66C3A1257A68F'));
+    check('pdf: report has the CyberSecInfo emblem', (await page.locator('#report img[src*="emblem.png"]').count()) === 1);
+    await page.emulateMedia({ media: 'print' });
+    check('pdf: print shows the report', await page.locator('#report').isVisible());
+    check('pdf: print hides the app', !(await page.locator('.layout').isVisible()) && !(await page.locator('.site-head').isVisible()));
+    await page.pdf({ path: path.join(shots, 'report.pdf'), format: 'A4', printBackground: true });
+    await page.emulateMedia({ media: 'screen' });
+    check('pdf: report hidden again on screen', !(await page.locator('#report').isVisible()));
+    await context.close();
+  }
+
   // 7. iPhone (WebKit, the engine every iOS browser must use): full run, no sideways scroll
   console.log('iPhone (WebKit)');
   {

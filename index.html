@@ -12,9 +12,9 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/fonts/roboto-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/orbitron-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/styles.css?v=5">
+  <link rel="stylesheet" href="assets/styles.css?v=6">
   <script src="assets/gauge.js?v=1" defer></script>
-  <script src="assets/app.js?v=4" defer></script>
+  <script src="assets/app.js?v=5" defer></script>
 </head>
 <body>
   <svg class="sprite" aria-hidden="true" focusable="false">
@@ -80,6 +80,8 @@
       <div class="run">
         <button id="run" class="btn btn-primary" type="button" data-i18n="run">Check now</button>
         <p id="run-status" class="run-status" role="status" aria-live="polite"></p>
+        <button id="pdf" class="btn btn-secondary" type="button" data-i18n="pdfBtn" hidden>Download PDF report</button>
+        <p id="pdf-hint" class="pdf-hint" data-i18n="pdfHint" hidden>Choose “Save as PDF” in the print window.</p>
       </div>
       <a class="ledger-jump" href="#ledger"><span data-i18n="ledgerJump">Outbound log</span>: <span id="ledger-count-inline">0</span></a>
       <p id="old-browser" class="old-browser" data-i18n="oldBrowser">If the button does nothing, this browser is too old to run the page. That alone is a sign it needs updating.</p>
@@ -249,6 +251,8 @@
       <p class="credits"><span data-i18n="creditsLead">Services used:</span> <a href="https://haveibeenpwned.com/Passwords" rel="noopener noreferrer">Pwned Passwords</a>, <a href="https://www.cloudflare.com/ssl/encrypted-sni/" rel="noopener noreferrer">Cloudflare</a> <span data-i18n="creditsAnd">and</span> <a href="https://bash.ws/dnsleak" rel="noopener noreferrer">bash.ws</a>.</p>
     </section>
   </main>
+
+  <section id="report" class="report" hidden></section>
 
   <footer class="foot">
     <p><span data-i18n="footMade">Made by Adriano Huttener for CyberSecInfo.</span> <a href="https://github.com/ahuttener/pc-check" rel="noopener noreferrer" data-i18n="footCode">Open source on GitHub</a></p>

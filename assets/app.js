@@ -354,6 +354,12 @@
       fJitter: 'Jitter',
       fColo: 'Cloudflare data centre',
       lpSpeed: function (phase) { return 'Speed test, ' + phase + ' (Cloudflare)'; },
+      pdfBtn: 'Download PDF report',
+      pdfHint: 'Choose “Save as PDF” in the print window.',
+      reportTitle: 'PC Check report',
+      reportGenerated: function (when) { return 'Generated ' + when; },
+      reportPrefix: function (p) { return 'Sent to Pwned Passwords: only the first 5 characters of the hash (' + p + '). The password itself is not in this report.'; },
+      reportFoot: 'Generated locally in your browser — nothing was sent to CyberSecInfo. cybersecinfo.com/pccheck',
 
       aboutTitle: 'How it works',
       aboutPw: 'Password: your browser turns the password into a code (SHA-1 hash) and sends only the first 5 characters. Pwned Passwords returns hundreds of codes that start the same way, and the comparison happens here. Not even the service knows which password you checked.',
@@ -539,6 +545,7 @@
   function setCheck(id, patch) {
     state.checks[id] = Object.assign(blankCheck(), patch);
     renderCheck(id);
+    renderPdfButton();
   }
 
   function renderCheck(id) {
@@ -1285,6 +1292,80 @@
   }
 
   // ---------------------------------------------------------------------------
+  // PDF report: built from the current results only when asked, then printed
+  // ---------------------------------------------------------------------------
+  var REPORT_ORDER = ['browser', 'connection', 'dns', 'webrtc', 'tracking', 'password', 'speed'];
+
+  function hasResult(id) {
+    var s = state.checks[id] && state.checks[id].status;
+    return !!s && s !== 'idle' && s !== 'running';
+  }
+
+  function renderPdfButton() {
+    var show = REPORT_ORDER.some(hasResult);
+    if ($('#pdf')) $('#pdf').hidden = !show;
+    if ($('#pdf-hint')) $('#pdf-hint').hidden = !show;
+  }
+
+  function buildReport() {
+    var root = $('#report');
+    root.textContent = '';
+    var head = el('div', 'report-head');
+    var logo = el('img');
+    logo.src = 'assets/emblem.png';
+    logo.alt = 'CyberSecInfo';
+    head.appendChild(logo);
+    var titles = el('div');
+    titles.appendChild(el('h1', null, t('reportTitle')));
+    titles.appendChild(el('p', 'report-meta', t('reportGenerated', new Date().toLocaleString('en-IE')) + ' · ' + location.href.split('#')[0].split('?')[0]));
+    head.appendChild(titles);
+    root.appendChild(head);
+
+    REPORT_ORDER.filter(hasResult).forEach(function (id) {
+      var data = state.checks[id];
+      var box = el('section', 'report-check');
+      box.setAttribute('data-status', data.status);
+      var h = el('h2');
+      h.appendChild(el('span', null, ($('#check-' + id + ' h3') || {}).textContent || id));
+      h.appendChild(el('span', 'report-pill', t('st_' + data.status)));
+      box.appendChild(h);
+      if (data.verdict) box.appendChild(el('p', null, resolve(data.verdict)));
+      if (id === 'password') {
+        if (state.hash) box.appendChild(el('p', 'report-fix', t('reportPrefix', state.hash.prefix)));
+      } else if (data.facts.length) {
+        var dl = el('dl');
+        data.facts.forEach(function (f) {
+          dl.appendChild(el('dt', null, resolve(f.label)));
+          dl.appendChild(el('dd', null, f.list ? f.list.map(function (i) { return [i.data, i.text].filter(Boolean).join(' '); }).join(', ') : resolve(f.value)));
+        });
+        box.appendChild(dl);
+      }
+      if (data.fix) box.appendChild(el('p', 'report-fix', resolve(data.fix)));
+      root.appendChild(box);
+    });
+
+    if (state.ledger.length) {
+      var lg = el('section', 'report-check');
+      var lh = el('h2');
+      lh.appendChild(el('span', null, t('ledgerTitle')));
+      lg.appendChild(lh);
+      var ol = el('ol', 'report-ledger');
+      state.ledger.forEach(function (item) {
+        ol.appendChild(el('li', null, formatTime(item.ts) + ' · ' + item.host + ' · ' + resolve(item.purpose) +
+          (item.data.length ? ' · ' + t('ledgerSent') + ' ' + item.data.join(', ') : '')));
+      });
+      lg.appendChild(ol);
+      root.appendChild(lg);
+    }
+    root.appendChild(el('p', 'report-foot', t('reportFoot')));
+  }
+
+  function printReport() {
+    buildReport();
+    window.print();
+  }
+
+  // ---------------------------------------------------------------------------
   // Check 4: password (Pwned Passwords range API, k-anonymity)
   // ---------------------------------------------------------------------------
   function sha1Hex(text) {
@@ -1398,6 +1479,7 @@
     $('#speed-go').addEventListener('click', runSpeed);
     if (window.PCGauge && $('#gauge')) gauge = window.PCGauge.create($('#gauge'));
     $('#speed-cancel').addEventListener('click', cancelSpeed);
+    $('#pdf').addEventListener('click', printReport);
 
     $all('.lang button').forEach(function (b) {
       b.addEventListener('click', function () { setLang(b.getAttribute('data-lang')); });
