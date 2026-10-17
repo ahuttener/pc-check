@@ -86,6 +86,8 @@ a:hover { color: var(--action-hover); }
 :focus-visible { outline: 3px solid var(--action); outline-offset: 2px; border-radius: 4px; }
 
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+/* Bait for content blockers: in the layout (so blockers can hide it) but never visible. */
+#bait { position: absolute; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
 
 .visually-hidden {
   position: absolute !important;

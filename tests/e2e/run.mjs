@@ -225,6 +225,45 @@ try {
     await context.close();
   }
 
+  // 3d. Trackability (local only)
+  console.log('Trackability');
+  {
+    const { page, context, seen } = await newPage('ok');
+    const r = await page.evaluate(() => {
+      const ev = window.__bsc.evaluateTracking;
+      const none = { gpc: false, dnt: false, blocker: false, canvasRandomised: false, webkitItp: false };
+      const st = (p) => ev({}, Object.assign({}, none, p)).status;
+      return {
+        zero: st({}), gpc: st({ gpc: true }), two: st({ gpc: true, blocker: true }),
+        dntOnly: st({ dnt: true }), itpBlocker: st({ webkitItp: true, blocker: true }),
+        saysEstimate: JSON.stringify(ev({}, none))
+      };
+    });
+    check('tracking: 0 protections -> warn', r.zero === 'warn', r.zero);
+    check('tracking: GPC only -> info', r.gpc === 'info', r.gpc);
+    check('tracking: GPC + blocker -> ok', r.two === 'ok', r.two);
+    check('tracking: DNT alone does not count -> warn', r.dntOnly === 'warn', r.dntOnly);
+    check('tracking: WebKit ITP + blocker -> ok', r.itpBlocker === 'ok', r.itpBlocker);
+
+    await runChecks(page);
+    const s1 = await status(page, 'tracking');
+    check('tracking card has a result', ['ok', 'info', 'warn'].includes(s1), s1);
+    const facts = await page.locator('#check-tracking [data-role="facts"]').innerText();
+    const tv = await page.locator('#check-tracking [data-role="verdict"]').innerText();
+    check('tracking: verdict on screen says it is an estimate', /estimate/i.test(tv), tv);
+    check('tracking facts show CPU cores and time zone', facts.includes('CPU cores') && facts.includes('Time zone'), facts);
+    const ledger1 = await page.locator('#ledger-list li').count();
+    check('tracking: no page errors', seen.errors.length === 0, seen.errors);
+    await context.close();
+
+    const g = await newPage('ok', { initScript: 'Object.defineProperty(Navigator.prototype, "globalPrivacyControl", { get: () => true });' });
+    await runChecks(g.page);
+    const gFacts = await g.page.locator('#check-tracking [data-role="facts"]').innerText();
+    check('tracking: GPC on is reported', /Global Privacy Control\s*On/i.test(gFacts), gFacts);
+    check('tracking sends nothing (same ledger size with or without GPC)', (await g.page.locator('#ledger-list li').count()) === ledger1);
+    await g.context.close();
+  }
+
   // 4. Every outside service fails: each check shows "Couldn't check", page keeps working
   console.log('Errors');
   {

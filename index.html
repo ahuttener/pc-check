@@ -31,6 +31,8 @@
     <symbol id="n-pulse" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </svg>
 
+  <div id="bait" class="adsbox ad-banner sponsor-ad pub_300x250 text-ad" aria-hidden="true"></div>
+
   <a class="skip" href="#checks" data-i18n="skip">Skip to the checks</a>
 
   <header class="site-head">
@@ -142,6 +144,23 @@
           <div class="check-title">
             <h3 data-i18n="webrtcTitle">WebRTC leak</h3>
             <p class="question" data-i18n="webrtcQ">Can sites see your real IP through WebRTC?</p>
+          </div>
+          <span class="pill" data-role="pill">Not checked</span>
+        </div>
+        <div class="check-body" aria-live="polite">
+          <p class="verdict" data-role="verdict"></p>
+          <dl class="facts" data-role="facts"></dl>
+          <p class="note" data-role="note"></p>
+          <p class="fix" data-role="fix"></p>
+        </div>
+      </article>
+
+      <article class="check" id="check-tracking" data-status="idle">
+        <div class="check-head">
+          <svg class="mark" aria-hidden="true"><use href="#i-idle"></use></svg>
+          <div class="check-title">
+            <h3 data-i18n="trackTitle">Trackability</h3>
+            <p class="question" data-i18n="trackQ">How easy is this browser to track without cookies?</p>
           </div>
           <span class="pill" data-role="pill">Not checked</span>
         </div>

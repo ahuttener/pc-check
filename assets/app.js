@@ -306,6 +306,33 @@
       fixWebrtcLocal: 'Most browsers hide local addresses by default. If you changed WebRTC settings or flags, restore the defaults.',
       fWebrtcPublic: 'Public address via WebRTC',
       fWebrtcLocal: 'Local address via WebRTC',
+      trackTitle: 'Trackability',
+      trackQ: 'How easy is this browser to track without cookies?',
+      trackLow: function (n) { return 'Estimated trackability: low. ' + n + ' privacy protections found.'; },
+      trackMedium: 'Estimated trackability: medium. 1 privacy protection found.',
+      trackHigh: 'Estimated trackability: high. No privacy protection found.',
+      trackNote: 'This is an estimate. Any site can read the details below without cookies; together they can recognise a browser. Nothing here left your device.',
+      fixTrack: 'Turn on Global Privacy Control, add a tracker blocker such as uBlock Origin, or use a browser with fingerprinting protection (Brave, Firefox, Safari).',
+      fOs: 'System',
+      fLanguage: 'Language',
+      fTimeZone: 'Time zone',
+      fScreen: 'Screen',
+      fCores: 'CPU cores',
+      fMemory: 'Memory (approx.)',
+      fGpu: 'Graphics',
+      fTouch: 'Touch screen',
+      fCanvas: 'Canvas fingerprint',
+      fGpc: 'Global Privacy Control',
+      fDnt: 'Do Not Track (ignored by most sites)',
+      fBlocker: 'Tracker blocker',
+      fItp: 'Built-in tracking prevention',
+      vOn: 'On',
+      vOff: 'Off',
+      vYes: 'Yes',
+      vNo: 'No',
+      vDetected: 'Detected',
+      vNotDetected: 'Not detected',
+      vRandomised: 'Randomised (protected)',
 
       aboutTitle: 'How it works',
       aboutPw: 'Password: your browser turns the password into a code (SHA-1 hash) and sends only the first 5 characters. Pwned Passwords returns hundreds of codes that start the same way, and the comparison happens here. Not even the service knows which password you checked.',
@@ -333,6 +360,7 @@
       connection: blankCheck(),
       dns: blankCheck(),
       webrtc: blankCheck(),
+      tracking: blankCheck(),
       password: blankCheck()
     },
     ledger: [],
@@ -986,6 +1014,106 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Check: trackability (everything stays on the device)
+  // ---------------------------------------------------------------------------
+  function shortHash(text) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return ('0000000' + h.toString(16)).slice(-8);
+  }
+
+  function canvasData() {
+    try {
+      var c = document.createElement('canvas');
+      c.width = 220; c.height = 40;
+      var g = c.getContext('2d');
+      g.textBaseline = 'top';
+      g.font = '16px Arial';
+      g.fillStyle = '#f60'; g.fillRect(0, 0, 60, 20);
+      g.fillStyle = '#069'; g.fillText('PC Check \u2713 1.0', 4, 8);
+      return c.toDataURL();
+    } catch (e) { return null; }
+  }
+
+  function gpuName() {
+    try {
+      var gl = document.createElement('canvas').getContext('webgl');
+      var ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+      return ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : null;
+    } catch (e) { return null; }
+  }
+
+  function readSurface(b) {
+    var tz = null;
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { /* old browser */ }
+    var canvas = canvasData();
+    return {
+      browser: b && b.name ? b.name + (b.version ? ' ' + shortVersion(b.version) : '') : null,
+      os: (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || null,
+      language: navigator.language || null,
+      timeZone: tz,
+      screen: window.screen ? screen.width + ' × ' + screen.height : null,
+      pixelRatio: window.devicePixelRatio || null,
+      cores: navigator.hardwareConcurrency || null,
+      memoryGb: navigator.deviceMemory || null,
+      gpu: gpuName(),
+      touch: (navigator.maxTouchPoints || 0) > 0,
+      canvasHash: canvas ? shortHash(canvas) : null
+    };
+  }
+
+  function detectProtections(b) {
+    var bait = document.getElementById('bait');
+    var first = canvasData();
+    var second = canvasData();
+    return sleep(100).then(function () {
+      var blocked = !bait || !document.body.contains(bait) || bait.offsetHeight === 0 ||
+        window.getComputedStyle(bait).display === 'none' || window.getComputedStyle(bait).visibility === 'hidden';
+      return {
+        gpc: navigator.globalPrivacyControl === true,
+        dnt: navigator.doNotTrack === '1' || window.doNotTrack === '1',
+        blocker: blocked,
+        canvasRandomised: !!(first && second && first !== second),
+        webkitItp: !!b && (b.family === 'ios' || b.family === 'safari')
+      };
+    });
+  }
+
+  function evaluateTracking(surface, prot) {
+    var s = surface || {};
+    var facts = [];
+    function add(label, value, data) { if (value !== null && value !== undefined && value !== '') facts.push({ label: [label], value: String(value), data: !!data }); }
+    add('fBrowser', s.browser);
+    add('fOs', s.os);
+    add('fLanguage', s.language);
+    add('fTimeZone', s.timeZone);
+    add('fScreen', s.screen ? s.screen + (s.pixelRatio ? ' @' + s.pixelRatio + 'x' : '') : null);
+    add('fCores', s.cores, true);
+    add('fMemory', s.memoryGb ? s.memoryGb + ' GB' : null, true);
+    add('fGpu', s.gpu);
+    if (s.touch !== undefined) add('fTouch', t(s.touch ? 'vYes' : 'vNo'));
+    add('fCanvas', prot.canvasRandomised ? t('vRandomised') : s.canvasHash, !prot.canvasRandomised);
+    add('fGpc', t(prot.gpc ? 'vOn' : 'vOff'));
+    add('fDnt', t(prot.dnt ? 'vOn' : 'vOff'));
+    add('fBlocker', t(prot.blocker ? 'vDetected' : 'vNotDetected'));
+    if (prot.webkitItp) add('fItp', t('vOn'));
+
+    // Do Not Track is shown but not counted: most sites ignore it.
+    var count = [prot.gpc, prot.blocker, prot.canvasRandomised, prot.webkitItp].filter(Boolean).length;
+    if (count >= 2) return { status: 'ok', verdict: ['trackLow', count], facts: facts, note: ['trackNote'] };
+    if (count === 1) return { status: 'info', verdict: ['trackMedium'], facts: facts, note: ['trackNote'], fix: ['fixTrack'] };
+    return { status: 'warn', verdict: ['trackHigh'], facts: facts, note: ['trackNote'], fix: ['fixTrack'] };
+  }
+
+  function runTracking() {
+    return detectBrowser().catch(function () { return null; }).then(function (b) {
+      return detectProtections(b).then(function (prot) { setCheck('tracking', evaluateTracking(readSurface(b), prot)); });
+    }).catch(function () {
+      setCheck('tracking', { status: 'error', verdict: ['trackHigh'] });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Check 4: password (Pwned Passwords range API, k-anonymity)
   // ---------------------------------------------------------------------------
   function sha1Hex(text) {
@@ -1060,18 +1188,18 @@
     if (state.running) return;
     state.running = true;
     state.summaryCounts = null;
-    ['browser', 'connection', 'dns', 'webrtc'].forEach(function (id) { setCheck(id, { status: 'running' }); });
+    ['browser', 'connection', 'dns', 'webrtc', 'tracking'].forEach(function (id) { setCheck(id, { status: 'running' }); });
     renderRunButton();
 
     var tracePromise = fetchTrace();
     tracePromise.catch(function () {});
 
-    var tasks = [runBrowser(), runConnection(tracePromise), runDns(tracePromise), runWebRtc(tracePromise)];
+    var tasks = [runBrowser(), runConnection(tracePromise), runDns(tracePromise), runWebRtc(tracePromise), runTracking()];
     Promise.all(tasks.map(function (p) { return p.catch(function () {}); })).then(function () {
       state.running = false;
       state.ranOnce = true;
       var counts = { ok: 0, warn: 0, risk: 0, info: 0, error: 0 };
-      ['browser', 'connection', 'dns', 'webrtc'].forEach(function (id) {
+      ['browser', 'connection', 'dns', 'webrtc', 'tracking'].forEach(function (id) {
         var s = state.checks[id].status;
         if (Object.prototype.hasOwnProperty.call(counts, s)) counts[s]++;
       });
@@ -1132,6 +1260,7 @@
     evaluateConnection: evaluateConnection,
     evaluateDns: evaluateDns,
     evaluateWebRtc: evaluateWebRtc,
+    evaluateTracking: evaluateTracking,
     sha1Hex: sha1Hex,
     shortVersion: shortVersion
   };
