@@ -3,3 +3,4 @@ tests/e2e/screenshots/
 api/cache/*
 !api/cache/.htaccess
 HANDOFF.md
+.superpowers/
