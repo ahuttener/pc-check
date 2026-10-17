@@ -294,8 +294,9 @@ h1 {
   font-family: var(--mono); font-size: 1.0625rem;
   letter-spacing: 0.08em; line-height: 2; word-break: break-all;
 }
-.hash-out { background: var(--action); color: var(--action-ink); padding: 3px 5px; border-radius: 5px; margin-right: 4px; }
-.hash-kept { color: var(--line-strong); }
+.hash-out { background: var(--action); color: var(--action-ink); padding: 3px 5px; border-radius: 5px; margin-right: 4px; white-space: nowrap; }
+.hash-kept { color: var(--line-strong); word-break: break-all; line-break: anywhere; }
+.hash-code { overflow-wrap: anywhere; line-break: anywhere; }
 .hash-legend { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 4px 0 0; font-size: 0.875rem; color: var(--muted); }
 .hash-legend span::before {
   content: ""; display: inline-block; width: 0.75em; height: 0.75em;

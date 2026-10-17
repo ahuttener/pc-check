@@ -1,6 +1,6 @@
 // End-to-end tests with Playwright. Every outside service is simulated with page.route.
 // Run from tests/: node e2e/run.mjs   (starts php -S on 127.0.0.1:$BSC_PORT, default 8765, serving the project folder)
-import { chromium } from 'playwright';
+import { chromium, webkit, devices } from 'playwright';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -39,8 +39,8 @@ const VERSIONS = {
 const DNS = { servers: [{ ip: '8.8.8.8', country: 'US', country_name: 'United States', asn: 'Google LLC' }], conclusion: 'DNS is not leaking.', conclusion_code: 'no_leak' };
 
 // mode: 'ok' | 'fail' | 'rate'
-async function newPage(mode, opts = {}) {
-  const context = await browser.newContext(Object.assign({ locale: 'en-IE' }, opts));
+async function newPage(mode, opts = {}, engine = browser) {
+  const context = await engine.newContext(Object.assign({ locale: 'en-IE' }, opts));
   const page = await context.newPage();
   const seen = { external: [], hibp: [], errors: [], consoleErrors: [] };
   page.on('pageerror', (e) => seen.errors.push(String(e)));
@@ -210,6 +210,28 @@ try {
     check('focus ring visible on the run button', detail && ((detail.outline && !detail.outline.startsWith('none')) || (detail.shadow && detail.shadow !== 'none')), detail);
     await page.screenshot({ path: path.join(shots, 'focus-run.png') });
     await context.close();
+  }
+
+  // 7. iPhone (WebKit, the engine every iOS browser must use): full run, no sideways scroll
+  console.log('iPhone (WebKit)');
+  {
+    const wk = await webkit.launch();
+    try {
+      const { page, context, seen } = await newPage('ok', devices['iPhone 14'], wk);
+      await runChecks(page);
+      await page.fill('#pw', 'password');
+      await page.click('#pw-submit');
+      await page.waitForFunction(() => document.getElementById('check-password').getAttribute('data-status') === 'risk');
+      check('iPhone: browser shows the iOS note', (await status(page, 'browser')) === 'info', await status(page, 'browser'));
+      check('iPhone: connection, DNS ok', (await status(page, 'connection')) === 'ok' && (await status(page, 'dns')) === 'ok');
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      check('iPhone: no horizontal scroll after the password check', overflow <= 0, overflow);
+      check('iPhone: no page errors', seen.errors.length === 0, seen.errors);
+      await page.screenshot({ path: path.join(shots, 'iphone.png'), fullPage: true });
+      await context.close();
+    } finally {
+      await wk.close();
+    }
   }
 } finally {
   await browser.close();
