@@ -25,8 +25,8 @@
   <link rel="preload" href="assets/fonts/orbitron-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="assets/styles.css?v=11">
   <script src="assets/gauge.js?v=3" defer></script>
-  <script src="assets/sysreport.js?v=12" defer></script>
-  <script src="assets/app.js?v=18" defer></script>
+  <script src="assets/sysreport.js?v=13" defer></script>
+  <script src="assets/app.js?v=19" defer></script>
 </head>
 <body>
   <svg class="sprite" aria-hidden="true" focusable="false">
@@ -389,9 +389,9 @@
           <li id="sys-step-mac-crash" class="sys-step" data-state="empty">
             <h3><span class="sys-step-no" aria-hidden="true">2</span>Crash and panic reports <span class="sys-optional">(optional)</span></h3>
             <ol class="sys-how">
-              <li>In Finder choose Go &gt; Go to Folder…, enter <span class="sys-cmd sys-path"><code id="sys-path-mac-system">/Library/Logs/DiagnosticReports</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-path-mac-system">Copy</button></span> and press Return.</li>
+              <li>In Finder choose Go &gt; Go to Folder…, enter <span class="sys-cmd sys-path"><code id="sys-path-mac-system">/Library/Logs/DiagnosticReports</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-path-mac-system" aria-label="Copy system folder path">Copy</button></span> and press Return.</li>
               <li>Sort by Date Modified and select the files from the last 30 days whose names end in .panic, .ips or .crash (hold Command to select several). Drag them onto the box below.</li>
-              <li>Do the same with <span class="sys-cmd sys-path"><code id="sys-path-mac-user">~/Library/Logs/DiagnosticReports</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-path-mac-user">Copy</button></span> for crashes of your own apps.</li>
+              <li>Do the same with <span class="sys-cmd sys-path"><code id="sys-path-mac-user">~/Library/Logs/DiagnosticReports</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-path-mac-user" aria-label="Copy user folder path">Copy</button></span> for crashes of your own apps.</li>
             </ol>
             <p class="sys-note">Go to Folder is a Finder window, not a command line.</p>
             <p class="sys-note">You can also open the Console app (Applications &gt; Utilities), choose Crash Reports, Control-click a report and choose Reveal in Finder.</p>

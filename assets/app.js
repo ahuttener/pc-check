@@ -1835,9 +1835,24 @@
   // File names are never read, shown or stored: macOS puts the computer name in them.
   // ---------------------------------------------------------------------------
   var MAC_MAX_REPORTS = 100;
+  var MAC_READ_PARALLEL = 8; // files read at the same time, so 100 big reports never sit in memory at once
   var MAC_STEPS = ['spx', 'crash'];
   var macReads = {};
   var macToken = { spx: 0, crash: 0 };
+
+  // Runs fn on every item with at most `limit` calls in flight; results keep the input order.
+  function mapLimit(items, limit, fn) {
+    var results = new Array(items.length);
+    var next = 0;
+    function worker() {
+      if (next >= items.length) return Promise.resolve();
+      var i = next++;
+      return Promise.resolve(fn(items[i])).then(function (r) { results[i] = r; return worker(); });
+    }
+    var workers = [];
+    for (var w = 0; w < Math.min(limit, items.length); w++) workers.push(worker());
+    return Promise.all(workers).then(function () { return results; });
+  }
 
   function isMacReport(r) { return !!r && !r.error && (r.kind === 'panic' || r.kind === 'crash'); }
 
@@ -1905,7 +1920,7 @@
     if (!S) { setMacStep('crash', 'error', ['sysReadError']); return Promise.resolve(); }
     setMacStep('crash', 'reading', ['sysReading']);
     // Only the first MAC_REPORT_HEAD bytes of each file are read, whatever its size; the name is never passed on.
-    var job = Promise.all(files.map(function (file) {
+    var job = mapLimit(files, MAC_READ_PARALLEL, function (file) {
       return readBuffer(file.slice(0, S.MAC_REPORT_HEAD)).then(function (buffer) {
         var text = S.decode(buffer);
         var parsed = S.parseMacReport(text);
@@ -1913,7 +1928,7 @@
         var spx = looksLikeSpx(text) && (file.size > S.MAC_REPORT_HEAD || !S.parseSpx(text).error);
         return { skipped: true, spx: spx };
       }, function () { return { unreadable: true }; });
-    })).then(function (results) {
+    }).then(function (results) {
       if (token !== macToken.crash) return;
       var reports = [];
       var panics = 0;
@@ -1927,6 +1942,11 @@
       });
       state.sys.mac.reports = reports;
       var msg;
+      if (unreadable === results.length) {
+        // Nothing could be read at all: only say why and what to do.
+        setMacStep('crash', 'error', t('sysMacUnreadable', unreadable).trim());
+        return;
+      }
       if (reports.length) {
         msg = t('sysMacReadReports', reports.length, panics, reports.length - panics) + (skipped ? t('sysMacSkipped', skipped) : '');
       } else {
@@ -2107,8 +2127,6 @@
       root.appendChild(tiles);
     }
 
-    // The AI explanation is offered for Windows and Linux only until the server has a Mac prompt.
-    if (e.platform === 'mac') return;
     var ai = el('div', 'sys-ai');
     ai.id = 'sys-ai';
     root.appendChild(ai);
@@ -2187,7 +2205,7 @@
 
   function openSysAi() {
     var e = state.sys.evaluation;
-    if (!e || !window.PCSys || e.platform === 'mac') return;
+    if (!e || !window.PCSys) return;
     state.sys.ai = blankAi();
     state.sys.ai.open = true;
     state.sys.ai.summary = window.PCSys.buildSummary(e);

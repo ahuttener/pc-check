@@ -1565,6 +1565,8 @@
 
   var SUMMARY_KERNEL = /^[0-9][0-9A-Za-z._+~-]{0,79}$/; // what the server accepts as a kernel release
 
+  function summaryCount(v) { return typeof v === 'number' && isFinite(v) && v >= 0 && Math.floor(v) === v ? Math.min(v, 100000) : null; }
+
   function summaryNumber(v, max) { return typeof v === 'number' && isFinite(v) && v >= 0 && v <= max ? v : null; }
 
   function buildLinuxSummary(e) {
@@ -1572,7 +1574,8 @@
     var str = function (v) { return v === null || v === undefined ? null : cap(anonymise(v, names)); };
     var kernel = str(e.kernel);
     var list = function (items) {
-      return (items || []).map(function (a) { return { name: str(a.name), count: Math.min(a.count, 100000) }; }).sort(byCountThenName).slice(0, 3);
+      return (items || []).map(function (a) { return { name: str(a.name), count: summaryCount(a.count) }; })
+        .filter(function (a) { return a.name !== null && a.count !== null; }).sort(byCountThenName).slice(0, 3);
     };
     return {
       platform: 'linux',
@@ -1580,41 +1583,44 @@
       kernel: kernel !== null && SUMMARY_KERNEL.test(kernel) ? kernel : null,
       score: e.score,
       findings: e.findings.slice(0, 20).map(function (f) { return { id: f.id, severity: f.severity }; }),
-      bootErrors: summaryNumber(e.bootErrors, 100000),
+      bootErrors: summaryCount(e.bootErrors),
       topErrorSources: list(e.topErrorSources),
       topCrashApps: list(e.topCrashApps),
-      oomKills: summaryNumber(e.oomKills, 100000),
-      previousBootErrors: summaryNumber(e.previousBootErrors, 100000),
+      oomKills: summaryCount(e.oomKills),
+      previousBootErrors: summaryCount(e.previousBootErrors),
       diskMaxUsedPct: summaryNumber(e.diskMaxUsedPct, 100),
       diskInodes: e.diskInodes === true,
       batteryHealthPct: summaryNumber(e.batteryHealthPct, 200)
     };
   }
 
-  // What the server accepts as a macOS version ("macOS 26.0.1 (25A362)", "Mac OS X 10.13.6 (17G66)")
-  var SUMMARY_MACOS = /^(?:macOS|Mac OS X|OS X) [0-9][0-9A-Za-z.() ]{0,63}$/;
+  // Exactly what the server accepts (api/_lib.php, bsc_validate_mac_summary): a macOS version as System Information
+  // writes it ("macOS 26.0.1 (25A362)", "Mac OS X 10.13.6 (17G66)", a Rapid Security Response "macOS 13.4.1 (c) (22F770820d)"),
+  // and model or chip names in a plain charset. A value the server would reject is sent as null.
+  var SUMMARY_MACOS = /^(?:macOS|OS X|Mac OS X) [0-9]{2}(?:\.[0-9]{1,3}){0,2}(?: \([a-z]\))?(?: \([0-9A-Za-z]{4,12}\))?$/;
+  var SUMMARY_MAC_NAME = /^[A-Za-z0-9 ,.()\[\]\/_+\-\u00ae\u2122]*$/;
   var SUMMARY_MAC_CAUSES = toSet(MAC_PANIC_CAUSE_ORDER);
-
-  function summaryCount(v) { return typeof v === 'number' && isFinite(v) && v >= 0 && Math.floor(v) === v ? Math.min(v, 100000) : null; }
 
   function buildMacSummary(e) {
     var names = e.names || [];
     var str = function (v) { return v === null || v === undefined ? null : cap(anonymise(v, names)); };
     var macos = str(e.macos);
+    var name = function (v) { var x = str(v); return x !== null && SUMMARY_MAC_NAME.test(x) ? x : null; };
+    var counted = function (c) { return c.count >= 1; };
     return {
       platform: 'mac',
       macos: macos !== null && SUMMARY_MACOS.test(macos) ? macos : null,
-      model: str(e.model),
-      chip: str(e.chip),
+      model: name(e.model),
+      chip: name(e.chip),
       ramGb: summaryNumber(e.ramGb, 4096),
       score: e.score,
       findings: e.findings.slice(0, 20).map(function (f) { return { id: f.id, severity: f.severity }; }),
       panics30d: summaryCount(e.panics30d),
       panicCauses: (e.panicCauses || []).filter(function (c) { return SUMMARY_MAC_CAUSES[c.name]; })
-        .map(function (c) { return { name: c.name, count: summaryCount(c.count) || 0 }; }).sort(byCountThenName).slice(0, 3),
+        .map(function (c) { return { name: c.name, count: summaryCount(c.count) || 0 }; }).filter(counted).sort(byCountThenName).slice(0, 3),
       crashes30d: summaryCount(e.crashes30d),
       topCrashApps: (e.topCrashApps || []).map(function (a) { return { name: (str(a.name) || '').trim() || UNNAMED_APP, count: summaryCount(a.count) || 0 }; })
-        .sort(byCountThenName).slice(0, 3),
+        .filter(counted).sort(byCountThenName).slice(0, 3),
       diskMaxUsedPct: summaryNumber(e.diskMaxUsedPct, 100),
       batteryHealthPct: summaryNumber(e.batteryHealthPct, 200),
       batteryCycles: summaryCount(e.batteryCycles)
@@ -1628,14 +1634,15 @@
     return {
       os: cap(e.os === null ? null : anonymise(e.os, names)),
       model: cap(e.model === null ? null : anonymise(e.model, names)),
-      ramGb: typeof e.ramGb === 'number' ? e.ramGb : null,
+      ramGb: summaryNumber(e.ramGb, 65536),
       score: e.score,
       findings: e.findings.slice(0, 20).map(function (f) { return { id: f.id, severity: f.severity }; }),
-      topCrashApps: e.topCrashApps.slice(0, 3).map(function (a) { return { name: cap(anonymise(a.name, names)), count: a.count }; }),
-      batteryHealthPct: typeof e.batteryHealthPct === 'number' ? e.batteryHealthPct : null,
-      shutdowns30d: typeof e.shutdowns30d === 'number' ? e.shutdowns30d : null,
-      hardwareErrors30d: typeof e.hardwareErrors30d === 'number' ? e.hardwareErrors30d : null,
-      stabilityNow: typeof e.stabilityNow === 'number' ? e.stabilityNow : null
+      topCrashApps: e.topCrashApps.filter(function (a) { return typeof a.count === 'number' && a.count >= 0 && Math.floor(a.count) === a.count; }).slice(0, 3)
+        .map(function (a) { return { name: cap(anonymise(a.name, names)), count: Math.min(a.count, 1000000) }; }),
+      batteryHealthPct: summaryNumber(e.batteryHealthPct, 200),
+      shutdowns30d: summaryCount(e.shutdowns30d),
+      hardwareErrors30d: summaryCount(e.hardwareErrors30d),
+      stabilityNow: summaryNumber(e.stabilityNow, 10)
     };
   }
 
