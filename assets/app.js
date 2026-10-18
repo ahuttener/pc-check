@@ -264,7 +264,7 @@
       sysScoreTitle: 'Health score',
       sysVerdictOk: 'No serious problems in these reports.',
       sysVerdictWarn: 'A few things need attention.',
-      sysVerdictRisk: function (platform) { return platform === 'ios' ? 'This iPhone has problems worth fixing soon.' : 'This PC has problems worth fixing soon.'; },
+      sysVerdictRisk: function (platform) { return platform === 'ios' ? 'This iPhone has problems worth fixing soon.' : (platform === 'ipad' ? 'This iPad has problems worth fixing soon.' : 'This PC has problems worth fixing soon.'); },
       sysReportFrom: function (date, platform, fromSpx) {
         var what = platform === 'linux' ? 'Logs from ' : (platform === 'mac' ? (fromSpx ? 'System Information from ' : 'Newest report from ') :
           (platform === 'ios' ? 'Newest log from ' : 'Reliability history from '));
@@ -293,6 +293,8 @@
       sysMacReadReports: function (n, p, c) {
         return 'Read ' + n + (n === 1 ? ' report: ' : ' reports: ') + p + (p === 1 ? ' panic, ' : ' panics, ') + c + (c === 1 ? ' app crash.' : ' app crashes.');
       },
+      sysMacIosOnly: function (n) { return n === 1 ? 'This is an iPhone log; choose iPhone above.' : 'These are iPhone logs; choose iPhone above.'; },
+      sysMacFromIos: function (n) { return ' ' + n + ' of them ' + (n === 1 ? 'is an iPhone log' : 'are iPhone logs') + '; choose iPhone above for those.'; },
       sysMacSkipped: function (n) { return ' ' + n + (n === 1 ? ' file was skipped' : ' files were skipped') + ' (not a crash or panic report).'; },
       sysMacCapped: function (n) { return ' Only the first ' + n + ' files were read.'; },
       sysMacUnreadable: function (n) {
@@ -318,7 +320,7 @@
       sysLocalOnly: 'Read on this device, nothing uploaded',
       sysFindingsTitle: 'What we found',
       sysNoFindings: 'Nothing to fix in these reports.',
-      sysFactsTitle: function (platform) { return platform === 'ios' ? 'This iPhone' : 'This PC'; },
+      sysFactsTitle: function (platform) { return platform === 'ios' ? 'This iPhone' : (platform === 'ipad' ? 'This iPad' : 'This PC'); },
       sysFix: 'Fix: ',
       sev_risk: 'Risk',
       sev_warn: 'Attention',
@@ -343,7 +345,7 @@
       sysAiUpstream: 'The AI service did not answer. Try again in a minute.',
       sysAiFail: 'The explanation could not be fetched. Check your connection and try again.',
       lpExplain: 'AI explanation of the system report (this site, passed to Claude by Anthropic)',
-      reportSysTitle: function (platform) { return 'System report (' + (platform === 'linux' ? 'Linux' : (platform === 'mac' ? 'Mac' : (platform === 'ios' ? 'iPhone' : 'Windows'))) + ')'; },
+      reportSysTitle: function (platform) { return 'System report (' + (platform === 'linux' ? 'Linux' : (platform === 'mac' ? 'Mac' : (platform === 'ios' ? 'iPhone' : (platform === 'ipad' ? 'iPad' : 'Windows')))) + ')'; },
       reportSysScore: function (n) { return 'Health score: ' + n + ' / 100'; },
       reportAiTitle: 'AI explanation',
       reportFootAi: 'Generated locally in your browser. Only what is listed under “What left your device” was sent, including the anonymised system summary for the AI explanation. cybersecinfo.com/pccheck',
@@ -1962,6 +1964,7 @@
         var text = S.decode(buffer);
         var parsed = S.parseMacReport(text);
         if (isMacReport(parsed)) return { report: parsed };
+        if (parsed && parsed.error === 'ios_report') return { skipped: true, ios: true };
         var spx = looksLikeSpx(text) && (file.size > S.MAC_REPORT_HEAD || !S.parseSpx(text).error);
         return { skipped: true, spx: spx };
       }, function () { return { unreadable: true }; });
@@ -1972,9 +1975,11 @@
       var skipped = 0;
       var unreadable = 0;
       var spxSeen = false;
+      var iosSeen = 0;
       results.forEach(function (r) {
         if (r.report) { reports.push(r.report); if (r.report.kind === 'panic') panics++; }
         else if (r.unreadable) unreadable++;
+        else if (r.ios) iosSeen++;
         else { skipped++; if (r.spx) spxSeen = true; }
       });
       state.sys.mac.reports = reports;
@@ -1985,9 +1990,11 @@
         return;
       }
       if (reports.length) {
-        msg = t('sysMacReadReports', reports.length, panics, reports.length - panics) + (skipped ? t('sysMacSkipped', skipped) : '');
+        msg = t('sysMacReadReports', reports.length, panics, reports.length - panics) + (skipped ? t('sysMacSkipped', skipped) : '') + (iosSeen ? t('sysMacFromIos', iosSeen) : '');
+      } else if (iosSeen && !skipped) {
+        msg = t('sysMacIosOnly', iosSeen);
       } else {
-        msg = t('sysMacNoReports') + (spxSeen ? t('sysMacSpxInReports') : '');
+        msg = t('sysMacNoReports') + (spxSeen ? t('sysMacSpxInReports') : '') + (iosSeen ? t('sysMacFromIos', iosSeen) : '');
       }
       msg += (capped ? t('sysMacCapped', MAC_MAX_REPORTS) : '') + (unreadable ? t('sysMacUnreadable', unreadable) : '');
       setMacStep('crash', reports.length ? 'ok' : 'error', msg);
@@ -2250,6 +2257,13 @@
     $('[data-role="msg"]', root).textContent = step ? resolve(step.msg) : '';
   }
 
+  // iPhone results on an iPad (detected device, or the logs' model) say "iPad"; every other platform is unchanged
+  function sysDevice(e) {
+    if (!e || e.platform !== 'ios') return e ? e.platform : null;
+    var pad = (typeof e.model === 'string' && /^iPad/.test(e.model)) || !!(state.sys.os && state.sys.os.label === 'iPad');
+    return pad ? 'ipad' : 'ios';
+  }
+
   function bandOf(score) { return score >= 80 ? 'ok' : (score >= 50 ? 'warn' : 'risk'); }
 
   function renderSysResults() {
@@ -2278,7 +2292,7 @@
     var h = el('h3', null, t('sysScoreTitle'));
     h.tabIndex = -1;
     words.appendChild(h);
-    words.appendChild(el('p', 'sys-verdict', t(band === 'ok' ? 'sysVerdictOk' : (band === 'warn' ? 'sysVerdictWarn' : 'sysVerdictRisk'), e.platform)));
+    words.appendChild(el('p', 'sys-verdict', t(band === 'ok' ? 'sysVerdictOk' : (band === 'warn' ? 'sysVerdictWarn' : 'sysVerdictRisk'), sysDevice(e))));
     var date = isoDate(e.reportDate);
     words.appendChild(el('p', 'sys-date', date ? t('sysReportFrom', date, e.platform, state.sys.mac.fromSpx) : t('sysLocalOnly')));
     top.appendChild(words);
@@ -2328,7 +2342,7 @@
     }
 
     if (e.facts.length) {
-      root.appendChild(el('h4', 'sys-subtitle', t('sysFactsTitle', e.platform)));
+      root.appendChild(el('h4', 'sys-subtitle', t('sysFactsTitle', sysDevice(e))));
       var tiles = el('dl', 'sys-tiles');
       e.facts.forEach(function (f) {
         var tile = el('div', 'sys-tile');
@@ -2641,7 +2655,7 @@
       var sb = el('section', 'report-check report-sys');
       sb.setAttribute('data-status', bandOf(sysEval.score));
       var sh = el('h2');
-      sh.appendChild(el('span', null, t('reportSysTitle', sysEval.platform)));
+      sh.appendChild(el('span', null, t('reportSysTitle', sysDevice(sysEval))));
       sh.appendChild(el('span', 'report-pill', t('reportSysScore', sysEval.score)));
       sb.appendChild(sh);
       var sysDate = isoDate(sysEval.reportDate);
@@ -2666,7 +2680,7 @@
         sb.appendChild(ul);
       }
       if (sysEval.facts.length) {
-        sb.appendChild(el('h3', null, t('sysFactsTitle', sysEval.platform)));
+        sb.appendChild(el('h3', null, t('sysFactsTitle', sysDevice(sysEval))));
         var sdl = el('dl');
         sysEval.facts.forEach(function (f) {
           sdl.appendChild(el('dt', null, f.label));

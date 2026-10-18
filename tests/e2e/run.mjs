@@ -1014,7 +1014,10 @@ try {
         uniq: uniq.map((x) => x.kind), uniqLen: uniq.length,
         uniqKeptFull: uniq.indexOf(resA[1]) !== -1 && uniq.indexOf(resA[2]) === -1,
         swappedKeptBase: swapped.length === 1 && swapped[0] === resA[2],
-        uniqNotSame: uniq !== resA
+        uniqNotSame: uniq !== resA,
+        macOfIos: Object.keys(t.ios).filter((f) => /"os_version":"iPhone OS /.test(t.ios[f])).map((f) => JSON.stringify(S.parseMacReport(t.ios[f]))),
+        macOfIpados: [JSON.stringify(S.parseMacReport('{"bug_type":"309","timestamp":"2026-10-17 10:00:00.00 +0100","os_version":"iPadOS 18.7 (22H20)","app_name":"Notes"}' + String.fromCharCode(10) + '{}')),
+          JSON.stringify(S.parseMacReport('{"bug_type":"210","timestamp":"2026-10-17 10:00:00.00 +0100","os_version":"iOS 17.6.1 (21G93)"}' + String.fromCharCode(10) + '{"panicString" : "panic(cpu 0 caller 0x1): x"}'))]
       };
     }, input);
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -1055,6 +1058,7 @@ try {
       check('ios: df output and a broken header -> not_ios_report', same(r.df, { error: 'not_ios_report' }) && same(r.badHeader, { error: 'not_ios_report' }), [r.df, r.badHeader]);
       const leaks = r.allJson.map((s) => plantedValues.filter((v) => s.toLowerCase().indexOf(v) !== -1)).reduce((a, b) => a.concat(b), []);
       check('ios parsers keep no identifiers', leaks.length === 0, leaks);
+      check('mac parser: iPhone and iPad logs -> ios_report', r.macOfIos.length >= 10 && r.macOfIos.concat(r.macOfIpados).every((x) => x === '{"error":"ios_report"}'), [r.macOfIos, r.macOfIpados]);
       check('ios: uniqueIosReports keeps 2 panics, 3 crashes, 2 Jetsam (panic-base dropped when second)',
         r.uniqLen === 7 && same(r.uniq.slice().sort(), ['crash', 'crash', 'crash', 'jetsam', 'jetsam', 'panic', 'panic']) && r.uniqKeptFull && r.swappedKeptBase && r.uniqNotSame, r);
     }
@@ -1125,6 +1129,7 @@ try {
         macGood: S.evaluateMac({ spx: S.parseSpx(t.silicon.replace('78%', '88%')) }, now).goodNews,
         macServiceGood: S.evaluateMac({ spx: S.parseSpx(t.silicon.replace('78%', '85%').replace('<string>Good</string>', '<string>Service Recommended</string>')) }, now).goodNews,
         macWornGood: S.evaluateMac({ spx: si }, now).goodNews,
+        mac101Good: S.evaluateMac({ spx: S.parseSpx(t.silicon.replace('78%', '101%')) }, now).goodNews,
         ram8192: S.parseSpx(t.silicon.replace('<string>16 GB</string>', '<string>8,192 MB</string>')).ramGb,
         straddle: (() => {
           // The host name starts at character 106 of the cause line and ends after the 120-character cut
@@ -1197,6 +1202,7 @@ try {
       check('mac rules: macOS 15 is still supported', !r.mac15.ids.some((i) => /^old_macos/.test(i)), r.mac15.ids);
       check('mac good news: 88 % after 412 cycles; none at 78 % or with Service Recommended', JSON.stringify(r.macGood) === JSON.stringify([{ title: 'Battery is healthy \u2014 it holds 88 % of its original capacity after 412 cycles.' }]) &&
         r.macWornGood.length === 0 && r.macServiceGood.length === 0, [r.macGood, r.macWornGood, r.macServiceGood]);
+      check('mac good news: none above 100 %', r.mac101Good.length === 0, r.mac101Good);
       check('mac rules: no input -> score 100, no facts but the report date', r.empty.score === 100 && r.empty.ids.length === 0 && r.empty.panics30d === null, r.empty);
       check('mac spx: "8,192 MB" of memory -> 8 GB', r.ram8192 === 8, r.ram8192);
       const leaks = (s) => plantedValues.filter((v) => s.toLowerCase().indexOf(v) !== -1);
@@ -1541,6 +1547,10 @@ try {
         realFindings: real.findings,
         realGood: real.goodNews, realSummaryKeys: Object.keys(S.buildSummary(real)).join(','),
         realFacts: real.facts,
+        shutDetail: S.evaluateWindows({ reliability: rel([ev(3, 'Shut down unexpectedly')]) }, now).findings[0].detail,
+        good103: S.evaluateWindows({ battery: { designMWh: 100, fullMWh: 103, cycles: 5, healthPct: 103 } }, now).goodNews,
+        good100: S.evaluateWindows({ battery: { designMWh: 100, fullMWh: 100, cycles: 5, healthPct: 100 } }, now).goodNews,
+        linux101: S.evaluateLinux({ battery: { present: true, healthPct: 100.5, cycles: 3 } }, now).goodNews,
         defender: (() => { const d = (v) => 'Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.439.' + v + '.0)';
           const e = S.evaluateWindows({ reliability: rel([ev(1, 'Successful Windows Update', d(103)), ev(2, 'Failed Windows Update', d(102)), ev(3, 'Failed Windows Update', d(101)), ev(4, 'Failed Windows Update', d(100))]) }, now); return ids(e); })(),
         versioned: ids(S.evaluateWindows({ reliability: rel([ev(1, 'Successful Windows Update', 'Contoso Driver Update (2.1.4)'), ev(2, 'Failed Windows Update', 'Contoso Driver Update (2.1.3)'), ev(3, 'Failed Windows Update', 'Contoso Driver Update (2.1.2)'), ev(4, 'Failed Windows Update', 'Contoso Driver Update (Version 2.1.1)')]) }, now)),
@@ -1602,9 +1612,9 @@ try {
       check('1 unexpected shutdown -> warn', r.one.includes('shutdowns:warn'), r.one);
       const uo = r.uncleanOne;
       check('1 unfinished shutdown ("Windows was not properly shut down") -> info only, score 100, not counted as unexpected', uo.ids.join(',') === 'unclean_shutdowns:info' && uo.score === 100 && uo.shutdowns30d === 0, uo);
-      check('unfinished shutdown texts', uo.f.title === "Windows didn't finish shutting down 1 time in 30 days" &&
-        uo.f.detail === "A shutdown or restart didn't complete \u2014 often because an update or app hung while shutting down, the battery ran out, or the PC was switched off before it finished. This is usually harmless on its own." &&
-        uo.f.fix === "If it happens again, let shutdowns finish (wait for the screen to go dark), keep Windows Update current, and make sure the battery isn't running out. If it keeps happening, check for app or driver updates." &&
+      check('unfinished shutdown texts', uo.f.title === 'Windows didn\u2019t finish shutting down 1 time in 30 days' &&
+        uo.f.detail === "A shutdown or restart didn\u2019t complete \u2014 often because an update or app hung while shutting down, the battery ran out, or the PC was switched off before it finished. This is usually harmless on its own." &&
+        uo.f.fix === "If it happens again, let shutdowns finish (wait for the screen to go dark), keep Windows Update current, and make sure the battery isn\u2019t running out. If it keeps happening, check for app or driver updates." &&
         !/blue screen|power loss/i.test(uo.f.title + uo.f.detail + uo.f.fix), uo.f);
       check('3 unfinished shutdowns in 30 days -> warn, score 90 (one older than 30 days ignored)', r.uncleanThree.ids.join(',') === 'unclean_shutdowns:warn' && r.uncleanThree.score === 90, r.uncleanThree);
       check('an unexpected and an unfinished shutdown are counted apart', r.mixed.ids.join(',') === 'shutdowns:warn,unclean_shutdowns:info' && r.mixed.score === 90 && r.mixed.shutdowns30d === 1, r.mixed);
@@ -1622,6 +1632,8 @@ try {
       check('failed Microsoft Store app updates -> store_updates info, worded as Store apps, score 100', r.storeFailed.ids.join(',') === 'store_updates:info' && r.storeFailed.score === 100 &&
         r.storeFailed.f.title === '3 app updates from the Microsoft Store failed in 30 days' && /Microsoft Store > Library > Get updates/.test(r.storeFailed.f.fix) && !/Windows Update/.test(r.storeFailed.f.fix), r.storeFailed);
       check('stability fix says the score climbs back on its own', r.stabilityFix && r.stabilityFix.fix === 'The score climbs back up on its own a few days after the problems above stop.', r.stabilityFix);
+      check('unexpected shutdowns: blue screen or sudden power loss', r.shutDetail === 'Usually a blue screen or a sudden power loss. This report does not include the blue-screen error code.', r.shutDetail);
+      check('good news only from 80 to 100 %: 100 % yes, 103 % (Windows) and 100.5 % (Linux) no', r.good100.length === 1 && r.good103.length === 0 && r.linux101.length === 0, [r.good100, r.good103, r.linux101]);
       check('failed Defender updates with other versions, then a later success (same KB) -> no updates finding', r.defender.length === 0, r.defender);
       check('without a KB, a later success of the same update with another version clears it', r.versioned.length === 0, r.versioned);
       check('a later success of a different KB does not clear the failures', r.otherKb.join(',') === 'updates:warn', r.otherKb);
@@ -2327,6 +2339,12 @@ try {
       await page.setInputFiles('#sys-file-mac-crash', MFX('silicon.spx'), { timeout: 3000 }).catch(() => {});
       await settled(page, 'crash');
       const spxIn2 = await msg(page, 'crash');
+      await page.setInputFiles('#sys-file-mac-crash', path.join(here, '..', 'fixtures', 'sys', 'ios', 'MobileSafari-2026-10-15-091244.ips'), { timeout: 3000 }).catch(() => {});
+      await page.waitForFunction(() => /iPhone/.test((document.querySelector('#sys-step-mac-crash [data-role="msg"]') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
+      const iosIn2 = await msg(page, 'crash');
+      check('mac ui: an iPhone log in step 2 -> choose iPhone above', iosIn2.trim() === 'This is an iPhone log; choose iPhone above.', iosIn2);
+      await page.setInputFiles('#sys-file-mac-crash', MFX('silicon.spx'), { timeout: 3000 }).catch(() => {});
+      await page.waitForFunction(() => /System Information/.test((document.querySelector('#sys-step-mac-crash [data-role="msg"]') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
       check('mac ui: .spx in step 2 -> none is a report, use step 1', /^None of these files is a crash or panic report\. Look for names ending in \.panic, \.ips or \.crash\. One of them looks like the System Information file; use step 1\.$/.test(spxIn2.trim()), spxIn2);
       await page.click('#sys-mac-analyze', { timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(200);
@@ -2662,6 +2680,14 @@ try {
       await waitBanner(page);
       const steps = await page.locator('#sys-ios-steps').innerText().catch(() => '');
       check('ios ui: iPad -> no "this iPhone" in the steps or the privacy line', !!steps && !/this iPhone/.test(steps), (steps.match(/.{0,40}this iPhone.{0,20}/) || [])[0]);
+      let okPad = true;
+      try { await choose(page, SET_A.map(IFX)); await battery(page, '58'); await analyze(page); } catch (e) { okPad = false; }
+      const padVerdict = okPad ? (await page.locator('.sys-verdict').innerText()).trim() : '';
+      const padHeads = okPad ? (await page.locator('#sys-results h4').allTextContents()).map((x) => x.trim()) : [];
+      check('ios ui: iPad -> "This iPad" facts title and iPad risk verdict', padVerdict === 'This iPad has problems worth fixing soon.' && padHeads.includes('This iPad') && !padHeads.includes('This iPhone'), [padVerdict, padHeads]);
+      await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+      const padReport = await page.locator('#report').innerText().catch(() => '');
+      check('pdf ios: on an iPad the heading says "System report (iPad)" and facts "This iPad"', padReport.includes('System report (iPad)') && padReport.includes('This iPad') && !padReport.includes('This iPhone'), padReport.slice(0, 400));
       await context.close();
     }
     for (const [label, opts, engineName, shot] of [['iPhone SE (375 px)', devices['iPhone SE (3rd gen)'], 'webkit', 'system-ios-375.png'], ['iPhone SE (320 px)', devices['iPhone SE'], 'webkit', null], ['iPhone 14', devices['iPhone 14'], 'webkit', 'system-ios-iphone.png'],

@@ -881,7 +881,7 @@ function bsc_explain_system_prompt($platform)
         . 'Never invent facts, error codes, models, numbers or causes that are not in the summary; if something is unknown, say so. '
         . 'If there are no findings, say the reports look healthy. '
         . 'Field meanings: score is a health score from 0 to 100; findings are problems found (shutdowns = unexpected shutdowns, '
-        . 'unclean_shutdowns = Windows did not finish shutting down (usually harmless, not a crash or blue screen; not counted in shutdowns30d), '
+        . 'unclean_shutdowns = Windows did not finish shutting down (usually not a blue screen; often a hung or interrupted shutdown, a freeze held off with the power button, or a battery that ran out; not counted in shutdowns30d), '
         . 'hardware = hardware errors, crashes = programs that keep crashing, stability = low Windows stability index, '
         . 'updates = failed Windows updates, store_updates = Microsoft Store app updates that failed (not Windows updates; the Store usually retries them), old_report = the report is older than 30 days, battery = worn battery, '
         . 'windows10 = Windows 10 without free security updates, devices = devices with driver problems); '

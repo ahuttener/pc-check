@@ -878,6 +878,8 @@
   function parseMacReport(text) {
     var ips = readIps(text);
     if (ips) {
+      // An iPhone or iPad log (mirror of parseIosReport's mac_report): the step says to choose iPhone above
+      if (typeof ips.header.os_version === 'string' && /^(?:iPhone OS|iPadOS|iOS)\b/.test(ips.header.os_version)) return { error: 'ios_report' };
       var bug = ips.header.bug_type;
       if (bug === '210') return macPanic(ips.body, ips.time);
       if (bug === '309' || bug === '109') return ipsCrash(ips.header, ips.body, ips.time);
@@ -1144,10 +1146,10 @@
 
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
-  // Good news shown on screen and in the PDF only (never scored, never summarised): a battery read at 80 % or more
+  // Good news shown on screen and in the PDF only (never scored, never summarised): a battery read from 80 to 100 %
   // with no battery finding. A list of {title}.
   function batteryGoodNews(pct, cycles, findings) {
-    if (typeof pct !== 'number' || !isFinite(pct) || pct < 80 || findings.some(function (f) { return f.id === 'battery'; })) return [];
+    if (typeof pct !== 'number' || !isFinite(pct) || pct < 80 || pct > 100 || findings.some(function (f) { return f.id === 'battery'; })) return [];
     return [{ title: 'Battery is healthy \u2014 it holds ' + pct + ' % of its original capacity' +
       (typeof cycles === 'number' && isFinite(cycles) ? ' after ' + plural(cycles, 'cycle', 'cycles') : '') + '.' }];
   }
@@ -1174,15 +1176,15 @@
       out.shutdowns30d = shutdowns;
       if (shutdowns >= 1) {
         add('shutdowns', shutdowns >= 3 ? 'risk' : 'warn', 'Windows shut down unexpectedly ' + plural(shutdowns, 'time', 'times') + ' in 30 days',
-          'Usually a blue screen, a power loss or a forced restart. This report does not include the blue-screen error code.',
+          'Usually a blue screen or a sudden power loss. This report does not include the blue-screen error code.',
           'Install pending Windows updates, then update the graphics, chipset and storage drivers from your PC maker’s support page. If it happens under heavy load, check that the fans and vents are clean.');
       }
       var unclean = count(UNCLEAN_SHUTDOWN_PROBLEMS);
       out.uncleanShutdowns30d = unclean;
       if (unclean >= 1) {
-        add('unclean_shutdowns', unclean >= 3 ? 'warn' : 'info', "Windows didn't finish shutting down " + plural(unclean, 'time', 'times') + ' in 30 days',
-          "A shutdown or restart didn't complete \u2014 often because an update or app hung while shutting down, the battery ran out, or the PC was switched off before it finished. This is usually harmless on its own.",
-          "If it happens again, let shutdowns finish (wait for the screen to go dark), keep Windows Update current, and make sure the battery isn't running out. If it keeps happening, check for app or driver updates.");
+        add('unclean_shutdowns', unclean >= 3 ? 'warn' : 'info', 'Windows didn\u2019t finish shutting down ' + plural(unclean, 'time', 'times') + ' in 30 days',
+          'A shutdown or restart didn\u2019t complete \u2014 often because an update or app hung while shutting down, the battery ran out, or the PC was switched off before it finished. This is usually harmless on its own.',
+          'If it happens again, let shutdowns finish (wait for the screen to go dark), keep Windows Update current, and make sure the battery isn\u2019t running out. If it keeps happening, check for app or driver updates.');
       }
       var hardware = count(['Hardware error']);
       out.hardwareErrors30d = hardware;
