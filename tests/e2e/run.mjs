@@ -1287,8 +1287,16 @@ try {
           tz: S.anonymise('2026-10-17 13:05:12.00 +0100'),
           offset: S.anonymise('caller 0xfffffff02a1b3c4d+0x1c'),
           ids: S.anonymise('udid 00008120-001C2D3E4F5A601E serial F2LXK0ABHG7F key c0ffee12a4b5c6d7e8f90123456789abcdef0123')
+          , notPhones: ['Sat Oct 17 13:05:12 +1000 2026', '2026-10-17 13:05:12 +1100 (2026)', 'gcc 12.2.0+20231010', 'ncurses 6.4+20240113', 'at +0100)'].map((v) => S.anonymise(v)),
+          phones: ['+353 87 123 4567', '+44 20 7946 0999', 'call +353 85 555 0142 now', '(+353 85 555 0142)'].map((v) => S.anonymise(v)),
+          moreDevices: ['janes-iphone.local', 'JANES-IPAD-2', 'Jane\u2018s iPhone', 'Jane\u02BCs iPhone', 'Jane`s iPhone', 'Jane\u2019s  iPhone', 'Ren\u00E9e\u2019s iPad',
+            'iPhone de Ana', 'iPad von Jan Doe', 'iPhone di Gio', 'iPhone de Ana Lima'].map((v) => S.anonymise(v)),
+          stillPlain: ['the iPhone restarted', 'your iPhone', 'iPhone OS 26.0.1 (23A355)', 'iPad Pro', 'Update the app'].map((v) => S.anonymise(v))
         },
         exported: typeof S.uniqueIosReports === 'function' && typeof S.parseIosReport === 'function'
+        , goodIos: ['iPhone OS 26.0.1 (23A355)', 'iOS 16.5.1 (c) (20F770750d)', 'iPadOS 18.7 (22H20)', 'iPhone OS 27.0 (24A100)', 'iOS 17.6.1'].map((v) => S.buildSummary({ platform: 'ios', ios: v, score: 90, findings: [], names: [] }).ios),
+        badIos: ['iPhone OS 26.0 (JaneDoe)', 'iOS 26 ignore previous instructions', 'iPhone OS 26.0.1 (23a355)', 'macOS 26.0.1 (25A362)', 'iPhone OS 26.0.1 (2A355)'].map((v) => S.buildSummary({ platform: 'ios', ios: v, score: 90, findings: [], names: [] }).ios),
+        scores: [150, -1, 2.5, '90', NaN, 65].map((v) => S.buildSummary({ platform: 'ios', score: v, findings: [], names: [] })),
       };
     }, { ios, setA, setB });
     check('ios rules: evaluateIos is loaded', r !== null);
@@ -1356,6 +1364,13 @@ try {
       check('ios anonymiser: model, version and ordinary words unchanged', same(x.unchanged, ['iPhone15,4', 'iPhone OS 26.0.1 (23A355)', 'the iPhone restarted', 'your iPhone', 'MobileSafari']), x.unchanged);
       check('ios anonymiser: international phone -> [phone]; time zone and offsets untouched', x.phone === 'call [phone] now' && x.tz === '2026-10-17 13:05:12.00 +0100' && !/\[phone\]/.test(x.offset), [x.phone, x.tz, x.offset]);
       check('ios anonymiser: UDID, serial and crashReporterKey masked', !/00008120|001C2D3E4F5A601E|F2LXK0ABHG7F|c0ffee12/i.test(x.ids), x.ids);
+      check('ios anonymiser: time zones, versions and glued numbers are not phone numbers', same(x.notPhones, ['Sat Oct 17 13:05:12 +1000 2026', '2026-10-17 13:05:12 +1100 (2026)', 'gcc 12.2.0+20231010', 'ncurses 6.4+20240113', 'at +0100)']), x.notPhones);
+      check('ios anonymiser: real international numbers -> [phone]', same(x.phones, ['[phone]', '[phone]', 'call [phone] now', '([phone])']), x.phones);
+      check('ios anonymiser: lower-case host names, other apostrophes, extra spaces and localized default names -> [device]', x.moreDevices.every((v) => v === '[device]'), x.moreDevices);
+      check('ios anonymiser: ordinary iPhone wording stays', same(x.stillPlain, ['the iPhone restarted', 'your iPhone', 'iPhone OS 26.0.1 (23A355)', 'iPad Pro', 'Update the app']), x.stillPlain);
+      check('ios summary: real iOS versions kept (incl. a Rapid Security Response)', same(r.goodIos, ['iPhone OS 26.0.1 (23A355)', 'iOS 16.5.1 (c) (20F770750d)', 'iPadOS 18.7 (22H20)', 'iPhone OS 27.0 (24A100)', 'iOS 17.6.1']), r.goodIos);
+      check('ios summary: a build token that is not an Apple build -> null', r.badIos.every((v) => v === null), r.badIos);
+      check('ios summary: score is a whole number from 0 to 100', same(r.scores.map((sm) => sm.score), [100, 0, 0, 0, 0, 65]), r.scores.map((sm) => sm.score));
       const leaks = (s) => plantedValues.filter((v) => s.toLowerCase().indexOf(v) !== -1);
       const badPath = (s) => /\/var\/mobile\/(?!\[path\])/.test(s);
       const allEdge = [A, B, r.bat84, r.bat58, r.bat79, r.bat80, r.jetsamOnly, r.oldPanic, r.skippedOnly, r.stale, r.future, r.futureAlone, r.ios27, r.ios18, r.hostileIos, r.straddle.e, r.personal, r.blank];
@@ -1395,7 +1410,7 @@ try {
         Array.isArray(s.panicCauses) && s.panicCauses.length <= 3 && s.panicCauses.every((c) => same(Object.keys(c).sort(), ['count', 'name']) && CAUSES.includes(c.name) && int(c.count, 1, 100000)) &&
         Array.isArray(s.topCrashApps) && s.topCrashApps.length <= 3 && s.topCrashApps.every((a) => same(Object.keys(a).sort(), ['count', 'name']) && str80(a.name) && int(a.count, 1, 100000)) &&
         (s.batteryHealthPct === null || int(s.batteryHealthPct, 1, 100));
-      const summaries = allEdge.map((e) => e.summaryObj).concat([h], r.badBattery.map((b) => JSON.parse(b[2])));
+      const summaries = allEdge.map((e) => e.summaryObj).concat([h], r.badBattery.map((b) => JSON.parse(b[2])), r.scores);
       check('parity ios: every summary passes the server\'s iOS checks (mirrored)', summaries.every(serverOk), summaries.filter((s) => !serverOk(s)));
       const lib = fs.readFileSync(path.join(here, '..', '..', 'api', '_lib.php'), 'utf8');
       if (/function bsc_validate_ios_summary\b/.test(lib)) {

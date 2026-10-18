@@ -1043,11 +1043,20 @@
   // ordinary word may be masked too); device host names ("Janes-iPhone.local"); international phone numbers with at
   // least 8 digits (a "+0100" time zone or a "+0x1c" offset never matches).
   var IOS_MOBILE_PATH = /(\/var\/mobile\/)[^"\n]*/g;
-  var DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30} ){0,2}[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30}['\u2019]s? (?:iPhone|iPad|iPod touch|iPod|Apple Watch)(?: (?:Pro Max|Pro|Plus|mini|Air|SE))?(?: ?\(\d{1,3}\))?(?![A-Za-z0-9])/g;
-  var DEVICE_HOST = /(^|[^A-Za-z0-9\u00C0-\u024F-])[A-Za-z0-9\u00C0-\u024F-]{1,40}-(?:iPhone|iPad|iPod)(?:-\d{1,3})?(?:\.local)?(?![A-Za-z0-9])/g;
+  var DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30} ){0,2}[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30}['`\u2018\u2019\u02BC]s?\s+(?:iPhone|iPad|iPod touch|iPod|Apple Watch)(?: (?:Pro Max|Pro|Plus|mini|Air|SE))?(?: ?\(\d{1,3}\))?(?![A-Za-z0-9])/g;
+  // Default device names in other languages ("iPhone de Ana", "iPad von Jan Doe", "iPhone di Gio"): patterns only
+  var DEVICE_OF_NAME = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:iPhone|iPad|iPod)\s+(?:de|von|di)\s+[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30}(?:\s+[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F.\-]{0,30})?(?![A-Za-z0-9])/g;
+  var DEVICE_HOST = /(^|[^A-Za-z0-9\u00C0-\u024F-])[A-Za-z0-9\u00C0-\u024F-]{1,40}-(?:iPhone|iPad|iPod)(?:-\d{1,3})?(?:\.local)?(?![A-Za-z0-9])/gi;
   var PHONE_INTL = /\+[1-9][0-9 ().-]{6,20}[0-9]/g;
 
-  function maskPhone(m) { return m.replace(/[^0-9]/g, '').length >= 8 ? '[phone]' : m; }
+  // Not a phone number: glued to a word, a number or a version ("gcc 12.2.0+20231010"), or starting with a
+  // time-zone offset ("13:05:12 +1000 2026", "+1100 (2026)")
+  var TZ_TOKEN = /^\+(?:0\d|1[0-4])[0-5]\d(?=\s|$|\))/;
+  function maskPhone(m, offset, all) {
+    if (offset > 0 && /[A-Za-z0-9.\u00C0-\u024F]/.test(all.charAt(offset - 1))) return m;
+    if (TZ_TOKEN.test(m)) return m;
+    return m.replace(/[^0-9]/g, '').length >= 8 ? '[phone]' : m;
+  }
 
   function anonymise(value, names) {
     var s = String(value === null || value === undefined ? '' : value)
@@ -1066,6 +1075,7 @@
     s = s
       .replace(IOS_MOBILE_PATH, '$1[path]')
       .replace(DEVICE_POSSESSIVE, '$1[device]')
+      .replace(DEVICE_OF_NAME, '$1[device]')
       .replace(DEVICE_HOST, '$1[device]')
       .replace(PHONE_INTL, maskPhone);
     return s
@@ -1699,7 +1709,9 @@
   };
   // Exactly what the server accepts (api/_lib.php, bsc_validate_ios_summary) as an iOS version: the header's
   // os_version ("iPhone OS 26.0.1 (23A355)", a Rapid Security Response "iOS 16.5.1 (c) (20F770750d)"). Never free text.
-  var SUMMARY_IOS = /^(?:iPhone OS|iOS|iPadOS) [0-9]{1,2}(?:\.[0-9]{1,3}){0,2}(?: \([a-z]\))?(?: \([0-9A-Za-z]{4,12}\))?$/;
+  var SUMMARY_IOS = /^(?:iPhone OS|iOS|iPadOS) [0-9]{1,2}(?:\.[0-9]{1,3}){0,2}(?: \([a-z]\))?(?: \([0-9]{2}[A-Z][0-9]{1,6}[a-z]?\))?$/;
+
+  function batteryOk(v) { return typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= 1 && v <= 100; }
 
   // An app name as shown and summarised: masked first (with the names and the device rules), then cut to 80 code
   // points without control or format characters; an empty result is "An unnamed app".
@@ -1720,7 +1732,7 @@
     var reports = uniqueIosReports(r.reports);
     var given = reports.length > 0;
     var bp = r.batteryPct;
-    var batteryPct = typeof bp === 'number' && isFinite(bp) && Math.floor(bp) === bp && bp >= 1 && bp <= 100 ? bp : null;
+    var batteryPct = batteryOk(bp) ? bp : null;
     var to = at.getTime() + DAY;
     var from = at.getTime() - 30 * DAY;
     var timed = reports.filter(function (x) {
@@ -1934,11 +1946,12 @@
     var model = str(e.model);
     var counted = function (c) { return c.count >= 1; };
     var bp = e.batteryHealthPct;
+    var score = summaryCount(e.score);
     return {
       platform: 'ios',
       ios: ios !== null && SUMMARY_IOS.test(ios) ? ios : null,
       model: model !== null && IOS_MODEL.test(model) ? model : null,
-      score: e.score,
+      score: score === null ? 0 : Math.min(score, 100),
       findings: (e.findings || []).filter(function (f) { return f && SUMMARY_IOS_FINDING_IDS[f.id] && SUMMARY_SEVERITIES[f.severity]; })
         .slice(0, 20).map(function (f) { return { id: f.id, severity: f.severity }; }),
       panics30d: summaryCount(e.panics30d),
@@ -1949,7 +1962,7 @@
         .map(function (a) { return { name: (str(a.name) || '').trim() || UNNAMED_APP, count: summaryCount(a.count) || 0 }; })
         .filter(counted).sort(byCountThenName).slice(0, 3),
       jetsam30d: summaryCount(e.jetsam30d),
-      batteryHealthPct: typeof bp === 'number' && isFinite(bp) && Math.floor(bp) === bp && bp >= 1 && bp <= 100 ? bp : null
+      batteryHealthPct: batteryOk(bp) ? bp : null
     };
   }
 
