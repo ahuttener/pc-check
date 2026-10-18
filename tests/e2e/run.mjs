@@ -128,7 +128,7 @@ async function newPage(mode, opts = {}, engine = browser) {
       if (speed === 'limit' && bytes >= 10000000) return await r.fulfill({ status: 429, headers: { 'Retry-After': '3574' }, body: 'x' }); // no CORS header, like the real one
       if (speed === 'slowping' && bytes === 0) await new Promise((res) => setTimeout(res, 1500));
       if (speed === 'slow' && kind) await new Promise((res) => setTimeout(res, 3000));
-      await new Promise((res) => setTimeout(res, 20));
+      await new Promise((res) => setTimeout(res, kind ? 60 : 20)); // long enough for every stream to be in flight at once
       return await r.fulfill({ status: 200, contentType: 'application/octet-stream', headers, body: url.includes('__down') ? Buffer.alloc(Math.min(bytes, 1000000)) : '' }).catch(() => {});
     } finally {
       if (kind) seen.inflight[kind]--;
@@ -194,6 +194,11 @@ try {
     console.log('Language');
     check('html lang = en', (await page.getAttribute('html', 'lang')) === 'en');
     check('no PT/EN switch', (await page.locator('.lang').count()) === 0);
+    for (const f of ['assets/app.js', 'assets/sysreport.js', 'index.html']) {
+      const src = fs.readFileSync(path.join(here, '..', '..', f), 'utf8');
+      const hit = src.match(/.{0,40}(?:[\u00e3\u00f5\u00e7\u00c3\u00d5\u00c7]|Portugu|pt-BR|CAPACIDADE|Resumo do Sistema|Dispositivo|\bpt:).{0,40}/);
+      check('no Portuguese left in ' + f, !hit, hit && hit[0]);
+    }
     check('ledger in English', (await page.locator('#ledger').innerText()).includes('Sent'));
     const text = await page.locator('body').innerText();
     check('no Portuguese text on screen', !/[ãõçâêô]|Não |Verificar|senha|aparelho/i.test(text), (text.match(/.{0,30}(?:[ãõçâêô]|Não |Verificar|senha|aparelho).{0,30}/i) || [])[0]);
@@ -612,7 +617,7 @@ try {
   console.log('System report parsers');
   {
     const fx = (f) => fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', f)).toString('base64');
-    const files = { rel: fx('reliability.xml'), relDe: fx('reliability-de.xml'), bat: fx('battery-report.html'), msi: fx('msinfo32-head.txt'), pt: fx('msinfo32-pt.txt'), de: fx('msinfo32-de.txt') };
+    const files = { rel: fx('reliability.xml'), relDe: fx('reliability-de.xml'), bat: fx('battery-report.html'), msi: fx('msinfo32-head.txt'), de: fx('msinfo32-de.txt') };
     const { page, context } = await newPage('ok');
     const r = await page.evaluate((files) => {
       const S = window.PCSys;
@@ -632,7 +637,14 @@ try {
         relUnsupported: rel.unsupportedLanguage === true, relDe: S.parseReliability(text.relDe),
         relNoEvents: S.parseReliability('<?xml version="1.0"?><RelMonReport TimeGenerated="2026-10-17T10:00:00"><Events/></RelMonReport>'),
         relDeEval: (() => { const e = S.evaluateWindows({ reliability: S.parseReliability(text.relDe) }, new Date('2026-10-18T09:00:00Z')); return { findings: e.findings.length, reportDate: e.reportDate, shutdowns: e.shutdowns30d }; })(),
-        bat, msi, pt: S.parseMsinfo(text.pt), de: S.parseMsinfo(text.de),
+        bat, msi, de: S.parseMsinfo(text.de),
+        // Portuguese reports (small synthetic snippets): English is the only language PC Check reads.
+        pt: S.parseMsinfo(text.msi.replace('[System Summary]', '[Resumo do Sistema]').replace('Item\tValue', 'Item\tValor')
+          .replace('OS Name', 'Nome do SO').replace('Installed Physical Memory (RAM)', 'Mem\u00f3ria F\u00edsica (RAM) Instalada')),
+        ptBat: S.parseBattery('<html><head><title>Relat\u00f3rio da bateria</title></head><body><!-- schemas.microsoft.com/battery -->' +
+          '<table><tr><td><span class="label">CAPACIDADE PROJETADA</span></td><td>76.316 mWh</td></tr>' +
+          '<tr><td><span class="label">CAPACIDADE DE CARGA TOTAL</span></td><td>68.979 mWh</td></tr>' +
+          '<tr><td><span class="label">CONTAGEM DE CICLOS</span></td><td>96</td></tr></table></body></html>'),
         wrong: S.parseReliability(text.bat), wrongBat: S.parseBattery(text.rel), wrongMsi: S.parseMsinfo('hello'),
         bigMs: performance.now() - t0, bigOs: bigParsed.os
       };
@@ -651,7 +663,8 @@ try {
       check('battery: design and full capacity in mWh', r.bat.designMWh === 76316 && r.bat.fullMWh === 68979, r.bat);
       check('msinfo: OS, model, CPU, RAM', /Windows 11/.test(r.msi.os) && /Predator/.test(r.msi.model) && /Ultra 7/.test(r.msi.cpu) && r.msi.ramGb === 32, r.msi);
       check('msinfo: no problem devices on this PC', Array.isArray(r.msi.problemDevices) && r.msi.problemDevices.length === 0, r.msi.problemDevices);
-      check('msinfo: Portuguese labels parse', /Windows 11/.test(r.pt.os) && r.pt.ramGb === 32, r.pt);
+      check('msinfo: Portuguese report -> unsupported language (English only)', r.pt.unsupportedLanguage === true && !r.pt.os, r.pt);
+      check('battery: Portuguese report -> unsupported language (English only)', r.ptBat.unsupportedLanguage === true && r.ptBat.healthPct === undefined, r.ptBat);
       check('msinfo: German reports unsupported language', r.de.unsupportedLanguage === true, r.de);
       check('wrong file: battery report is not a reliability file', r.wrong.error === 'not_reliability', r.wrong);
       check('wrong file: reliability is not a battery report', r.wrongBat.error === 'not_battery', r.wrongBat);
@@ -839,12 +852,12 @@ try {
       await page.setInputFiles('#sys-file-msinfo', FX('msinfo32-de.txt'), { timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(300);
       const de = await page.locator('#sys-step-msinfo [data-role="msg"]').innerText({ timeout: 2000 }).catch(() => '');
-      check('system: other-language report says so', /language PC Check can.t read yet/i.test(de), de);
+      check('system: other-language report says so', /not in English\. PC Check reads English Windows reports only/i.test(de), de);
       check('system: language message does not promise the crash history works', !/crash history still works/i.test(de), de);
       await page.setInputFiles('#sys-file-reliability', FX('reliability-de.xml'), { timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(300);
       const relDe = await page.locator('#sys-step-reliability [data-role="msg"]').innerText({ timeout: 2000 }).catch(() => '');
-      check('system: German crash history says the language is not readable yet', /language PC Check can.t read yet/i.test(relDe), relDe);
+      check('system: German crash history says only English reports are read', /not in English\. PC Check reads English Windows reports only/i.test(relDe), relDe);
       check('system: wrong file causes no page error', seen.errors.length === 0, seen.errors);
       await context.close();
     }

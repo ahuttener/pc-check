@@ -120,16 +120,12 @@ head = re.sub(r'(System SKU\t)[^\t\r\n]*', r'\1SKU', head)
 en = scrub(head + pd)
 write_utf16(os.path.join(OUT, 'msinfo32-head.txt'), en)
 
-# 4. Synthetic translations: Portuguese (supported) and German (unsupported).
-PT = [('[System Summary]', '[Resumo do Sistema]'), ('Item\tValue', 'Item\tValor'), ('OS Name', 'Nome do SO'),
-      ('Version\t', 'Versão\t'), ('System Model', 'Modelo do sistema'), ('Processor', 'Processador'),
-      ('Installed Physical Memory (RAM)', 'Memória Física (RAM) Instalada'), ('BIOS Version/Date', 'Versão/Data do BIOS'),
-      ('[Problem Devices]', '[Dispositivos com Problema]')]
+# 4. Synthetic translation: German (unsupported; PC Check reads English reports only).
 DE = [('[System Summary]', '[Systemübersicht]'), ('Item\tValue', 'Element\tWert'), ('OS Name', 'Betriebsystemname'),
       ('Version\t', 'Version\t'), ('System Model', 'Systemmodell'), ('Processor', 'Prozessor'),
       ('Installed Physical Memory (RAM)', 'Installierter physischer Speicher (RAM)'), ('BIOS Version/Date', 'BIOS-Version/-Datum'),
       ('[Problem Devices]', '[Problemgeräte]')]
-for name, table in (('msinfo32-pt.txt', PT), ('msinfo32-de.txt', DE)):
+for name, table in (('msinfo32-de.txt', DE),):
     t = en
     for a, b in table:
         t = t.replace(a, b)

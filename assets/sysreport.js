@@ -73,12 +73,12 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Battery: powercfg /batteryreport (HTML; labels are localised)
+  // Battery: powercfg /batteryreport (HTML; labels are localised, only English ones are read)
   // ---------------------------------------------------------------------------
   var BATTERY_LABELS = {
-    design: ['DESIGN CAPACITY', 'CAPACIDADE PROJETADA', 'CAPACIDADE DE DESIGN', 'CAPACIDADE DO PROJETO'],
-    full: ['FULL CHARGE CAPACITY', 'CAPACIDADE DE CARGA TOTAL', 'CAPACIDADE DE CARGA COMPLETA', 'CAPACIDADE TOTAL DE CARGA'],
-    cycles: ['CYCLE COUNT', 'CONTAGEM DE CICLOS', 'CONTAGEM DE CICLO', 'NÚMERO DE CICLOS']
+    design: ['DESIGN CAPACITY'],
+    full: ['FULL CHARGE CAPACITY'],
+    cycles: ['CYCLE COUNT']
   };
 
   function digits(s) {
@@ -112,19 +112,19 @@
   }
 
   // ---------------------------------------------------------------------------
-  // System information: msinfo32 -> File -> Export (UTF-16 text, localised labels)
+  // System information: msinfo32 -> File -> Export (UTF-16 text, localised labels, only English ones are read)
   // ---------------------------------------------------------------------------
   var MSINFO = {
-    summary: ['[System Summary]', '[Resumo do Sistema]'],
-    problems: ['[Problem Devices]', '[Dispositivos com Problema]'],
+    summary: ['[System Summary]'],
+    problems: ['[Problem Devices]'],
     fields: {
-      os: ['OS Name', 'Nome do SO', 'Nome do Sistema Operacional'],
-      version: ['Version', 'Versão'],
-      model: ['System Model', 'Modelo do sistema', 'Modelo do Sistema'],
-      manufacturer: ['System Manufacturer', 'Fabricante do sistema', 'Fabricante do Sistema'],
-      cpu: ['Processor', 'Processador'],
-      ram: ['Installed Physical Memory (RAM)', 'Memória Física (RAM) Instalada', 'Memória física (RAM) instalada'],
-      bios: ['BIOS Version/Date', 'Versão/Data do BIOS']
+      os: ['OS Name'],
+      version: ['Version'],
+      model: ['System Model'],
+      manufacturer: ['System Manufacturer'],
+      cpu: ['Processor'],
+      ram: ['Installed Physical Memory (RAM)'],
+      bios: ['BIOS Version/Date']
     }
   };
 
@@ -160,13 +160,13 @@
         var row = lines[n];
         if (/^\s*\[/.test(row)) break;
         var name = row.split('\t')[0].trim();
-        if (name && !/^(Device|Dispositivo)$/i.test(name)) problems.push(name);
+        if (name && !/^Device$/i.test(name)) problems.push(name);
       }
     }
     // Computer and user names are kept only so the anonymiser can remove them everywhere else.
     var names = [];
-    ['System Name', 'Nome do Sistema', 'Nome do sistema'].forEach(function (k) { if (map[k]) names.push(map[k]); });
-    ['Username', 'User Name', 'Nome de Usuário', 'Nome do usuário'].forEach(function (k) {
+    ['System Name'].forEach(function (k) { if (map[k]) names.push(map[k]); });
+    ['Username', 'User Name'].forEach(function (k) {
       if (map[k]) map[k].split('\\').forEach(function (part) { if (part.trim()) names.push(part.trim()); });
     });
     return {

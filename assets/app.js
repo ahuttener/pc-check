@@ -18,158 +18,12 @@
   var STATUS_ORDER = ['risk', 'warn', 'error', 'info', 'ok'];
 
   // ---------------------------------------------------------------------------
-  // Text (PT-BR and EN). Functions receive values; nothing here touches the DOM.
+  // Text (English only). Functions receive values; nothing here touches the DOM.
   // ---------------------------------------------------------------------------
   var STR = {
-    pt: {
-      docTitle: 'Checagem de segurança do navegador | CyberSecInfo',
-      skip: 'Pular para as verificações',
-      langLabel: 'Idioma',
-      title: 'Checagem de segurança do navegador',
-      lead: 'Quatro verificações rápidas, feitas aqui no navegador, sem instalar nada. Nada sai do seu aparelho antes de você clicar, e tudo o que sair fica listado no registro de saída.',
-      run: 'Verificar agora',
-      running: 'Verificando…',
-      runAgain: 'Verificar de novo',
-      ledgerJump: 'Registro de saída',
-      oldBrowser: 'Se o botão não responder, este navegador é antigo demais para rodar a página. Isso já é um sinal de que ele precisa de atualização.',
-      checksTitle: 'Verificações',
-
-      browserTitle: 'Navegador',
-      browserQ: 'Seu navegador está atualizado?',
-      connTitle: 'Conexão',
-      connQ: 'A conexão usa criptografia moderna?',
-      dnsTitle: 'DNS',
-      dnsQ: 'Quem responde as suas consultas de DNS?',
-      pwTitle: 'Senha',
-      pwQ: 'Essa senha já apareceu em vazamentos?',
-
-      st_idle: 'Não verificado',
-      st_running: 'Verificando',
-      st_ok: 'Tudo certo',
-      st_warn: 'Atenção',
-      st_risk: 'Risco',
-      st_info: 'Informativo',
-      st_error: 'Não deu para verificar',
-
-      summary: function (c) {
-        var parts = [];
-        if (c.ok) parts.push('sem problemas: ' + c.ok);
-        if (c.warn) parts.push('atenção: ' + c.warn);
-        if (c.risk) parts.push('risco: ' + c.risk);
-        if (c.info) parts.push('informativo: ' + c.info);
-        if (c.error) parts.push('não verificado: ' + c.error);
-        return 'Concluído. ' + capitalize(parts.join('; ')) + '.';
-      },
-
-      // Facts
-      fBrowser: 'Navegador',
-      fVersion: 'Sua versão',
-      fEngine: 'Motor',
-      fLatest: 'Mais recente',
-      fLatestEsr: 'Mais recente (ESR)',
-      fTls: 'Criptografia',
-      fEch: 'Nome do site escondido (ECH)',
-      fPq: 'Proteção pós-quântica',
-      fHttp: 'Protocolo',
-      fWarp: 'Cloudflare WARP',
-      fPage: 'Esta página',
-      fYourIp: 'Seu IP público',
-      fDnsServers: 'Servidores de DNS',
-      yes: 'Sim',
-      no: 'Não',
-      on: 'Ativo',
-      unknown: 'Não informado',
-      httpsOk: 'Aberta com HTTPS',
-      httpsNo: 'Aberta sem HTTPS',
-
-      // Browser
-      browserOk: function (name, version) { return name + ' ' + version + ' está em dia.'; },
-      browserPatch: function (name) { return 'Existe uma atualização de segurança do ' + name + ' que ainda não foi instalada.'; },
-      browserBehind: function (name) { return 'Existe uma versão mais nova do ' + name + ' que ainda não foi instalada.'; },
-      browserOld: function (name) { return 'Este ' + name + ' está desatualizado e pode ter falhas de segurança já conhecidas.'; },
-      browserEsrMaybe: function (version) { return 'Firefox ' + version + ': se for a edição ESR, de suporte estendido, está em dia. Se for a edição comum, está desatualizado.'; },
-      browserIos: 'No iPhone e no iPad, todo navegador usa o motor do sistema. Ele fica seguro quando o iOS está atualizado.',
-      browserSafari: 'O Safari se atualiza junto com o macOS, então a versão mais recente não dá para confirmar daqui.',
-      browserSamsung: 'O Samsung Internet usa uma base própria e recebe correções pela Galaxy Store.',
-      browserUnknown: 'Não reconhecemos este navegador, então não dá para comparar a versão.',
-      browserVersionsError: 'Não conseguimos buscar as versões mais recentes agora. Tente de novo em instantes.',
-      fixUpdate: 'Abra o menu do navegador, entre em Ajuda e depois em Sobre. Ele procura a atualização sozinho; reinicie quando terminar.',
-      fixFirefoxAbout: 'Abra o menu do Firefox, entre em Ajuda e depois em Sobre o Firefox para ver a edição e atualizar.',
-      fixIos: 'Ajustes > Geral > Atualização de Software.',
-      fixSafari: 'Menu Apple > Ajustes do Sistema > Geral > Atualização de Software.',
-      fixSamsung: 'Galaxy Store > Menu > Atualizações.',
-
-      // Connection
-      connOk: 'A conexão usou TLS 1.3, a versão mais moderna da criptografia da web.',
-      connTls12: 'A conexão usou TLS 1.2 com um servidor que aceita o 1.3. Antivírus ou proxies que inspecionam o tráfego HTTPS costumam causar isso.',
-      connOld: function (v) { return 'A conexão usou ' + v + ', uma versão antiga e vulnerável.'; },
-      connPageHttp: 'Esta página abriu sem HTTPS, então o que passa por ela pode ser lido no caminho.',
-      connUnknown: 'A Cloudflare respondeu, mas não informou a versão da criptografia.',
-      connError: 'Não conseguimos falar com a Cloudflare. Um bloqueador de anúncios ou a rede pode ter impedido o teste.',
-      connEchNote: 'O ECH esconde de quem observa a rede qual site você visita. Ainda é pouco usado, então “Não” é o resultado mais comum.',
-      connPqNote: 'A proteção pós-quântica impede que alguém grave o tráfego hoje para decifrar no futuro com computadores quânticos.',
-      fixTlsInspect: 'Se você usa antivírus com “verificação de HTTPS” ou “proteção web”, veja se dá para desligar essa função. Em computador da empresa, fale com a TI.',
-      fixConnError: 'Tente de novo ou use o teste da própria Cloudflare.',
-      cfCheckLink: 'Abrir o teste da Cloudflare',
-
-      // DNS
-      dnsOk: function (n) { return n === 1 ? '1 servidor de DNS respondeu as consultas e não há sinal de vazamento.' : n + ' servidores de DNS responderam as consultas e não há sinal de vazamento.'; },
-      dnsLeak: 'Possível vazamento: as consultas de DNS saíram por uma rede diferente da sua conexão.',
-      dnsDone: function (n) { return n === 1 ? '1 servidor de DNS respondeu as consultas.' : n + ' servidores de DNS responderam as consultas.'; },
-      dnsNone: 'Nenhuma consulta chegou ao servidor de teste. Um bloqueador ou o DNS seguro do navegador pode ter filtrado os endereços de teste.',
-      dnsError: 'O teste de DNS não respondeu agora. Tente de novo em instantes.',
-      dnsRate: 'Muitos testes seguidos. Espere alguns minutos e tente de novo.',
-      dnsNote: 'Sem VPN, ver aqui o DNS da sua operadora é normal. Com VPN ligada, ele não deveria aparecer.',
-      fixDns: 'Se você usa VPN, ative a proteção contra vazamento de DNS no app dela. Também dá para ligar o DNS seguro nas configurações de privacidade do navegador.',
-
-      // Password
-      pwLabel: 'Senha para verificar',
-      pwShow: 'Mostrar',
-      pwHide: 'Ocultar',
-      pwHint: 'A senha não sai do aparelho. Só os 5 primeiros caracteres do código dela (o hash) são enviados.',
-      pwCheck: 'Verificar senha',
-      pwChecking: 'Verificando…',
-      pwEmpty: 'Digite uma senha para verificar.',
-      pwNoCrypto: 'Este navegador não permite calcular o código da senha aqui. A página precisa estar em HTTPS.',
-      pwFound: function (n) { return 'Essa senha apareceu ' + n + (n === '1' ? ' vez' : ' vezes') + ' em vazamentos. Não use mais em lugar nenhum.'; },
-      pwNotFound: 'Essa senha não aparece nos vazamentos conhecidos. Isso não quer dizer que ela seja forte.',
-      pwError: 'Não conseguimos consultar a base de vazamentos agora. Tente de novo.',
-      fixPw: 'Troque essa senha em todos os sites onde ela é usada e ative a verificação em duas etapas. Um gerenciador de senhas ajuda a ter uma diferente para cada site.',
-      notePwOk: 'Use uma senha longa e diferente em cada site. Uma frase com quatro ou mais palavras funciona bem.',
-      hashOut: 'Saiu do aparelho',
-      hashKept: 'Ficou no aparelho',
-      hashCaption: function (n) { return 'Código SHA-1 da senha. Só os 5 primeiros caracteres foram enviados. O serviço devolveu ' + n + ' códigos parecidos, e a comparação foi feita aqui.'; },
-
-      // Ledger
-      ledgerTitle: 'O que saiu do seu aparelho',
-      ledgerEmpty: 'Nada ainda. Cada pedido aparece aqui no momento em que acontece.',
-      ledgerNote: 'Qualquer pedido revela ao destino o seu endereço IP e o tipo de navegador. Isso faz parte de toda conexão na internet.',
-      ledgerCount: function (n) { return n === 0 ? 'Nenhum pedido até agora.' : (n === 1 ? '1 pedido até agora.' : n + ' pedidos até agora.'); },
-      ledgerSent: 'Enviado:',
-      ledgerNothing: 'nada além do pedido',
-      lpVersions: 'Versões mais recentes dos navegadores (este site)',
-      lpTrace: 'Diagnóstico da conexão (Cloudflare)',
-      lpDnsProbes: function (n) { return n + ' consultas de DNS a endereços de teste (bash.ws)'; },
-      lpDnsResult: 'Resultado do teste de DNS. Este site repassa o código do teste e o seu IP à bash.ws.',
-      lpHibp: 'Consulta da senha (Pwned Passwords)',
-
-      // About
-      aboutTitle: 'Como funciona',
-      aboutPw: 'Senha: o navegador transforma a senha num código (hash SHA-1) e envia só os 5 primeiros caracteres. O serviço Pwned Passwords devolve centenas de códigos que começam igual, e a comparação acontece aqui. Nem o serviço sabe qual senha você testou.',
-      aboutDns: 'DNS: o navegador consulta 20 endereços de teste que só existem para você. O serviço bash.ws registra quais servidores de DNS fizeram essas consultas e compara com a rede da sua conexão.',
-      aboutConn: 'Conexão: a Cloudflare informa como o seu navegador se conectou a ela, com a versão do TLS e se o nome do site foi escondido (ECH).',
-      aboutBrowser: 'Navegador: a versão é lida aqui mesmo e comparada com a versão mais recente publicada pelo Google e pela Mozilla.',
-      aboutPrivacy: 'Esta página não usa cookies, analytics nem scripts de terceiros.',
-      creditsLead: 'Serviços usados:',
-      creditsAnd: 'e',
-      footMade: 'Feito por Adriano Huttener para o CyberSecInfo.',
-      footCode: 'Código aberto no GitHub'
-    },
-
     en: {
       docTitle: 'PC Check | CyberSecInfo',
       skip: 'Skip to the checks',
-      langLabel: 'Language',
       title: 'PC Check',
       lead: 'Four quick checks that run right here in your browser, with nothing to install. Nothing leaves your device until you click, and everything that does is listed in the outbound log.',
       run: 'Check now',
@@ -384,7 +238,7 @@
       sysNotBattery: 'This doesn’t look like a battery report. Pick the battery-report.html file the command saved on your Desktop.',
       sysNotMsinfo: 'This doesn’t look like a System Information export. In msinfo32, use File > Export and pick the .txt file.',
       sysLooksLike: function (step) { return ' It looks like the file for step ' + step + '.'; },
-      sysLanguage: 'This report is in a language PC Check can’t read yet, so it is left out of the results. Any other report you add still counts.',
+      sysLanguage: 'This report is not in English. PC Check reads English Windows reports only, so it is left out of the results. Any other report you add still counts.',
       sysTooBig: 'This file is larger than 40 MB, so it is not one of the reports PC Check reads.',
       sysReadError: 'This file could not be read. Try saving it again.',
       sysNeedFile: 'Add at least one report first. The crash history (step 1) tells the most.',
@@ -443,7 +297,6 @@
   // State
   // ---------------------------------------------------------------------------
   var state = {
-    lang: 'en',
     running: false,
     ranOnce: false,
     summaryCounts: null,
@@ -500,8 +353,7 @@
 
   function t(key) {
     var args = Array.prototype.slice.call(arguments, 1);
-    var table = STR[state.lang] || STR.en;
-    var value = Object.prototype.hasOwnProperty.call(table, key) ? table[key] : STR.en[key];
+    var value = Object.prototype.hasOwnProperty.call(STR.en, key) ? STR.en[key] : null;
     if (typeof value === 'function') return value.apply(null, args);
     return value == null ? key : value;
   }
@@ -560,12 +412,12 @@
   }
 
   function formatNumber(n) {
-    try { return Number(n).toLocaleString(state.lang === 'pt' ? 'pt-BR' : 'en-IE'); } catch (e) { return String(n); }
+    try { return Number(n).toLocaleString('en-IE'); } catch (e) { return String(n); }
   }
 
   function formatTime(date) {
     try {
-      return date.toLocaleTimeString(state.lang === 'pt' ? 'pt-BR' : 'en-IE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      return date.toLocaleTimeString('en-IE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch (e) {
       return date.toTimeString().slice(0, 8);
     }
@@ -687,17 +539,13 @@
   }
 
   function renderStatic() {
-    var html = document.documentElement;
-    html.lang = state.lang === 'pt' ? 'pt-BR' : 'en';
+    document.documentElement.lang = 'en';
     document.title = t('docTitle');
     $all('[data-i18n]').forEach(function (node) {
       node.textContent = t(node.getAttribute('data-i18n'));
     });
     $all('[data-i18n-aria]').forEach(function (node) {
       node.setAttribute('aria-label', t(node.getAttribute('data-i18n-aria')));
-    });
-    $all('.lang button').forEach(function (b) {
-      b.setAttribute('aria-pressed', String(b.getAttribute('data-lang') === state.lang));
     });
     renderRunButton();
     renderPasswordForm();
@@ -1689,7 +1537,7 @@
     var head = String(text).slice(0, 5000);
     if (/<RelMonReport[\s>]/.test(head)) return 'reliability';
     if (/schemas\.microsoft\.com\/battery|<title>\s*Battery report/i.test(head)) return 'battery';
-    if (/^\s*\[(System Summary|Resumo do Sistema)\]\s*$/m.test(head)) return 'msinfo';
+    if (/^\s*\[System Summary\]\s*$/m.test(head)) return 'msinfo';
     return null;
   }
 
@@ -2270,20 +2118,8 @@
     });
   }
 
-  function detectLang() {
-    // cybersecinfo.com is English-only. The PT texts stay in STR so the page can be bilingual again later.
-    return 'en';
-  }
-
-  function setLang(lang) {
-    state.lang = lang;
-    try { window.localStorage.setItem('bsc-lang', lang); } catch (e) { /* ignore */ }
-    renderAll();
-  }
-
   function init() {
     document.documentElement.classList.add('js');
-    state.lang = detectLang();
 
     $('#run').addEventListener('click', runAll);
     $('#speed-go').addEventListener('click', runSpeed);
@@ -2295,10 +2131,6 @@
     $('#speed-cancel').addEventListener('click', cancelSpeed);
     $('#pdf').addEventListener('click', printReport);
     window.addEventListener('beforeprint', buildReport);
-
-    $all('.lang button').forEach(function (b) {
-      b.addEventListener('click', function () { setLang(b.getAttribute('data-lang')); });
-    });
 
     $('#pw-toggle').addEventListener('click', function () {
       state.pwVisible = !state.pwVisible;
