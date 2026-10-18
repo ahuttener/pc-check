@@ -1048,6 +1048,7 @@
   var DEVICE_OF_NAME = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:iPhone|iPad|iPod)\s+(?:de|von|di)\s+[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30}(?:\s+[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F.\-]{0,30})?(?![A-Za-z0-9])/g;
   var DEVICE_HOST = /(^|[^A-Za-z0-9\u00C0-\u024F-])[A-Za-z0-9\u00C0-\u024F-]{1,40}-(?:iPhone|iPad|iPod)(?:-\d{1,3})?(?:\.local)?(?![A-Za-z0-9])/gi;
   var PHONE_INTL = /\+[1-9][0-9 ().-]{6,20}[0-9]/g;
+  var ANON_MAX_CHARS = 8192; // longer than any title, detail, fact or cause line PC Check builds
 
   // Not a phone number: glued to a word, a number or a version ("gcc 12.2.0+20231010"), or starting with a
   // time-zone offset ("13:05:12 +1000 2026", "+1100 (2026)")
@@ -1059,7 +1060,15 @@
   }
 
   function anonymise(value, names) {
-    var s = String(value === null || value === undefined ? '' : value)
+    var raw = String(value === null || value === undefined ? '' : value);
+    // Some rules backtrack on long runs (60,000 hyphens took seconds): a longer string is cut first, and the token
+    // the cut ran through is dropped, so a half identifier cannot slip past the rules.
+    if (raw.length > ANON_MAX_CHARS) {
+      var end = ANON_MAX_CHARS;
+      if (!/\s/.test(raw.charAt(end))) while (end > 0 && !/\s/.test(raw.charAt(end - 1))) end--;
+      raw = raw.slice(0, end);
+    }
+    var s = raw
       .replace(/\\x2d/gi, '-') // systemd unit names escape "-" as \x2d (dev-disk-by\x2duuid-…)
       .replace(/\bssid[ \t]*[=:]?[ \t]*"[^"\r\n]{0,128}"/gi, 'ssid="[wifi]"')
       .replace(/\bssid[ \t]*[=:]?[ \t]*'[^'\r\n]{0,128}'/gi, 'ssid="[wifi]"')

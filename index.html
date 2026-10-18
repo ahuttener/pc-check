@@ -23,10 +23,10 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/fonts/roboto-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/orbitron-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/styles.css?v=12">
+  <link rel="stylesheet" href="assets/styles.css?v=13">
   <script src="assets/gauge.js?v=3" defer></script>
-  <script src="assets/sysreport.js?v=18" defer></script>
-  <script src="assets/app.js?v=20" defer></script>
+  <script src="assets/sysreport.js?v=19" defer></script>
+  <script src="assets/app.js?v=21" defer></script>
 </head>
 <body>
   <svg class="sprite" aria-hidden="true" focusable="false">
@@ -268,10 +268,12 @@
         <p id="sys-lead" class="system-lead">Windows already keeps a crash history, a battery report and a system summary. Save them with the steps below and PC Check reads them right here in your browser. The files never leave your device.</p>
       </div>
       <p id="sys-banner" class="sys-banner" aria-live="polite"></p>
-      <div class="sys-os" role="group" aria-label="Which computer are you checking?">
+      <div class="sys-os" role="group" aria-label="Which device are you checking?">
         <button id="sys-os-windows" class="sys-os-btn" type="button" data-os="windows" aria-pressed="true"><svg aria-hidden="true" focusable="false"><use href="#os-windows"></use></svg><span>Windows</span></button>
         <button id="sys-os-mac" class="sys-os-btn" type="button" data-os="mac" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-mac"></use></svg><span>Mac</span></button>
         <button id="sys-os-linux" class="sys-os-btn" type="button" data-os="linux" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-linux"></use></svg><span>Linux</span></button>
+        <button id="sys-os-ios" class="sys-os-btn" type="button" data-os="ios" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-phone"></use></svg><span>iPhone</span></button>
+        <button id="sys-os-android" class="sys-os-btn" type="button" data-os="android" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-phone"></use></svg><span>Android</span><span class="sys-soon-tag">Coming soon</span></button>
       </div>
       <div id="sys-steps" class="sys-steps">
         <ol class="sys-step-list">
@@ -408,6 +410,54 @@
           <p id="sys-mac-status" class="sys-status" role="status" aria-live="polite"></p>
         </div>
         <p class="sys-privacy">Analyze runs on this device. Nothing is uploaded, so nothing is added to the outbound log.</p>
+      </div>
+
+      <div id="sys-ios-steps" class="sys-steps sys-ios" hidden>
+        <ol class="sys-step-list">
+          <li id="sys-step-ios-share" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">1</span>Turn on iPhone Analytics (once)</h3>
+            <ol class="sys-how">
+              <li>Open Settings &gt; Privacy &amp; Security &gt; Analytics &amp; Improvements.</li>
+              <li>Turn on Share iPhone Analytics. Your iPhone keeps its logs in Analytics Data only while this is on.</li>
+            </ol>
+            <p class="sys-note">A log is written only when something goes wrong, so a healthy or newly set-up iPhone may have few or none. New logs appear over the following days; come back in a week if the list is empty.</p>
+            <p class="sys-note">This setting also sends diagnostics to Apple. That is Apple’s setting, not PC Check’s; you can turn it off again afterwards.</p>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+          <li id="sys-step-ios-logs" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">2</span>Save the logs and choose them <span class="sys-optional">(optional)</span></h3>
+            <ol class="sys-how">
+              <li>In the same screen, tap Analytics Data.</li>
+              <li>Look for names from the last 30 days that start with panic-full, JetsamEvent or the name of an app. Skip names that start with Analytics or log-aggregated: they are usage statistics, not problems.</li>
+              <li>Tap a log, tap the Share button at the top right, choose Save to Files and pick a folder such as On My iPhone &gt; Downloads. Repeat for each log you want.</li>
+              <li>Tap the box below, choose Choose Files, open that folder, tap Select, tap the logs and tap Open.</li>
+            </ol>
+            <input id="sys-file-ios-logs" class="sys-file" type="file" multiple>
+            <label class="sys-drop" for="sys-file-ios-logs"><span class="sys-drop-main">Choose the log files</span><span class="sys-drop-sub">Up to 100 files</span></label>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+          <li id="sys-step-ios-battery" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">3</span>Battery health <span class="sys-optional">(optional)</span></h3>
+            <ol class="sys-how">
+              <li>Open Settings &gt; Battery &gt; Battery Health (on iPhone 14 and earlier: Battery Health &amp; Charging).</li>
+              <li>Type the Maximum Capacity percentage below.</li>
+            </ol>
+            <label class="sys-field-label" for="sys-ios-battery">Battery Maximum Capacity (%)</label>
+            <input id="sys-ios-battery" class="sys-number" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" autocomplete="off" aria-describedby="sys-ios-battery-msg">
+            <p class="sys-note">On an iPad without a Battery Health screen, leave this empty.</p>
+            <p id="sys-ios-battery-msg" class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+        </ol>
+        <div class="sys-actions">
+          <button id="sys-ios-analyze" class="btn btn-primary" type="button">Analyze</button>
+          <button id="sys-ios-clear" class="btn btn-ghost" type="button">Clear</button>
+          <p id="sys-ios-status" class="sys-status" role="status" aria-live="polite"></p>
+        </div>
+        <p class="sys-privacy">Analyze runs on this iPhone. Nothing is uploaded, so nothing is added to the outbound log.</p>
+      </div>
+
+      <div id="sys-android-soon" class="sys-steps sys-android" hidden>
+        <p class="sys-soon-box">Android reports are coming soon. Until then, PC Check can check a Windows, Mac or Linux computer, or an iPhone: pick it above.</p>
       </div>
 
       <div id="sys-results" class="sys-results" aria-live="polite" hidden></div>

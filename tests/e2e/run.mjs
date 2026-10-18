@@ -1839,7 +1839,7 @@ try {
       const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
       check('system: macOS UA -> Mac banner', /You.re on macOS/.test(banner), banner);
       check('system: macOS UA -> Mac pre-selected', (await pressed(page, 'mac')) === 'true');
-      check('system: macOS UA -> Mac steps, no Coming soon', await page.locator('#sys-mac-steps').isVisible().catch(() => false) && (await page.locator('.sys-soon-tag').count()) === 0);
+      check('system: macOS UA -> Mac steps, Coming soon only on Android', await page.locator('#sys-mac-steps').isVisible().catch(() => false) && (await page.locator('.sys-soon-tag').count()) === 1 && (await page.locator('#sys-os-android .sys-soon-tag').count()) === 1);
       await context.close();
     }
     {
@@ -1911,9 +1911,10 @@ try {
         const { page, context, seen } = await newPage('ok', opts, eng);
         await waitBanner(page);
         if (engineName === 'webkit') {
+          check('system: on an iPhone the iPhone button is pre-selected', (await pressed(page, 'ios')) === 'true');
+          await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
           const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
-          check('system: on a phone the banner says the steps are done on a computer', /computer/i.test(banner), banner);
-          check('system: on a phone Windows is still pre-selected', (await pressed(page, 'windows')) === 'true');
+          check('system: on a phone with Windows selected the banner says the steps are done on that computer', /The Windows steps below are done on that computer/.test(banner), banner);
         }
         let ok = true;
         try {
@@ -1973,7 +1974,7 @@ try {
       check('linux ui: Linux UA -> banner says Linux (Ubuntu) and five read-only commands', /You.re on Linux \(Ubuntu\)\. Run the five read-only commands below in a terminal and paste what they print\./.test(banner), banner);
       check('linux ui: Linux UA -> Linux button pre-selected', (await pressed(page, 'linux')) === 'true');
       check('linux ui: Linux button has no "Coming soon"', !/Coming soon/i.test(await page.locator('#sys-os-linux').innerText().catch(() => 'Coming soon')));
-      check('linux ui: no button says "Coming soon"', !/Coming soon/i.test(await page.locator('.sys-os').innerText().catch(() => 'Coming soon')));
+      check('linux ui: only the Android button says "Coming soon"', (await page.locator('.sys-os-btn').evaluateAll((bs) => bs.filter((b) => /Coming soon/i.test(b.textContent)).map((b) => b.id)).catch(() => [])).join() === 'sys-os-android');
       check('linux ui: Linux steps shown, Windows and Mac steps hidden', await page.locator('#sys-linux-steps').isVisible().catch(() => false) &&
         !(await page.locator('#sys-steps').isVisible().catch(() => true)) && !(await page.locator('#sys-mac-steps').isVisible().catch(() => true)));
       const lead = await page.locator('#sys-lead').innerText().catch(() => '');
@@ -2175,8 +2176,8 @@ try {
       const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
       check('mac ui: Mac UA -> banner says macOS, no Terminal needed', /^You.re on macOS\. Save the reports with apps already on your Mac and choose them below\. No Terminal needed\.$/.test(banner.trim()), banner);
       check('mac ui: Mac UA -> Mac button pre-selected', (await pressed(page, 'mac')) === 'true');
-      check('mac ui: no "Coming soon" tag or box is left', (await page.locator('.sys-soon-tag').count()) === 0 && (await page.locator('#sys-soon').count()) === 0 &&
-        !/Coming soon/i.test(await page.locator('#system').innerText().catch(() => 'Coming soon')));
+      check('mac ui: one "Coming soon" tag, on Android, and no old soon box', (await page.locator('.sys-soon-tag').count()) === 1 && (await page.locator('#sys-os-android .sys-soon-tag').count()) === 1 &&
+        (await page.locator('#sys-soon').count()) === 0 && !(await page.locator('#sys-android-soon').isVisible().catch(() => true)));
       check('mac ui: Mac steps shown, Windows and Linux steps hidden', await page.locator('#sys-mac-steps').isVisible().catch(() => false) &&
         !(await page.locator('#sys-steps').isVisible().catch(() => true)) && !(await page.locator('#sys-linux-steps').isVisible().catch(() => true)));
       const lead = await page.locator('#sys-lead').innerText().catch(() => '');
@@ -2376,6 +2377,262 @@ try {
         check('mac ui: no horizontal scroll at ' + label + ' with the Mac steps open', overflow <= 0, overflow);
         check('mac ui: no page errors at ' + label, seen.errors.length === 0, seen.errors);
         await page.locator('#system').screenshot({ path: path.join(shots, engineName === 'webkit' ? 'system-mac-iphone.png' : 'system-mac-375.png') }).catch(() => {});
+        await context.close();
+      } finally {
+        if (eng !== browser) await eng.close();
+      }
+    }
+  }
+
+  // 8c-ios. iPhone steps in the System report panel: Settings and Files only, logs read on this device only
+  console.log('System report panel (iPhone)');
+  {
+    const IFX = (f) => path.join(here, '..', 'fixtures', 'sys', 'ios', f);
+    const MFX = (f) => path.join(here, '..', 'fixtures', 'sys', 'mac', f);
+    const IPHONE_UA = devices['iPhone 14'].userAgent;
+    const IPAD_UA = 'Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1';
+    const MAC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15';
+    const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + fullVersion + ' Mobile Safari/537.36';
+    const TOUCH = (n) => 'Object.defineProperty(Navigator.prototype, "maxTouchPoints", { configurable: true, get: () => ' + n + ' });';
+    const SET_A = ['panic-full-2026-10-14-224107.000.ips', 'panic-full-2026-10-02-081533.000.ips', 'panic-base-2026-10-02-081533.000.ips',
+      'MobileSafari-2026-10-15-091244.ips', 'MobileSafari-2026-10-16-200103.ips', 'SnapNotes-2026-10-16-153012.ips',
+      'JetsamEvent-2026-10-16-071002.ips', 'JetsamEvent-2026-10-17-130512.ips', 'Analytics-2026-10-17-020304.ips',
+      'SnapNotes.cpu_resource-2026-10-11-101010.ips'];
+    const SET_B = ['panic-full-2026-10-09-213301.000.ips', 'panic-full-2026-08-20-101500.000.ips', 'SnapNotes-2026-10-12-110204.ips',
+      'SnapNotes-2026-10-16-171544.ips', 'Carousel-2026-10-13-120000.ips'];
+    const BAD_BATTERY = 'Enter a whole number from 1 to 100: the Maximum Capacity percentage.';
+    const NEED = 'Choose at least one log or type the battery figure first.';
+    const NONE = 'None of these files is a panic, crash or low-memory log. Look for names that start with panic-full, JetsamEvent or an app’s name.';
+    const planted = JSON.parse(fs.readFileSync(IFX('PLANTED.json'), 'utf8'));
+    const PLANTED = [].concat(...Object.values(planted)).map((p) => String(p).toLowerCase());
+    const FILE_BITS = ['panic-full-', 'panic-base-', 'jetsamevent-', 'mobilesafari-2026', 'snapnotes-2026', 'analytics-2026', '.ips'];
+    const leaks = (s) => { const l = String(s).toLowerCase(); return PLANTED.concat(FILE_BITS).filter((p) => l.includes(p)); };
+    const HARMFUL = /jailbreak|cleaner|booster|antivirus|profile|computer|Finder|iTunes|3uTools|iMazing|DFU|Terminal|sudo/i;
+    const COMPUTER_SENTENCE = /done on a computer|on the computer|on the Mac/;
+    const pressed = (page, os) => page.getAttribute('#sys-os-' + os, 'aria-pressed', { timeout: 2000 }).catch(() => null);
+    const waitBanner = (page) => page.waitForFunction(() => (document.getElementById('sys-banner') || {}).textContent, null, { timeout: 5000 }).catch(() => {});
+    const bannerOf = (page) => page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
+    const visible = (page, sel) => page.locator(sel).isVisible().catch(() => false);
+    const msg = async (page, k) => (await page.locator('#sys-step-ios-' + k + ' [data-role="msg"]').innerText({ timeout: 2000 }).catch(() => '')).trim();
+    const status = async (page) => (await page.locator('#sys-ios-status').innerText({ timeout: 2000 }).catch(() => '')).trim();
+    const settled = (page) => page.waitForFunction(() => /^(ok|error)$/.test((document.getElementById('sys-step-ios-logs') || { getAttribute: () => '' }).getAttribute('data-state') || ''), null, { timeout: 15000 }).catch(() => {});
+    const choose = async (page, files) => { await page.setInputFiles('#sys-file-ios-logs', files, { timeout: 10000 }); await settled(page); };
+    const battery = (page, v) => page.fill('#sys-ios-battery', v, { timeout: 2000 });
+    const analyze = async (page) => {
+      await page.click('#sys-ios-analyze', { timeout: 3000 });
+      await page.waitForSelector('#sys-results:not([hidden])', { timeout: 10000 });
+    };
+    const shownText = (page) => page.evaluate(() => ['#sys-results', '#sys-banner', '#sys-ios-status'].map((s) => (document.querySelector(s) || {}).innerText || '')
+      .concat(Array.from(document.querySelectorAll('#system [data-role="msg"]')).map((n) => n.innerText)).join('\n'));
+
+    {
+      // A 60,000-hyphen string must not stall the shared anonymiser (it is cut before the rules run)
+      const { page, context } = await newPage('ok');
+      const r = await page.evaluate(() => {
+        const S = window.PCSys;
+        const t0 = performance.now();
+        S.anonymise('-'.repeat(60000) + '-iPhone');
+        const ms = performance.now() - t0;
+        const short = 'Janes-iPhone.local ' + 'z'.repeat(8000);
+        return { ms, short: S.anonymise(short) === '[device] ' + 'z'.repeat(8000), plain: S.anonymise('MobileSafari'), cut: S.anonymise('x '.repeat(4090) + 'jane.doe@example.com tail') };
+      });
+      check('anonymiser: 60,000 hyphens are anonymised in under a second', r.ms < 1000, r.ms);
+      check('anonymiser: strings under the cap come out as before', r.short && r.plain === 'MobileSafari', [r.short, r.plain]);
+      check('anonymiser: a longer string is cut and the token the cut ran through is dropped', r.cut === 'x '.repeat(4090), r.cut.slice(-40));
+      await context.close();
+    }
+    {
+      const { page, context, seen } = await newPage('ok', { userAgent: IPHONE_UA, viewport: { width: 390, height: 844 } });
+      await waitBanner(page);
+      const banner = await bannerOf(page);
+      check('ios ui: iPhone UA -> iPhone pre-selected', (await pressed(page, 'ios')) === 'true');
+      check('ios ui: banner says iPhone, right here on this iPhone, no computer needed',
+        banner.trim() === 'You’re on an iPhone. Follow the steps below right here on this iPhone. No computer or app needed.', banner);
+      const ids = await page.locator('.sys-os-btn').evaluateAll((bs) => bs.map((b) => b.id));
+      check('ios ui: five OS buttons in order', JSON.stringify(ids) === JSON.stringify(['sys-os-windows', 'sys-os-mac', 'sys-os-linux', 'sys-os-ios', 'sys-os-android']), ids);
+      check('ios ui: exactly one Coming soon tag, inside Android', (await page.locator('.sys-soon-tag').count()) === 1 && (await page.locator('#sys-os-android .sys-soon-tag').count()) === 1 &&
+        (await page.locator('#sys-os-android .sys-soon-tag').innerText()).trim() === 'Coming soon');
+      check('ios ui: group label asks which device', (await page.getAttribute('.sys-os', 'aria-label')) === 'Which device are you checking?');
+      check('ios ui: iPhone steps shown, the others hidden', await visible(page, '#sys-ios-steps') && !(await visible(page, '#sys-steps')) &&
+        !(await visible(page, '#sys-mac-steps')) && !(await visible(page, '#sys-linux-steps')) && !(await visible(page, '#sys-android-soon')));
+      const lead = (await page.locator('#sys-lead').innerText().catch(() => '')).trim();
+      check('ios ui: lead explains the iPhone steps', lead === 'Your iPhone keeps a log each time an app crashes, iOS runs short of memory or the iPhone restarts by itself. Save a few of those logs to Files, choose them below and add the battery figure from Settings: PC Check reads them right here in your browser. Nothing leaves your iPhone.', lead);
+      const guide = await page.locator('#sys-ios-steps').innerText().catch(() => '');
+      check('ios ui: no harmful advice in the iPhone guide or lead', !HARMFUL.test(guide + '\n' + lead), (guide + lead).match(HARMFUL));
+      check('ios ui: no <code> in the iPhone guide', (await page.locator('#sys-ios-steps code').count()) === 0);
+      check('ios ui: guide names Settings > Privacy & Security > Analytics & Improvements, Analytics Data, Save to Files',
+        /Settings > Privacy & Security > Analytics & Improvements/.test(guide) && /Turn on Share iPhone Analytics/.test(guide) && /tap Analytics Data/.test(guide) &&
+        /choose Save to Files/.test(guide) && /Choose Files/.test(guide) && /Battery Health/.test(guide) && /Up to 100 files/.test(guide), guide.slice(0, 300));
+      const sys = await page.locator('#system').innerText().catch(() => '');
+      check('ios ui: no computer sentence on the iPhone steps', !COMPUTER_SENTENCE.test(sys), sys.match(COMPUTER_SENTENCE));
+      const picker = await page.evaluate(() => { const i = document.getElementById('sys-file-ios-logs'); return i ? [i.type, i.multiple, i.hasAttribute('accept')] : null; });
+      check('ios ui: log picker takes several files and has no accept attribute', !!picker && picker[0] === 'file' && picker[1] === true && picker[2] === false, picker);
+      const field = await page.evaluate(() => { const i = document.getElementById('sys-ios-battery'); return i ? [i.type, i.inputMode, i.getAttribute('autocomplete'), (document.querySelector('label[for="sys-ios-battery"]') || {}).textContent] : null; });
+      check('ios ui: battery field is text with a numeric keypad and a label', !!field && field[0] === 'text' && field[1] === 'numeric' && field[2] === 'off' && field[3] === 'Battery Maximum Capacity (%)', field);
+      check('ios ui: Explain with AI is not offered before analysis', !(await visible(page, '#sys-ai-open')));
+
+      await page.click('#sys-ios-analyze', { timeout: 3000 }).catch(() => {});
+      check('ios ui: nothing chosen -> asks for a log or the battery figure', (await status(page)) === NEED && !(await visible(page, '#sys-results')), await status(page));
+
+      const before = await page.locator('#ledger-list li').count();
+      let ok = true;
+      try { await choose(page, SET_A.map(IFX)); await battery(page, '84'); await analyze(page); } catch (e) { ok = false; }
+      check('ios ui: Set A chosen and analyzed', ok);
+      const mA = await msg(page, 'logs');
+      check('ios ui: Set A logs message is exact', mA === 'Read 7 logs: 2 panics, 3 app crashes, 2 low-memory events. 1 duplicate left out. 2 files skipped (not a panic, crash or low-memory log).', mA);
+      check('ios ui: battery message', (await msg(page, 'battery')) === 'Battery: 84 %.', await msg(page, 'battery'));
+      const score = ok ? (await page.locator('#sys-score').innerText()).trim() : '';
+      check('ios ui: Set A score 65', score === '65', score);
+      const res = ok ? await page.locator('#sys-results').innerText() : '';
+      check('ios ui: Set A findings mention restarted by itself and MobileSafari', /restarted by itself/.test(res) && /MobileSafari/.test(res), res.slice(0, 400));
+      check('ios ui: Set A facts show 84 % and iPhone15,4 under "This iPhone"', /84 %/.test(res) && /iPhone15,4/.test(res) &&
+        (await page.locator('#sys-results h4').allTextContents()).map((s) => s.trim()).includes('This iPhone'), res.slice(-400));
+      check('ios ui: date line says Newest log from, read on this device', /Newest log from \d{4}-\d\d-\d\d · read on this device, nothing uploaded/.test(res), res.slice(0, 300));
+      check('ios ui: status says nothing was sent', (await status(page)) === 'Analyzed on this device. Nothing was sent.', await status(page));
+      check('ios ui: Explain with AI hidden for iPhone (not yet available)', (await page.locator('#sys-ai-open').count()) === 0 && !(await visible(page, '#sys-ai')));
+      check('ios ui: PDF button shown for the iPhone results', await visible(page, '#pdf'));
+      const shownA = await shownText(page);
+      check('ios ui: file names are never shown (Set A)', leaks(shownA).length === 0, leaks(shownA));
+      check('ios ui: Analyze sends nothing (outbound log unchanged)', (await page.locator('#ledger-list li').count()) === before);
+      check('ios ui: Analyze makes no outside requests', seen.external.length === 0, seen.external);
+
+      await page.click('#sys-os-mac', { timeout: 2000 }).catch(() => {});
+      check('ios ui: iPhone results hidden while Mac is selected; phone line shown', !(await visible(page, '#sys-results')) && await visible(page, '#sys-mac-phone'));
+      check('ios ui: Mac selected on an iPhone -> banner says the Mac steps are done on that computer',
+        /^You.re on iPhone\. The Mac steps below are done on that computer; you can read them here\.$/.test((await bannerOf(page)).trim()), await bannerOf(page));
+      await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
+      check('ios ui: Windows selected on an iPhone -> Windows computer banner', /The Windows steps below are done on that computer/.test(await bannerOf(page)));
+      await page.click('#sys-os-ios', { timeout: 2000 }).catch(() => {});
+      check('ios ui: switching back keeps the logs, the battery and the results', await visible(page, '#sys-results') && (await msg(page, 'logs')) === mA &&
+        (await page.inputValue('#sys-ios-battery')) === '84' && /right here on this iPhone/.test(await bannerOf(page)));
+
+      ok = true;
+      try { await battery(page, '58'); await analyze(page); } catch (e) { ok = false; }
+      const scoreA58 = ok ? (await page.locator('#sys-score').innerText()).trim() : '';
+      const verdictA58 = ok ? (await page.locator('.sys-verdict').innerText()).trim() : '';
+      check('ios ui: Set A + 58 % -> score 40 and the iPhone risk verdict', scoreA58 === '40' && verdictA58 === 'This iPhone has problems worth fixing soon.', [scoreA58, verdictA58]);
+
+      ok = true;
+      try { await choose(page, SET_B.map(IFX)); await battery(page, '58'); await analyze(page); } catch (e) { ok = false; }
+      check('ios ui: Set B chosen and analyzed', ok);
+      const scoreB = ok ? (await page.locator('#sys-score').innerText()).trim() : '';
+      check('ios ui: Set B score 55', scoreB === '55', scoreB);
+      const resB = ok ? await page.locator('#sys-results').innerText() : '';
+      check('ios ui: Set B shows iOS 16 and 58 %', /iOS 16/.test(resB) && /58 %/.test(resB), resB.slice(0, 400));
+      check('ios ui: Set B (score 55) verdict', (await page.locator('.sys-verdict').innerText().catch(() => '')).trim() === 'A few things need attention.');
+      const shownB = await shownText(page);
+      check('ios ui: file names are never shown (Set B)', leaks(shownB).length === 0, leaks(shownB));
+      check('ios ui: still nothing in the outbound log', (await page.locator('#ledger-list li').count()) === before);
+
+      await page.click('#sys-ios-clear', { timeout: 2000 }).catch(() => {});
+      const cleared = await page.evaluate(() => [document.getElementById('sys-ios-battery').value, document.getElementById('sys-file-ios-logs').value,
+        document.getElementById('sys-step-ios-logs').getAttribute('data-state')]);
+      check('ios ui: Clear empties the logs, the battery, both messages and the results', cleared[0] === '' && cleared[1] === '' && cleared[2] === 'empty' &&
+        !(await msg(page, 'logs')) && !(await msg(page, 'battery')) && !(await visible(page, '#sys-results')) && !(await status(page)), cleared);
+
+      ok = true;
+      try { await battery(page, '84'); await analyze(page); } catch (e) { ok = false; }
+      const s84 = ok ? (await page.locator('#sys-score').innerText()).trim() : '';
+      const date84 = ok ? (await page.locator('.sys-date').innerText()).trim() : '';
+      check('ios ui: battery only 84 -> score 100, read-on-this-device line', s84 === '100' && date84 === 'Read on this device, nothing uploaded', [s84, date84]);
+
+      for (const bad of ['abc', '0', '101', '84.5', '-5']) {
+        await battery(page, bad).catch(() => {});
+        const m = await msg(page, 'battery');
+        await page.click('#sys-ios-analyze', { timeout: 3000 }).catch(() => {});
+        await page.waitForTimeout(100);
+        check('ios ui: battery "' + bad + '" -> message under the field and in the status, no results', m === BAD_BATTERY && (await status(page)) === BAD_BATTERY && !(await visible(page, '#sys-results')), [m, await status(page)]);
+      }
+      await battery(page, ' 84 ');
+      check('ios ui: battery " 84 " is trimmed', (await msg(page, 'battery')) === 'Battery: 84 %.', await msg(page, 'battery'));
+      await battery(page, '');
+      check('ios ui: empty battery -> no message', (await msg(page, 'battery')) === '');
+      check('ios ui: no page errors', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // Wrong files, duplicates, too many, too big
+      const { page, context, seen } = await newPage('ok', { userAgent: IPHONE_UA });
+      await waitBanner(page);
+      await choose(page, SET_A.map(IFX).concat([MFX('Microsoft Word-2026-10-12-110204.ips')]));
+      const withMac = await msg(page, 'logs');
+      check('ios ui: a Mac log among iPhone logs -> "1 of them comes from a Mac"', / 1 of them comes from a Mac; choose Mac above for those\./.test(withMac) && /^Read 7 logs: /.test(withMac), withMac);
+      await choose(page, [MFX('Microsoft Word-2026-10-12-110204.ips'), MFX('Microsoft Word-2026-10-16-153012.ips')]);
+      const twoMac = await msg(page, 'logs');
+      check('ios ui: only Mac logs -> none accepted, "2 of them come from a Mac"', twoMac === NONE + ' 2 of them come from a Mac; choose Mac above for those.', twoMac);
+      await choose(page, [MFX('silicon.spx')]);
+      check('ios ui: a .spx alone -> none of these files is a log', (await msg(page, 'logs')) === NONE, await msg(page, 'logs'));
+      await choose(page, [{ name: 'photo.png', mimeType: 'image/png', buffer: PNG }]);
+      check('ios ui: a photo alone -> none of these files is a log', (await msg(page, 'logs')) === NONE, await msg(page, 'logs'));
+      const safari = fs.readFileSync(IFX('MobileSafari-2026-10-15-091244.ips'));
+      await choose(page, Array.from({ length: 101 }, (_, i) => ({ name: 'MobileSafari-2026-10-15-0912' + String(i).padStart(3, '0') + '.ips', mimeType: 'application/octet-stream', buffer: safari })));
+      const capped = await msg(page, 'logs');
+      check('ios ui: 101 copies -> first 100 read, 99 duplicates left out', /^Read 1 log: 0 panics, 1 app crash, 0 low-memory events\./.test(capped) &&
+        / 99 duplicates left out\./.test(capped) && / Only the first 100 files were read\./.test(capped), capped);
+      const thermal = fs.readFileSync(IFX('panic-full-2026-10-14-224107.000.ips'), 'utf8')
+        .replace('"0" : {"procname" : "kernel_task"}', '"0" : {"procname" : "kernel_task", "pad" : "' + 'x'.repeat(3 * 1024 * 1024) + '"}');
+      await choose(page, [{ name: 'panic-full-big.ips', mimeType: 'application/octet-stream', buffer: Buffer.from(thermal) }]);
+      const big = await msg(page, 'logs');
+      check('ios ui: a 3 MB panic is read (first 1 MB) and counted', big === 'Read 1 log: 1 panic, 0 app crashes, 0 low-memory events.', big);
+      const shown = await shownText(page);
+      check('ios ui: file names are never shown (wrong files)', leaks(shown).length === 0 && !/photo\.png|panic-full-big|Microsoft Word/i.test(shown), leaks(shown));
+      check('ios ui: wrong files cause no page error', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // Detection: iPad, iPadOS desktop user-agent, desktop Mac, Android
+      const cases = [
+        ['iPad UA', { userAgent: IPAD_UA }, 'ios', /^You.re on an iPad\. The steps below work on iPad too, right here on this iPad\.$/],
+        ['Mac UA with 5 touch points (iPadOS)', { userAgent: MAC_UA, initScript: TOUCH(5) }, 'ios', /^You.re on an iPad\. The steps below work on iPad too, right here on this iPad\.$/],
+        ['Mac UA with 0 touch points', { userAgent: MAC_UA, initScript: TOUCH(0) }, 'mac', /^You.re on macOS\. Save the reports with apps already on your Mac and choose them below\. No Terminal needed\.$/],
+        ['Android UA', { userAgent: ANDROID_UA }, 'android', /^You.re on Android\. Android reports are coming soon\. To check a computer or an iPhone, pick it above\.$/]
+      ];
+      for (const [label, opts, want, bannerRe] of cases) {
+        const { page, context, seen } = await newPage('ok', opts);
+        await waitBanner(page);
+        const banner = (await bannerOf(page)).trim();
+        check('ios ui: ' + label + ' -> ' + want + ' pre-selected', (await pressed(page, want)) === 'true', [await pressed(page, 'ios'), await pressed(page, 'mac'), await pressed(page, 'android')]);
+        check('ios ui: ' + label + ' banner', bannerRe.test(banner), banner);
+        if (want === 'android') {
+          const soon = (await page.locator('#sys-android-soon').innerText().catch(() => '')).trim();
+          check('ios ui: Android box says coming soon', await visible(page, '#sys-android-soon') && soon === 'Android reports are coming soon. Until then, PC Check can check a Windows, Mac or Linux computer, or an iPhone: pick it above.', soon);
+          check('ios ui: Android lead', (await page.locator('#sys-lead').innerText()).trim() === 'Android reports are coming soon.');
+          const analyzeShown = [];
+          for (const s of ['#sys-analyze', '#sys-linux-analyze', '#sys-mac-analyze', '#sys-ios-analyze']) if (await visible(page, s)) analyzeShown.push(s);
+          check('ios ui: Android shows no Analyze button', analyzeShown.length === 0, analyzeShown);
+          const sys = await page.locator('#system').innerText().catch(() => '');
+          check('ios ui: no computer sentence on the Android box', !COMPUTER_SENTENCE.test(sys), sys.match(COMPUTER_SENTENCE));
+        }
+        if (want === 'ios') check('ios ui: ' + label + ' -> iPhone steps shown', await visible(page, '#sys-ios-steps'));
+        check('ios ui: ' + label + ' -> no page errors', seen.errors.length === 0, seen.errors);
+        await context.close();
+      }
+    }
+    for (const [label, opts, engineName, shot] of [['iPhone SE (375 px)', devices['iPhone SE (3rd gen)'], 'webkit', 'system-ios-375.png'], ['iPhone SE (320 px)', devices['iPhone SE'], 'webkit', null], ['iPhone 14', devices['iPhone 14'], 'webkit', 'system-ios-iphone.png'],
+      ['375 px Chromium', { userAgent: IPHONE_UA, viewport: { width: 375, height: 812 } }, 'chromium', null]]) {
+      const eng = engineName === 'webkit' ? await webkit.launch() : browser;
+      try {
+        const { page, context, seen } = await newPage('ok', opts, eng);
+        await waitBanner(page);
+        check('ios ui: ' + label + ' -> iPhone pre-selected, banner without "computer" steps', (await pressed(page, 'ios')) === 'true' && /right here on this iPhone/.test(await bannerOf(page)));
+        let ok = true;
+        try { await choose(page, SET_A.map(IFX)); await battery(page, '84'); await analyze(page); } catch (e) { ok = false; }
+        check('ios ui: works at ' + label, ok && (await page.locator('#sys-score').innerText()).trim() === '65');
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        check('ios ui: no horizontal scroll at ' + label + ' with the iPhone steps and results', overflow <= 0, overflow);
+        const sizes = await page.evaluate(() => {
+          const h = (n) => n.getBoundingClientRect().height;
+          return {
+            buttons: Array.from(document.querySelectorAll('.sys-os-btn')).map(h),
+            analyze: h(document.getElementById('sys-ios-analyze')), clear: h(document.getElementById('sys-ios-clear')),
+            font: parseFloat(getComputedStyle(document.getElementById('sys-ios-battery')).fontSize),
+            fieldH: h(document.getElementById('sys-ios-battery')), inputmode: document.getElementById('sys-ios-battery').getAttribute('inputmode')
+          };
+        });
+        check('ios ui: tap targets at least 44 px at ' + label, sizes.buttons.length === 5 && sizes.buttons.every((x) => x >= 44) && sizes.analyze >= 44 && sizes.clear >= 44 && sizes.fieldH >= 44, sizes);
+        check('ios ui: battery field 16 px or more, numeric keypad at ' + label, sizes.font >= 16 && sizes.inputmode === 'numeric', sizes);
+        check('ios ui: no page errors at ' + label, seen.errors.length === 0, seen.errors);
+        if (shot) await page.locator('#system').screenshot({ path: path.join(shots, shot) }).catch(() => {});
         await context.close();
       } finally {
         if (eng !== browser) await eng.close();

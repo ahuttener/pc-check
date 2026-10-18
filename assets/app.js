@@ -219,19 +219,29 @@
       reportFoot: 'Generated locally in your browser — nothing was sent to CyberSecInfo. cybersecinfo.com/pccheck',
 
       // System report (Windows reports read on this device)
-      sysBanner: function (family, label) {
+      // Depends on the detected device and the selected button: a phone never says "done on a computer" while its own
+      // steps are shown. Computers keep one text whatever is selected.
+      sysBanner: function (family, label, selected) {
+        var computer = { windows: 'Windows', mac: 'Mac', linux: 'Linux' }[selected];
+        var phone = family === 'ios' || family === 'android';
+        if (phone && computer) return 'You’re on ' + label + '. The ' + computer + ' steps below are done on that computer; you can read them here.';
+        if (family === 'ios' && selected === 'android') return 'You’re on ' + (label === 'iPad' ? 'an iPad' : 'an iPhone') + '. Android reports are coming soon; pick iPhone above to check this ' + label + '.';
+        if (family === 'android' && selected === 'ios') return 'You’re on Android. The iPhone steps below are done on the iPhone itself; you can read them here.';
         switch (family) {
           case 'windows': return 'You’re on ' + label + '. Follow the three steps below to check this PC.';
           case 'mac': return 'You’re on ' + label + '. Save the reports with apps already on your Mac and choose them below. No Terminal needed.';
           case 'linux': return 'You’re on ' + label + '. Run the five read-only commands below in a terminal and paste what they print.';
-          case 'android': return 'You’re on Android. These steps are done on a computer: open this page there, or follow them on the computer and come back with the files.';
-          case 'ios': return 'You’re on an iPhone or iPad. These steps are done on a computer: open this page there, or follow them on the computer and come back with the files.';
+          case 'android': return 'You’re on Android. Android reports are coming soon. To check a computer or an iPhone, pick it above.';
+          case 'ios': return label === 'iPad' ? 'You’re on an iPad. The steps below work on iPad too, right here on this iPad.' :
+            'You’re on an iPhone. Follow the steps below right here on this iPhone. No computer or app needed.';
           default: return 'Pick the system of the computer you want to check.';
         }
       },
       sysLeadWindows: 'Windows already keeps a crash history, a battery report and a system summary. Save them with the steps below and PC Check reads them right here in your browser. The files never leave your device.',
       sysLeadLinux: 'Linux already keeps an error journal and knows your battery and disks. Five read-only commands print it; paste their output below and PC Check reads it right here in your browser. Nothing you paste leaves your device.',
       sysLeadMac: 'Your Mac already keeps a system profile and a record of crashes and unexpected restarts. Save them with System Information and Finder, then choose the files below: PC Check reads them right here in your browser. Nothing leaves your device.',
+      sysLeadIos: 'Your iPhone keeps a log each time an app crashes, iOS runs short of memory or the iPhone restarts by itself. Save a few of those logs to Files, choose them below and add the battery figure from Settings: PC Check reads them right here in your browser. Nothing leaves your iPhone.',
+      sysLeadAndroid: 'Android reports are coming soon.',
       sysReading: 'Reading the file on this device…',
       sysReadReliability: function (date, n) { return 'Read: reliability history' + (date ? ' saved ' + date : '') + ', ' + n + (n === 1 ? ' event.' : ' events.'); },
       sysReadBattery: 'Read: battery report.',
@@ -251,9 +261,10 @@
       sysScoreTitle: 'Health score',
       sysVerdictOk: 'No serious problems in these reports.',
       sysVerdictWarn: 'A few things need attention.',
-      sysVerdictRisk: 'This PC has problems worth fixing soon.',
+      sysVerdictRisk: function (platform) { return platform === 'ios' ? 'This iPhone has problems worth fixing soon.' : 'This PC has problems worth fixing soon.'; },
       sysReportFrom: function (date, platform, fromSpx) {
-        var what = platform === 'linux' ? 'Logs from ' : (platform === 'mac' ? (fromSpx ? 'System Information from ' : 'Newest report from ') : 'Reliability history from ');
+        var what = platform === 'linux' ? 'Logs from ' : (platform === 'mac' ? (fromSpx ? 'System Information from ' : 'Newest report from ') :
+          (platform === 'ios' ? 'Newest log from ' : 'Reliability history from '));
         return what + date + ' · read on this device, nothing uploaded';
       },
       // Linux: text pasted from five read-only commands
@@ -287,10 +298,24 @@
       sysMacNoReports: 'None of these files is a crash or panic report. Look for names ending in .panic, .ips or .crash.',
       sysMacSpxInReports: ' One of them looks like the System Information file; use step 1.',
       sysMacNeedFile: 'Choose at least one file first. Step 1 tells the most.',
+      // iPhone: logs saved from Analytics Data and the battery figure typed by the visitor, read on this device.
+      // File names are never shown.
+      sysIosReadLogs: function (n, p, c, j) {
+        return 'Read ' + n + (n === 1 ? ' log: ' : ' logs: ') + p + (p === 1 ? ' panic, ' : ' panics, ') + c + (c === 1 ? ' app crash, ' : ' app crashes, ') +
+          j + (j === 1 ? ' low-memory event.' : ' low-memory events.');
+      },
+      sysIosDuplicates: function (n) { return ' ' + n + (n === 1 ? ' duplicate' : ' duplicates') + ' left out.'; },
+      sysIosSkipped: function (n) { return ' ' + n + (n === 1 ? ' file' : ' files') + ' skipped (not a panic, crash or low-memory log).'; },
+      sysIosFromMac: function (n) { return ' ' + n + ' of them ' + (n === 1 ? 'comes' : 'come') + ' from a Mac; choose Mac above for those.'; },
+      sysIosUnreadable: function (n) { return ' The browser could not read ' + n + (n === 1 ? ' file' : ' files') + '. Save them to On My iPhone and choose them again.'; },
+      sysIosNoLogs: 'None of these files is a panic, crash or low-memory log. Look for names that start with panic-full, JetsamEvent or an app’s name.',
+      sysIosBattery: function (n) { return 'Battery: ' + n + ' %.'; },
+      sysIosBatteryBad: 'Enter a whole number from 1 to 100: the Maximum Capacity percentage.',
+      sysIosNeed: 'Choose at least one log or type the battery figure first.',
       sysLocalOnly: 'Read on this device, nothing uploaded',
       sysFindingsTitle: 'What we found',
       sysNoFindings: 'Nothing to fix in these reports.',
-      sysFactsTitle: 'This PC',
+      sysFactsTitle: function (platform) { return platform === 'ios' ? 'This iPhone' : 'This PC'; },
       sysFix: 'Fix: ',
       sev_risk: 'Risk',
       sev_warn: 'Attention',
@@ -315,7 +340,7 @@
       sysAiUpstream: 'The AI service did not answer. Try again in a minute.',
       sysAiFail: 'The explanation could not be fetched. Check your connection and try again.',
       lpExplain: 'AI explanation of the system report (this site, passed to Claude by Anthropic)',
-      reportSysTitle: function (platform) { return 'System report (' + (platform === 'linux' ? 'Linux' : (platform === 'mac' ? 'Mac' : 'Windows')) + ')'; },
+      reportSysTitle: function (platform) { return 'System report (' + (platform === 'linux' ? 'Linux' : (platform === 'mac' ? 'Mac' : (platform === 'ios' ? 'iPhone' : 'Windows'))) + ')'; },
       reportSysScore: function (n) { return 'Health score: ' + n + ' / 100'; },
       reportAiTitle: 'AI explanation',
       reportFootAi: 'Generated locally in your browser. Only what is listed under “What left your device” was sent, including the anonymised system summary for the AI explanation. cybersecinfo.com/pccheck',
@@ -366,6 +391,8 @@
       linux: blankLinux(),
       // Mac: spx = parsed System Information, reports = parsed crash/panic reports (no file names), steps = per-step message
       mac: blankMac(),
+      // iPhone: reports = accepted logs (no file names), battery = the typed Maximum Capacity, steps = per-step message
+      ios: blankIos(),
       evaluation: null,
       // Explain with AI: open = disclosure shown; busy = request in flight; text/model = the answer
       ai: blankAi()
@@ -384,6 +411,10 @@
   // fromSpx: whether the shown Mac evaluation had a .spx (for its date line)
   function blankMac() {
     return { spx: null, reports: [], steps: { spx: null, crash: null }, status: null, fromSpx: false };
+  }
+
+  function blankIos() {
+    return { reports: [], battery: { raw: '', value: null, error: false }, steps: { logs: null, battery: null }, status: null };
   }
 
   function blankAi() {
@@ -1571,7 +1602,9 @@
     else if (/CrOS/.test(ua)) family = 'other';
     else if (/Linux|X11/.test(ua)) family = 'linux';
     else family = 'other';
-    var labels = { windows: 'Windows', mac: 'macOS', linux: 'Linux', android: 'Android', ios: 'iPhone or iPad', other: 'this device' };
+    // iPadOS 13+ sends a desktop-Safari "Macintosh" user-agent; only its touch points tell it from a Mac.
+    var ipad = /iPad/.test(ua) || (!/iPhone|iPod/.test(ua) && /Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    var labels = { windows: 'Windows', mac: 'macOS', linux: 'Linux', android: 'Android', ios: ipad ? 'iPad' : 'iPhone', other: 'this device' };
     var info = { family: family, label: labels[family] };
     if (family === 'linux') {
       var distro = /Ubuntu|Fedora|Debian/.exec(ua);
@@ -2012,8 +2045,165 @@
     if (status) status.textContent = state.sys.mac.status ? resolve(state.sys.mac.status) : '';
   }
 
+  // ---------------------------------------------------------------------------
+  // iPhone: logs saved from Settings > Privacy & Security > Analytics & Improvements > Analytics Data (up to 100,
+  // the first 1 MB of each) and the battery's Maximum Capacity typed in. Read on this device only; file names are
+  // never read, shown or stored. Only evaluateIos output is rendered.
+  // ---------------------------------------------------------------------------
+  var iosRead = null;
+  var iosToken = 0;
+
+  function dropIosEvaluation() {
+    if (state.sys.evaluation && state.sys.evaluation.platform === 'ios') {
+      state.sys.evaluation = null;
+      state.sys.ai = blankAi();
+    }
+    state.sys.ios.status = null;
+  }
+
+  function loadIosLogs(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    if (!files.length) return Promise.resolve();
+    var token = ++iosToken;
+    var capped = files.length > MAC_MAX_REPORTS;
+    files = files.slice(0, MAC_MAX_REPORTS);
+    state.sys.ios.reports = [];
+    dropIosEvaluation();
+    renderSysResults();
+    renderPdfButton();
+    var S = window.PCSys;
+    if (!S) { setIosStep('logs', 'error', ['sysReadError']); iosRead = null; return Promise.resolve(); }
+    setIosStep('logs', 'reading', ['sysReading']);
+    // Only the first IOS_REPORT_HEAD bytes of each file are read, whatever its size; the name is never passed on.
+    var job = mapLimit(files, MAC_READ_PARALLEL, function (file) {
+      return readBuffer(file.slice(0, S.IOS_REPORT_HEAD)).then(function (buffer) {
+        var parsed = S.parseIosReport(S.decode(buffer));
+        if (parsed && !parsed.error && (parsed.kind === 'panic' || parsed.kind === 'crash' || parsed.kind === 'jetsam')) return { report: parsed };
+        return { skipped: true, mac: !!parsed && parsed.error === 'mac_report' };
+      }, function () { return { unreadable: true }; });
+    }).then(function (results) {
+      if (token !== iosToken) return;
+      var accepted = [];
+      var skipped = 0;
+      var fromMac = 0;
+      var unreadable = 0;
+      results.forEach(function (r) {
+        if (r.report) accepted.push(r.report);
+        else if (r.unreadable) unreadable++;
+        else { skipped++; if (r.mac) fromMac++; }
+      });
+      var reports = S.uniqueIosReports(accepted);
+      state.sys.ios.reports = reports;
+      if (unreadable === results.length) {
+        // Nothing could be read at all: only say why and what to do.
+        setIosStep('logs', 'error', t('sysIosUnreadable', unreadable).trim());
+        return;
+      }
+      var count = function (kind) { return reports.filter(function (x) { return x.kind === kind; }).length; };
+      var msg;
+      if (reports.length) {
+        var dups = accepted.length - reports.length;
+        msg = t('sysIosReadLogs', reports.length, count('panic'), count('crash'), count('jetsam')) +
+          (dups ? t('sysIosDuplicates', dups) : '') + (skipped ? t('sysIosSkipped', skipped) : '');
+      } else {
+        msg = t('sysIosNoLogs');
+      }
+      msg += (fromMac ? t('sysIosFromMac', fromMac) : '') + (capped ? t('sysMacCapped', MAC_MAX_REPORTS) : '') +
+        (unreadable ? t('sysIosUnreadable', unreadable) : '');
+      setIosStep('logs', reports.length ? 'ok' : 'error', msg);
+    }).catch(function () {
+      if (token === iosToken) setIosStep('logs', 'error', ['sysReadError']);
+    });
+    iosRead = job;
+    return job;
+  }
+
+  // Valid: a whole number from 1 to 100 after trimming; empty means no battery figure.
+  function readIosBattery() {
+    var input = document.getElementById('sys-ios-battery');
+    var raw = input ? String(input.value) : '';
+    var trimmed = raw.trim();
+    var b = { raw: raw, value: null, error: false };
+    if (trimmed !== '') {
+      var n = /^[0-9]{1,3}$/.test(trimmed) ? parseInt(trimmed, 10) : NaN;
+      if (n >= 1 && n <= 100) b.value = n;
+      else b.error = true;
+    }
+    state.sys.ios.battery = b;
+    state.sys.ios.steps.battery = b.error ? { status: 'error', msg: ['sysIosBatteryBad'] } :
+      (b.value !== null ? { status: 'ok', msg: ['sysIosBattery', b.value] } : null);
+    return b;
+  }
+
+  // A new figure makes the shown iPhone results stale.
+  function onIosBattery() {
+    var before = state.sys.ios.battery.raw;
+    var b = readIosBattery();
+    if (b.raw !== before) {
+      dropIosEvaluation();
+      renderSysResults();
+      renderPdfButton();
+    }
+    renderIosSteps();
+  }
+
+  function setIosStep(kind, status, msg) {
+    state.sys.ios.steps[kind] = status ? { status: status, msg: msg } : null;
+    renderIosSteps();
+  }
+
+  function analyzeIos() {
+    return (iosRead || Promise.resolve()).then(function () {
+      var io = state.sys.ios;
+      var S = window.PCSys;
+      var b = readIosBattery();
+      dropIosEvaluation();
+      if (b.error) {
+        io.status = ['sysIosBatteryBad'];
+      } else if (!S || (!io.reports.length && b.value === null)) {
+        io.status = io.steps.logs ? ['sysNothingRead'] : ['sysIosNeed'];
+      } else {
+        state.sys.evaluation = S.evaluateIos({ reports: io.reports, batteryPct: b.value }, new Date());
+        state.sys.ai = blankAi();
+        io.status = ['sysDone'];
+      }
+      renderIosSteps();
+      renderSysResults();
+      renderPdfButton();
+      var heading = $('#sys-results h3');
+      if (state.sys.evaluation && state.sys.evaluation.platform === 'ios' && heading) heading.focus();
+    });
+  }
+
+  function clearIos() {
+    iosToken++;
+    iosRead = null;
+    ['sys-file-ios-logs', 'sys-ios-battery'].forEach(function (id) {
+      var input = document.getElementById(id);
+      if (input) input.value = '';
+    });
+    dropIosEvaluation();
+    state.sys.ios = blankIos();
+    renderIosSteps();
+    renderSysResults();
+    renderPdfButton();
+  }
+
+  function renderIosSteps() {
+    ['logs', 'battery'].forEach(function (k) {
+      var root = document.getElementById('sys-step-ios-' + k);
+      if (!root) return;
+      var step = state.sys.ios.steps[k];
+      root.setAttribute('data-state', step ? step.status : 'empty');
+      $('[data-role="msg"]', root).textContent = step ? resolve(step.msg) : '';
+    });
+    var status = $('#sys-ios-status');
+    if (status) status.textContent = state.sys.ios.status ? resolve(state.sys.ios.status) : '';
+  }
+
   function selectSysOs(os) {
     state.sys.selected = os;
+    renderSysBanner();
     renderSysOs();
     renderSysResults();
     renderPdfButton();
@@ -2024,7 +2214,7 @@
     if (!banner || !state.sys.os) return;
     banner.textContent = '';
     banner.appendChild(svgUse(SYS_GLYPH[state.sys.os.family] || 'os-windows', 'sys-glyph'));
-    banner.appendChild(el('span', null, t('sysBanner', state.sys.os.family, state.sys.os.label)));
+    banner.appendChild(el('span', null, t('sysBanner', state.sys.os.family, state.sys.os.label, state.sys.selected)));
   }
 
   function renderSysOs() {
@@ -2038,7 +2228,10 @@
     $('#sys-steps').hidden = !windows;
     if ($('#sys-linux-steps')) $('#sys-linux-steps').hidden = !linux;
     if ($('#sys-mac-steps')) $('#sys-mac-steps').hidden = !mac;
-    if ($('#sys-lead')) $('#sys-lead').textContent = t(linux ? 'sysLeadLinux' : (mac ? 'sysLeadMac' : 'sysLeadWindows'));
+    if ($('#sys-ios-steps')) $('#sys-ios-steps').hidden = state.sys.selected !== 'ios';
+    if ($('#sys-android-soon')) $('#sys-android-soon').hidden = state.sys.selected !== 'android';
+    var lead = { linux: 'sysLeadLinux', mac: 'sysLeadMac', ios: 'sysLeadIos', android: 'sysLeadAndroid' }[state.sys.selected] || 'sysLeadWindows';
+    if ($('#sys-lead')) $('#sys-lead').textContent = t(lead);
     // On a phone or tablet the Mac steps are read here and done on the Mac.
     var family = state.sys.os && state.sys.os.family;
     if ($('#sys-mac-phone')) $('#sys-mac-phone').hidden = !(family === 'ios' || family === 'android');
@@ -2080,7 +2273,7 @@
     var h = el('h3', null, t('sysScoreTitle'));
     h.tabIndex = -1;
     words.appendChild(h);
-    words.appendChild(el('p', 'sys-verdict', t(band === 'ok' ? 'sysVerdictOk' : (band === 'warn' ? 'sysVerdictWarn' : 'sysVerdictRisk'))));
+    words.appendChild(el('p', 'sys-verdict', t(band === 'ok' ? 'sysVerdictOk' : (band === 'warn' ? 'sysVerdictWarn' : 'sysVerdictRisk'), e.platform)));
     var date = isoDate(e.reportDate);
     words.appendChild(el('p', 'sys-date', date ? t('sysReportFrom', date, e.platform, state.sys.mac.fromSpx) : t('sysLocalOnly')));
     top.appendChild(words);
@@ -2130,7 +2323,7 @@
     }
 
     if (e.facts.length) {
-      root.appendChild(el('h4', 'sys-subtitle', t('sysFactsTitle')));
+      root.appendChild(el('h4', 'sys-subtitle', t('sysFactsTitle', e.platform)));
       var tiles = el('dl', 'sys-tiles');
       e.facts.forEach(function (f) {
         var tile = el('div', 'sys-tile');
@@ -2141,6 +2334,8 @@
       root.appendChild(tiles);
     }
 
+    // Explain with AI is not offered for the iPhone yet: nothing sends an iPhone summary.
+    if (e.platform === 'ios') return;
     var ai = el('div', 'sys-ai');
     ai.id = 'sys-ai';
     root.appendChild(ai);
@@ -2274,6 +2469,7 @@
     SYS_KINDS.forEach(renderSysStep);
     renderLinuxSteps();
     renderMacSteps();
+    renderIosSteps();
     renderSysResults();
   }
 
@@ -2352,10 +2548,28 @@
     });
     if ($('#sys-mac-analyze')) $('#sys-mac-analyze').addEventListener('click', analyzeMac);
     if ($('#sys-mac-clear')) $('#sys-mac-clear').addEventListener('click', clearMac);
+    var iosInput = document.getElementById('sys-file-ios-logs');
+    var iosZone = $('#sys-step-ios-logs .sys-drop');
+    if (iosInput && iosZone) {
+      iosInput.addEventListener('change', function () {
+        loadIosLogs(iosInput.files).then(function () { iosInput.value = ''; });
+      });
+      iosZone.addEventListener('dragover', function (ev) { ev.preventDefault(); iosZone.classList.add('is-over'); });
+      iosZone.addEventListener('dragleave', function () { iosZone.classList.remove('is-over'); });
+      iosZone.addEventListener('drop', function (ev) {
+        ev.preventDefault();
+        iosZone.classList.remove('is-over');
+        var files = ev.dataTransfer && ev.dataTransfer.files;
+        if (files && files.length) loadIosLogs(files);
+      });
+    }
+    if ($('#sys-ios-battery')) $('#sys-ios-battery').addEventListener('input', onIosBattery);
+    if ($('#sys-ios-analyze')) $('#sys-ios-analyze').addEventListener('click', analyzeIos);
+    if ($('#sys-ios-clear')) $('#sys-ios-clear').addEventListener('click', clearIos);
 
     detectOs().then(function (os) {
       state.sys.os = os;
-      if (os.family === 'mac' || os.family === 'linux') state.sys.selected = os.family;
+      if (os.family === 'mac' || os.family === 'linux' || os.family === 'ios' || os.family === 'android') state.sys.selected = os.family;
       renderSys();
     });
   }
@@ -2448,7 +2662,7 @@
         sb.appendChild(ul);
       }
       if (sysEval.facts.length) {
-        sb.appendChild(el('h3', null, t('sysFactsTitle')));
+        sb.appendChild(el('h3', null, t('sysFactsTitle', sysEval.platform)));
         var sdl = el('dl');
         sysEval.facts.forEach(function (f) {
           sdl.appendChild(el('dt', null, f.label));
