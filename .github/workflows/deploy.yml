@@ -1,0 +1,88 @@
+# Deploys the site to cybersecinfo.com/pccheck (Hostinger) on every push to main.
+#
+# Needs three repository secrets (Settings > Secrets and variables > Actions):
+#   FTP_SERVER    FTP host or IP from hPanel > Files > FTP Accounts
+#   FTP_USERNAME  FTP username from the same page
+#   FTP_PASSWORD  its password
+# Until they exist the job only prints a warning and does nothing.
+#
+# Uploads over FTP with TLS. Nothing on the server is deleted: files that are
+# only on the server (api/cache, backups) stay as they are. tests/, docs/ and
+# the repo's own files (README, LICENSE, .git*, .github) are never uploaded.
+
+name: Deploy to cybersecinfo.com/pccheck
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-pccheck
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FTP_SERVER: ${{ secrets.FTP_SERVER }}
+      FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+      LFTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+    steps:
+      - name: Wait for the FTP secrets
+        if: env.FTP_SERVER == '' || env.FTP_USERNAME == '' || env.LFTP_PASSWORD == ''
+        run: echo "::warning::Not deployed. Add FTP_SERVER, FTP_USERNAME and FTP_PASSWORD under Settings > Secrets and variables > Actions, then run this workflow again."
+
+      - name: Check out
+        if: env.FTP_SERVER != '' && env.FTP_USERNAME != '' && env.LFTP_PASSWORD != ''
+        uses: actions/checkout@v4
+
+      - name: Install lftp
+        if: env.FTP_SERVER != '' && env.FTP_USERNAME != '' && env.LFTP_PASSWORD != ''
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+
+      - name: Upload to public_html/pccheck
+        if: env.FTP_SERVER != '' && env.FTP_USERNAME != '' && env.LFTP_PASSWORD != ''
+        run: |
+          set -euo pipefail
+          # TLS is required; the certificate is not matched to the host name because
+          # Hostinger's FTP certificate is issued for its own servers, not the domain.
+          cat > "$HOME/.lftprc" <<'RC'
+          set ftp:ssl-force true
+          set ftp:ssl-protect-data true
+          set ssl:verify-certificate no
+          set net:max-retries 2
+          set net:timeout 30
+          set cmd:fail-exit true
+          RC
+          ftp() { lftp --env-password -u "$FTP_USERNAME" "$FTP_SERVER" -e "$1; bye"; }
+
+          # The FTP account may start in the domain folder or inside public_html.
+          root=$(ftp "cls -1" | sed 's:/*$::')
+          if grep -qx 'public_html' <<<"$root"; then dest="public_html/pccheck"
+          elif grep -qx 'pccheck' <<<"$root"; then dest="pccheck"
+          else echo "::error::Neither public_html/ nor pccheck/ found at the FTP root."; exit 1; fi
+
+          # Safety: only deploy over an existing PC Check folder.
+          here=$(ftp "cls -1 -B $dest" | sed 's:/*$::')
+          grep -qx 'index.html' <<<"$here" && grep -qx 'assets' <<<"$here" \
+            || { echo "::error::$dest does not look like the PC Check folder; nothing uploaded."; exit 1; }
+
+          ftp "mirror --reverse --verbose --no-perms --parallel=4 \
+            --exclude ^\.git --exclude ^tests/ --exclude ^docs/ --exclude ^api/cache/ \
+            --exclude ^README\.md\$ --exclude ^LICENSE\$ --exclude ^HANDOFF\.md\$ \
+            ./ $dest/"
+          echo "Deployed $(git rev-parse --short HEAD) to $dest"
+
+      - name: Check the live page
+        if: env.FTP_SERVER != '' && env.FTP_USERNAME != '' && env.LFTP_PASSWORD != ''
+        run: |
+          set -euo pipefail
+          sleep 5
+          curl -fsS https://cybersecinfo.com/pccheck/ -o live.html
+          cmp -s live.html index.html && echo "Live index.html matches this commit." \
+            || echo "::warning::The live index.html differs from this commit (a cache may still be serving the old one)."
