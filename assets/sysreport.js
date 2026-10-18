@@ -195,25 +195,49 @@
     return { text: s.slice(0, LINUX_PASTE_CAP), cut: s.length > LINUX_PASTE_CAP };
   }
 
+  var LINE_CHARS = 4096; // per-line work is bounded, so one huge line cannot stall the page
+  var DEFAULT_HOST_SET = toSet(DEFAULT_HOSTNAMES);
+  var SYSTEM_USER_SET = toSet(SYSTEM_USERS);
+
+  function toSet(list) {
+    var o = Object.create(null);
+    list.forEach(function (k) { o[k] = true; });
+    return o;
+  }
+
   function round1(n) { return Math.round(n * 10) / 10; }
 
-  function addName(list, n) {
-    if (n && list.indexOf(n) === -1) list.push(n);
+  // Trailing whitespace removed with a loop: /\s+$/ is quadratic on a long line full of spaces.
+  function trimEnd(s) {
+    var n = s.length;
+    while (n > 0) {
+      var c = s.charCodeAt(n - 1);
+      if (c !== 32 && c !== 9 && c !== 13 && c !== 11 && c !== 12 && c !== 160) break;
+      n--;
+    }
+    return n === s.length ? s : s.slice(0, n);
   }
 
-  function addHostname(list, host) {
+  // Names collected for the anonymiser: a list in first-seen order plus a set for O(1) lookups.
+  function nameSet() { return { list: [], seen: Object.create(null) }; }
+
+  function addName(set, n) {
+    if (n && !set.seen[n]) { set.seen[n] = true; set.list.push(n); }
+  }
+
+  function addHostname(set, host) {
     var h = String(host || '').trim();
-    if (!h || DEFAULT_HOSTNAMES.indexOf(h.toLowerCase()) !== -1) return;
-    addName(list, h);
+    if (!h || DEFAULT_HOST_SET[h.toLowerCase()]) return;
+    addName(set, h);
     var label = h.split('.')[0];
-    if (label && DEFAULT_HOSTNAMES.indexOf(label.toLowerCase()) === -1) addName(list, label);
+    if (label && !DEFAULT_HOST_SET[label.toLowerCase()]) addName(set, label);
   }
 
-  function addUser(list, user) {
+  function addUser(set, user) {
     var u = String(user || '').trim();
     if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,31}$/.test(u)) return;
-    if (SYSTEM_USERS.indexOf(u.toLowerCase()) !== -1 || /^systemd-/.test(u)) return;
-    addName(list, u);
+    if (SYSTEM_USER_SET[u.toLowerCase()] || /^systemd-/.test(u)) return;
+    addName(set, u);
   }
 
   // uname -a; cat /etc/os-release
@@ -223,7 +247,7 @@
     var kernel = null;
     var rel = {};
     lines.forEach(function (raw) {
-      var line = raw.trim();
+      var line = raw.slice(0, LINE_CHARS).trim();
       var u = /^Linux (\S+) (\S+)/.exec(line);
       if (u && hostname === null) { hostname = u[1]; kernel = u[2]; return; }
       var kv = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
@@ -236,11 +260,11 @@
     if (hostname === null && !('ID' in rel)) return { error: 'not_system' };
     var distro = rel.PRETTY_NAME || ((rel.NAME || '') + ' ' + (rel.VERSION_ID || '')).trim() || null;
     var end = /^(\d{4})-(\d\d)-(\d\d)$/.exec(rel.SUPPORT_END || '');
-    var names = [];
+    var names = nameSet();
     addHostname(names, hostname);
     return {
       hostname: hostname, kernel: kernel, distro: distro, id: rel.ID || null, versionId: rel.VERSION_ID || null,
-      supportEnd: end ? new Date(+end[1], +end[2] - 1, +end[3]) : null, names: names
+      supportEnd: end ? new Date(+end[1], +end[2] - 1, +end[3]) : null, names: names.list
     };
   }
 
@@ -268,24 +292,45 @@
     }
   }
 
-  // journalctl -p 3 -o short (or short-iso). yearHint: a year, or the report Date (then a month later than the
-  // report month means the year before, because short lines carry no year).
+  // Short journal lines carry no year. They take the reference year, except that a month later than the reference
+  // month belongs to the year before (December lines in a January report). The reference is the report Date when
+  // given; a year number means the whole of that year (or up to today, for the current year); nothing means today.
+  function referenceMonth(yearHint) {
+    var now = new Date();
+    if (yearHint instanceof Date && !isNaN(yearHint.getTime())) return { year: yearHint.getFullYear(), month: yearHint.getMonth() };
+    if (typeof yearHint === 'number' && isFinite(yearHint)) {
+      return { year: yearHint, month: yearHint < now.getFullYear() ? 11 : (yearHint > now.getFullYear() ? 0 : now.getMonth()) };
+    }
+    return { year: now.getFullYear(), month: now.getMonth() };
+  }
+
+  function isJournalLine(line) {
+    var m = J_SHORT.exec(line);
+    return (m !== null && MONTHS.indexOf(m[1]) !== -1) || J_ISO.test(line);
+  }
+
+  // journalctl -p 3 -o short (or short-iso). yearHint: the report Date, or a year number (see referenceMonth).
+  // truncated: the 20,000-line cap was reached with journal lines still unread. cut: the paste was over 2 MB.
   function parseJournal(text, yearHint) {
     var src = linuxText(text);
     var all = src.text.split(/\r?\n/);
-    var truncated = src.cut || all.length > LINUX_MAX_LINES;
-    var hint = yearHint instanceof Date && !isNaN(yearHint.getTime()) ? yearHint : null;
-    var year = hint ? hint.getFullYear() : (typeof yearHint === 'number' ? yearHint : new Date().getFullYear());
-    var refMonth = hint ? hint.getMonth() : null;
+    var truncated = false;
+    var ref = referenceMonth(yearHint);
+    var year = ref.year;
+    var refMonth = ref.month;
     var out = [];
-    var names = [];
+    var names = nameSet();
     var noEntries = false;
     var partial = false;
     var recognised = false;
     var inHint = false;
     var nonEmpty = false;
-    for (var i = 0; i < all.length && out.length < LINUX_MAX_LINES; i++) {
-      var line = all[i].replace(/\s+$/, '');
+    for (var i = 0; i < all.length; i++) {
+      var line = trimEnd(all[i].slice(0, LINE_CHARS));
+      if (out.length >= LINUX_MAX_LINES) {
+        if (isJournalLine(line)) { truncated = true; break; }
+        continue;
+      }
       if (!line) { inHint = false; continue; }
       nonEmpty = true;
       if (inHint && /^\s/.test(line)) continue;
@@ -293,7 +338,7 @@
       var m = J_SHORT.exec(line);
       if (m && MONTHS.indexOf(m[1]) !== -1) {
         var mon = MONTHS.indexOf(m[1]);
-        var y = refMonth !== null && mon > refMonth ? year - 1 : year;
+        var y = mon > refMonth ? year - 1 : year;
         var p = splitSource(m[7]);
         out.push({ time: new Date(y, mon, +m[2], +m[3], +m[4], +m[5]), source: p.source, message: p.message });
         addHostname(names, m[6]);
@@ -319,7 +364,7 @@
       if (/^No journal files were found/.test(trimmed)) { noEntries = true; recognised = true; continue; }
     }
     if (nonEmpty && !out.length && !recognised) return { error: 'not_journal' };
-    return { lines: out, total: out.length, truncated: truncated, noEntries: noEntries && !out.length, partial: partial, names: names };
+    return { lines: out, total: out.length, truncated: truncated, cut: src.cut, noEntries: noEntries && !out.length, partial: partial, names: names.list };
   }
 
   // journalctl --list-boots | tail -5; journalctl -b -1 -p 3 -o short
@@ -332,8 +377,9 @@
     var rest = [];
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
-      if (/^\s*IDX\s+BOOT ID\b/.test(line)) continue;
-      var row = BOOT_ROW.exec(line);
+      var head = line.slice(0, 500); // a boot row is about 100 characters
+      if (/^\s*IDX\s+BOOT ID\b/.test(head)) continue;
+      var row = BOOT_ROW.exec(head);
       if (!row) { rest.push(line); continue; }
       var stamps = [];
       var s;
@@ -356,7 +402,7 @@
     if (previous.unsupportedLanguage) return { unsupportedLanguage: true };
     if (previous.error) {
       if (!boots.length) return { error: 'not_boots' };
-      previous = { lines: [], total: 0, truncated: false, noEntries: false, partial: false, names: [] };
+      previous = { lines: [], total: 0, truncated: false, cut: false, noEntries: false, partial: false, names: [] };
     }
     if (!boots.length && !previous.total) return { error: 'not_boots' };
     return { boots: boots, previous: previous, reportDate: reportDate };
@@ -365,64 +411,85 @@
   // upower -i $(upower -e | grep BAT). Only the energy figures are kept: never the vendor, model or serial.
   function parseUpower(text) {
     var s = linuxText(text).text;
-    if (!s.trim() || /^\s*Usage:/m.test(s) || /upower \[OPTION/.test(s)) return { present: false };
+    if (!s.trim() || /^[ \t]*Usage:/m.test(s) || /upower \[OPTION/.test(s)) return { present: false };
     if (!/\benergy/.test(s) && !/native-path/.test(s)) return { error: 'not_battery' };
     function wh(key) {
-      var m = new RegExp('^\\s*' + key + ':\\s*([0-9]+(?:[.,][0-9]+)?)\\s*Wh', 'm').exec(s);
+      var m = new RegExp('^[ \\t]*' + key + ':[ \\t]*([0-9]+(?:[.,][0-9]+)?)[ \\t]*Wh', 'm').exec(s);
       return m ? parseFloat(m[1].replace(',', '.')) : null;
     }
     var full = wh('energy-full');
     var design = wh('energy-full-design');
-    var c = /^\s*charge-cycles:\s*(\d+)\s*$/m.exec(s);
+    var c = /^[ \t]*charge-cycles:[ \t]*(\d+)[ \t]*$/m.exec(s);
     return {
       present: true, fullWh: full, designWh: design, cycles: c ? parseInt(c[1], 10) : null,
       healthPct: full !== null && design ? round1((full / design) * 100) : null
     };
   }
 
-  // df -h; lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
-  var DF_HEADER = /^Filesystem\s+(?:Size|1K-blocks|1M-blocks)\s+Used\s+Avail(?:able)?\s+(?:Use|Capacity)%\s+Mounted on\s*$/;
+  // df -h (also -hT and -i); lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
+  var DF_HEADER = /^Filesystem\s+(Type\s+)?(?:Size|1K-blocks|1M-blocks|1024-blocks|Inodes)\s+I?Used\s+(?:Avail(?:able)?|IFree)\s+(?:I?Use|Capacity)%\s+Mounted on$/;
   var DF_ROW = /^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)%\s+(\S.*)$/;
+  var DF_ROW_T = /^(\S+)\s+\S+\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)%\s+(\S.*)$/;
   var DF_CONT = /^\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)%\s+(\S.*)$/; // df wraps a long device name onto its own line
+  var DF_CONT_T = /^\s+\S+\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)%\s+(\S.*)$/;
   var LSBLK_HEADER = /^NAME\s+SIZE\s+TYPE\b/;
-  var LSBLK_ROW = /^[\s|`\u2502\u251C\u2514\u2500-]*([^\s|`\u2502\u251C\u2514\u2500-]\S*)\s+(\S+)\s+(\S+)/;
+  var LSBLK_ROW = /^[\s|`│├└─-]*([^\s|`│├└─-]\S*)\s+(\S+)\s+(\S+)(?:\s+(\S.*))?$/;
+  var DF_PCT_TOKEN = /^[^\s\d%~@:$#\/\\<>|=()\[\]{}"']+%$/;
+
+  // A df header in another language: no digits, no English header words, at least three column names, then a
+  // "Use%"-like column, then the mount column name. Prompts ("user@pc:~% df -h") and progress lines do not qualify.
+  function isForeignDfHeader(line) {
+    if (/\d/.test(line) || /Filesystem|Mounted/.test(line)) return false;
+    var tokens = line.trim().split(/\s+/);
+    for (var k = 3; k < tokens.length - 1; k++) if (DF_PCT_TOKEN.test(tokens[k])) return true;
+    return false;
+  }
 
   function parseDisks(text) {
-    var lines = linuxText(text).text.split(/\r?\n/);
+    var src = linuxText(text);
+    var lines = src.text.split(/\r?\n/);
     var mode = null;
+    var typed = false;
+    var inodes = false;
     var sawDf = false;
     var sawLsblk = false;
     var filesystems = [];
-    var byDevice = {};
+    var byDevice = Object.create(null);
     var disks = [];
+    var names = nameSet();
     for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].replace(/\s+$/, '');
-      if (DF_HEADER.test(line)) { mode = 'df'; sawDf = true; continue; }
+      var line = trimEnd(lines[i].slice(0, LINE_CHARS));
+      var h = DF_HEADER.exec(line);
+      if (h) { mode = 'df'; sawDf = true; typed = !!h[1]; inodes = /Inodes/.test(line); continue; }
       if (LSBLK_HEADER.test(line)) { mode = 'lsblk'; sawLsblk = true; continue; }
       if (!line) continue;
       if (mode === 'df') {
-        var m = DF_ROW.exec(line);
+        var m = (typed ? DF_ROW_T : DF_ROW).exec(line);
         var dev, size, pct, mount;
         if (m) { dev = m[1]; size = m[2]; pct = +m[5]; mount = m[6]; }
-        else if (/^\S+$/.test(line) && i + 1 < lines.length && (m = DF_CONT.exec(lines[i + 1].replace(/\s+$/, '')))) {
+        else if (/^\S+$/.test(line) && i + 1 < lines.length && (m = (typed ? DF_CONT_T : DF_CONT).exec(trimEnd(lines[i + 1].slice(0, LINE_CHARS))))) {
           dev = line; size = m[1]; pct = +m[4]; mount = m[5]; i++;
         } else continue;
-        if (!/^\/dev\//.test(dev) || /^\/dev\/loop/.test(dev)) continue;
+        collectUsers(names, '', mount);
+        // Real block filesystems only: snap loop images and optical discs / ISOs are always 100 % full.
+        if (!/^\/dev\//.test(dev) || /^\/dev\/(loop|sr\d)/.test(dev)) continue;
         if (byDevice[dev]) { byDevice[dev].mounts.push(mount); continue; }
         var entry = { device: dev, sizeText: size, usedPct: pct, mount: mount, mounts: [mount] };
         byDevice[dev] = entry;
         filesystems.push(entry);
       } else if (mode === 'lsblk') {
         var b = LSBLK_ROW.exec(line);
-        if (b && b[3] === 'disk' && !/^zram/.test(b[1]) && !/^0B?$/.test(b[2])) disks.push({ name: b[1], sizeText: b[2] });
-      } else if (!sawDf && /^[^\d]*\S%\s+\S[^\d]*$/.test(line)) {
-        return { unsupportedLanguage: true }; // a df header in another language
+        if (!b) continue;
+        if (b[4]) collectUsers(names, '', b[4]);
+        if (b[3] === 'disk' && !/^zram/.test(b[1]) && !/^0B?$/.test(b[2])) disks.push({ name: b[1], sizeText: b[2] });
+      } else if (!sawDf && isForeignDfHeader(line.slice(0, 500))) {
+        return { unsupportedLanguage: true };
       }
     }
     if (!sawDf && !sawLsblk) return { error: 'not_disks' };
     var worst = null;
     filesystems.forEach(function (f) { if (worst === null || f.usedPct > worst) worst = f.usedPct; });
-    return { filesystems: filesystems, disks: disks, worstPct: worst };
+    return { filesystems: filesystems, disks: disks, worstPct: worst, inodes: inodes, names: names.list };
   }
 
   // ---------------------------------------------------------------------------

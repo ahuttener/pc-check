@@ -747,8 +747,27 @@ try {
         dU: { worst: dU.worstPct, devices: dU.filesystems.map((f) => f.device), disks: dU.disks.map((d) => d.name), backup: (dU.filesystems.filter((f) => f.device === '/dev/sdb1')[0] || {}).mount },
         dF: { worst: dF.worstPct, sda3: dF.filesystems.filter((f) => f.device === '/dev/sda3').map((f) => f.mounts), disks: dF.disks.map((d) => d.name) },
         dPt: S.parseDisks(t['df-pt']), notDisks: S.parseDisks('hello'),
-        bigMs, bigJ: { truncated: bigJ.truncated, total: bigJ.total },
-        manyJ: (() => { const m = S.parseJournal('Oct 18 09:00:00 host kernel: x\n'.repeat(30000), 2026); return { truncated: m.truncated, total: m.total }; })()
+        bigMs, bigJ: { cut: bigJ.cut, truncated: bigJ.truncated, total: bigJ.total },
+        manyJ: (() => { const m = S.parseJournal('Oct 18 09:00:00 host kernel: x\n'.repeat(30000), 2026); return { truncated: m.truncated, total: m.total }; })(),
+        // Exactly 20,000 journal lines followed only by a hint: the cap was reached but nothing was left unread
+        capExact: (() => { const m = S.parseJournal('Oct 18 09:00:00 host kernel: x\n'.repeat(20000) + '-- No entries --\n', 2026); return { truncated: m.truncated, total: m.total }; })(),
+        // Year rollover: December lines in a January report belong to the year before, whatever the hint
+        rollDate: (() => { const m = S.parseJournal('Dec 31 23:59:00 host kernel: a\nJan 02 08:00:00 host kernel: b', new Date(2027, 0, 5, 12, 0, 0)); return m.lines.map((l) => l.time.getFullYear()); })(),
+        rollPastYear: (() => { const m = S.parseJournal('Dec 31 23:59:00 host kernel: a', 2025); return m.lines[0].time.getFullYear(); })(),
+        rollNone: (() => { const now = new Date(); const later = (now.getMonth() + 1) % 12; const name = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][later];
+          const m = S.parseJournal(name + ' 01 08:00:00 host kernel: a'); return { notFuture: m.lines[0].time.getTime() <= now.getTime(), year: m.lines[0].time.getFullYear(), now: now.getFullYear(), wrap: later === 0 }; })(),
+        // Disks: the user name in /media/<user>/ and /run/media/<user>/ mounts is collected for the anonymiser
+        dUnames: dU.names,
+        runMedia: S.parseDisks('Filesystem      Size  Used Avail Use% Mounted on\n/dev/sdc1        30G   12G   18G  40% /run/media/jdoe/USB STICK\n').names,
+        dfT: S.parseDisks('Filesystem     Type      Size  Used Avail Use% Mounted on\ntmpfs          tmpfs     1.6G  2.4M  1.6G   1% /run\n/dev/nvme0n1p2 ext4      468G  410G   35G  93% /\n/dev/sr0       iso9660   5.7G  5.7G     0 100% /media/jdoe/Ubuntu 24.04 LTS amd64\n'),
+        dfI: S.parseDisks('Filesystem       Inodes   IUsed    IFree IUse% Mounted on\n/dev/nvme0n1p2 31227904 1052311 30175593    4% /\n'),
+        dfPrompt: S.parseDisks('jdoe@tuxbox:~% LC_ALL=C df -h\nScanning 5% done here\nFilesystem      Size  Used Avail Use% Mounted on\n/dev/sda1        50G   20G   30G  40% /\n'),
+        dfPromptOnly: S.parseDisks('jdoe@tuxbox:~% df -h\n'),
+        // One 2 MB line full of spaces must not stall any parser (no quadratic regex on a whole line)
+        oneLine: (() => { const line = 'x '.repeat(1000000); const out = {}; const t1 = performance.now();
+          out.system = S.parseLinuxSystem(line).error; out.journal = S.parseJournal(line).error; out.boots = S.parseBoots(' 0 ' + 'f'.repeat(32) + ' ' + line).error;
+          out.upower = S.parseUpower(' native-path ' + ' \n'.repeat(1000000)).present; out.disks = S.parseDisks(line).error;
+          out.ms = performance.now() - t1; return out; })()
       };
     }, t);
     check('linux: parsers are loaded', r !== null);
@@ -788,8 +807,19 @@ try {
       check('linux disks: Fedora worst 96 %, /dev/sda3 once with / and /home, 1 disk', r.dF.worst === 96 && r.dF.sda3.length === 1 && r.dF.sda3[0].join(',') === '/,/home' && r.dF.disks.join(',') === 'sda', r.dF);
       check('linux disks: Portuguese df header -> unsupported language', r.dPt.unsupportedLanguage === true, r.dPt);
       check('linux disks: random text -> not_disks', r.notDisks.error === 'not_disks', r.notDisks);
-      check('journal: 2 MB parses in < 1 s and reads <= 20,000 lines', r.bigJ.truncated === true && r.bigJ.total > 0 && r.bigJ.total <= 20000 && r.bigMs < 1000, [Math.round(r.bigMs), r.bigJ]);
+      check('journal: 2 MB parses in < 1 s and reads <= 20,000 lines', r.bigJ.cut === true && r.bigJ.total > 0 && r.bigJ.total <= 20000 && r.bigMs < 1000, [Math.round(r.bigMs), r.bigJ]);
       check('linux journal: 30,000 short lines -> exactly 20,000 read, truncated', r.manyJ.truncated === true && r.manyJ.total === 20000, r.manyJ);
+      check('linux journal: exactly 20,000 lines and nothing left -> not truncated', r.capExact.truncated === false && r.capExact.total === 20000, r.capExact);
+      check('linux journal: December lines in a January report -> previous year', r.rollDate.join(',') === '2026,2027', r.rollDate);
+      check('linux journal: past-year number hint keeps December in that year', r.rollPastYear === 2025, r.rollPastYear);
+      check('linux journal: no hint -> a month after today is dated last year, never in the future', r.rollNone.notFuture && r.rollNone.year === r.rollNone.now - (r.rollNone.wrap ? 0 : 1), r.rollNone);
+      check('linux disks: user from /media/<user>/ mount is a name', Array.isArray(r.dUnames) && r.dUnames.includes('jdoe'), r.dUnames);
+      check('linux disks: user from /run/media/<user>/ mount is a name', Array.isArray(r.runMedia) && r.runMedia.includes('jdoe'), r.runMedia);
+      check('linux disks: df -hT is English, optical /dev/sr0 ignored', !r.dfT.unsupportedLanguage && r.dfT.worstPct === 93 && r.dfT.filesystems.length === 1 && r.dfT.filesystems[0].sizeText === '468G' && r.dfT.names.includes('jdoe'), r.dfT);
+      check('linux disks: df -i is English (inode use)', !r.dfI.unsupportedLanguage && r.dfI.inodes === true && r.dfI.worstPct === 4, r.dfI);
+      check('linux disks: prompt and progress lines before the header are not a foreign header', !r.dfPrompt.unsupportedLanguage && r.dfPrompt.worstPct === 40, r.dfPrompt);
+      check('linux disks: a prompt line alone -> not_disks', r.dfPromptOnly.error === 'not_disks', r.dfPromptOnly);
+      check('linux: one 2 MB line of spaces is handled fast by every parser', r.oneLine.ms < 1000 && r.oneLine.system === 'not_system' && r.oneLine.journal === 'not_journal' && r.oneLine.disks === 'not_disks', [Math.round(r.oneLine.ms), r.oneLine]);
     }
     await context.close();
   }
