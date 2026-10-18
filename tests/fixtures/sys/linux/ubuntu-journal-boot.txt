@@ -1,0 +1,25 @@
+Oct 18 08:59:58 tuxbox-jdoe kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.PCI0.GPP0.SWUS], AE_NOT_FOUND (20230628/dswload2-162)
+Oct 18 08:59:58 tuxbox-jdoe kernel: ACPI Error: AE_NOT_FOUND, During name lookup/catalog (20230628/psobject-220)
+Oct 18 08:59:58 tuxbox-jdoe kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.PCI0.GPP0.SWUS.SWDS], AE_NOT_FOUND (20230628/dswload2-162)
+Oct 18 08:59:58 tuxbox-jdoe kernel: ACPI Error: AE_NOT_FOUND, During name lookup/catalog (20230628/psobject-220)
+Oct 18 08:59:59 tuxbox-jdoe kernel: usb 1-4: device descriptor read/64, error -71
+Oct 18 09:00:01 tuxbox-jdoe kernel: Bluetooth: hci0: Malformed MSFT vendor event: 0x02
+Oct 18 09:00:03 tuxbox-jdoe systemd[1]: Failed to start backup-jdoe.service - Nightly backup for jdoe.
+Oct 18 09:00:04 tuxbox-jdoe gdm-password][2011]: gkr-pam: unable to locate daemon control file
+Oct 18 09:00:09 tuxbox-jdoe wpa_supplicant[1012]: wlp2s0: CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid="JDoe-Home-5G" auth_failures=1 duration=10 reason=CONN_FAILED
+Oct 18 09:00:12 tuxbox-jdoe NetworkManager[987]: <error> [1729238412.5521] dhcp4 (wlp2s0): error -113 dispatching events for 192.0.2.44 via 02:42:ac:11:00:02
+Oct 18 09:00:14 tuxbox-jdoe NetworkManager[987]: <error> [1729238414.0012] dhcp6 (wlp2s0): could not renew lease 2001:db8::1f
+Oct 18 09:02:41 tuxbox-jdoe gnome-shell[2143]: Failed to set CRTC gamma: Permission denied
+Oct 18 09:10:05 tuxbox-jdoe gnome-shell[2143]: Failed to set CRTC gamma: Permission denied
+Oct 18 09:21:17 tuxbox-jdoe gnome-shell[2143]: JS ERROR: TypeError: this._actor is null
+Oct 18 09:33:52 tuxbox-jdoe gnome-shell[2143]: Failed to set CRTC gamma: Permission denied
+Oct 18 09:40:10 tuxbox-jdoe gnome-shell[2143]: JS ERROR: TypeError: this._actor is null
+Oct 18 09:15:30 tuxbox-jdoe kernel: amdgpu 0000:05:00.0: amdgpu: [drm] *ERROR* ring gfx_0.0.0 timeout, signaled seq=88123, emitted seq=88125
+Oct 18 09:15:41 tuxbox-jdoe kernel: amdgpu 0000:05:00.0: amdgpu: [drm] *ERROR* ring gfx_0.0.0 timeout, signaled seq=88140, emitted seq=88142
+Oct 18 09:31:07 tuxbox-jdoe kernel: Out of memory: Killed process 48211 (chrome) total-vm:24812340kB, anon-rss:6102344kB, file-rss:0kB, shmem-rss:1024kB, UID:1000 pgtables:15640kB oom_score_adj:300
+Oct 18 09:31:52 tuxbox-jdoe systemd-coredump[48377]: Process 48290 (firefox) of user 1000 dumped core.
+Oct 18 09:47:20 tuxbox-jdoe systemd-coredump[50112]: Process 50099 (firefox) of user 1000 dumped core.
+Oct 18 10:02:05 tuxbox-jdoe pkexec[4421]: jdoe: Error executing command as another user: Not authorized [USER=root] [TTY=unknown] [CWD=/home/jdoe] [COMMAND=/usr/lib/update-notifier/package-system-locked]
+Oct 18 10:05:44 tuxbox-jdoe evolution-alarm[3301]: Failed to refresh calendar for jdoe@example.com: Cannot connect
+Oct 18 10:06:00 tuxbox-jdoe kernel: usb 3-2: SerialNumber read failed for device 0123456789ABCDEF
+Oct 18 10:06:01 tuxbox-jdoe systemd[1]: dev-disk-by\x2duuid-3f1c2a9e\x2d8b7d\x2d4e6f\x2d9a0b\x2d1c2d3e4f5a6b.device: Job dev-disk-by\x2duuid-3f1c2a9e\x2d8b7d\x2d4e6f\x2d9a0b\x2d1c2d3e4f5a6b.device/start timed out.

@@ -1,0 +1,16 @@
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       237G  226G  9.6G  96% /
+devtmpfs        4.0M     0  4.0M   0% /dev
+tmpfs           7.8G   48M  7.8G   1% /dev/shm
+tmpfs           3.1G  1.9M  3.1G   1% /run
+tmpfs           7.8G   36K  7.8G   1% /tmp
+/dev/sda3       237G  226G  9.6G  96% /home
+/dev/sda2       974M  301M  606M  34% /boot
+/dev/sda1       599M   20M  580M   4% /boot/efi
+tmpfs           1.6G  160K  1.6G   1% /run/user/1000
+NAME     SIZE TYPE MOUNTPOINT
+sda    238.5G disk 
+├─sda1   600M part /boot/efi
+├─sda2     1G part /boot
+└─sda3 236.9G part /home
+zram0      8G disk [SWAP]

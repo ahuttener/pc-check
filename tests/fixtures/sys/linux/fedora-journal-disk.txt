@@ -1,0 +1,15 @@
+Oct 17 21:14:02 fedora-ws01.home.lan kernel: ata1.00: exception Emask 0x0 SAct 0x40000 SErr 0x0 action 0x0
+Oct 17 21:14:02 fedora-ws01.home.lan kernel: ata1.00: failed command: READ FPDMA QUEUED
+Oct 17 21:14:02 fedora-ws01.home.lan kernel: ata1.00: error: { UNC }
+Oct 17 21:14:02 fedora-ws01.home.lan kernel: I/O error, dev sda, sector 488397167 op 0x0:(READ) flags 0x80700 phys_seg 1 prio class 2
+Oct 17 21:14:02 fedora-ws01.home.lan kernel: Buffer I/O error on dev sda3, logical block 61049389, async page read
+Oct 17 21:14:09 fedora-ws01.home.lan kernel: BTRFS error (device sda3): bdev /dev/sda3 errs: wr 0, rd 1, flush 0, corrupt 0, gen 0
+Oct 17 21:14:09 fedora-ws01.home.lan kernel: BTRFS: error (device sda3) in btrfs_commit_transaction:2494: errno=-5 IO failure (Error while writing out transaction)
+Oct 17 21:14:09 fedora-ws01.home.lan kernel: BTRFS info (device sda3: state E): forced readonly
+Oct 17 21:15:40 fedora-ws01.home.lan kernel: mce: [Hardware Error]: Machine check events logged
+Oct 17 21:16:02 fedora-ws01.home.lan smartd[812]: Device: /dev/sda [SAT], 8 Currently unreadable (pending) sectors
+Oct 17 21:16:02 fedora-ws01.home.lan smartd[812]: Device: /dev/sda [SAT], 8 Offline uncorrectable sectors
+Oct 17 21:16:30 fedora-ws01.home.lan abrt-notification[3120]: Process 3077 (nautilus) crashed in g_type_check_instance_cast()
+Oct 17 21:20:11 fedora-ws01.home.lan systemd-coredump[3302]: Process 3260 (nautilus) of user 1000 dumped core.
+Oct 17 21:22:45 fedora-ws01.home.lan sshd[3411]: error: kex_exchange_identification: Connection closed by remote host 198.51.100.7 port 51522
+Oct 17 21:23:01 fedora-ws01.home.lan NetworkManager[901]: <error> [1729196581.0001] dhcp6 (enp3s0): could not renew lease 2001:db8::1f from 52:54:00:ab:cd:ef

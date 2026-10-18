@@ -1,0 +1,16 @@
+Linux fedora-ws01.home.lan 6.10.12-100.fc40.x86_64 #1 SMP PREEMPT_DYNAMIC Thu Oct  3 17:07:43 UTC 2024 x86_64 GNU/Linux
+NAME="Fedora Linux"
+VERSION="40 (Workstation Edition)"
+ID=fedora
+VERSION_ID=40
+VERSION_CODENAME=""
+PLATFORM_ID="platform:f40"
+PRETTY_NAME="Fedora Linux 40 (Workstation Edition)"
+ANSI_COLOR="0;38;2;60;110;180"
+LOGO=fedora-logo-icon
+CPE_NAME="cpe:/o:fedoraproject:fedora:40"
+DEFAULT_HOSTNAME="fedora"
+HOME_URL="https://fedoraproject.org/"
+SUPPORT_END=2025-05-13
+VARIANT="Workstation Edition"
+VARIANT_ID=workstation
