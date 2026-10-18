@@ -971,7 +971,7 @@
     var str = function (v) { return v === null || v === undefined ? null : cap(anonymise(v, names)); };
     var kernel = str(e.kernel);
     var list = function (items) {
-      return (items || []).map(function (a) { return { name: str(a.name), count: a.count }; }).sort(byCountThenName).slice(0, 3);
+      return (items || []).map(function (a) { return { name: str(a.name), count: Math.min(a.count, 100000) }; }).sort(byCountThenName).slice(0, 3);
     };
     return {
       platform: 'linux',

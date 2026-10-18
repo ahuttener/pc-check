@@ -1257,7 +1257,7 @@ try {
       check('linux ui: step messages carry no planted identifier', leaks(reads.join('\n')).length === 0, leaks(reads.join('\n')));
       check('linux ui: Analyze sends nothing (outbound log unchanged)', (await page.locator('#ledger-list li').count()) === before);
       check('linux ui: Analyze makes no outside requests', seen.external.length === 0, seen.external);
-      check('linux ui: no "Explain with AI" for Linux until its prompt exists', (await page.locator('#sys-ai-open').count()) === 0);
+      check('linux ui: "Explain with AI" offered for Linux', (await page.locator('#sys-ai-open').count()) === 1);
       await page.locator('#system').screenshot({ path: path.join(shots, 'system-linux-desktop.png') }).catch(() => {});
 
       await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
@@ -1484,6 +1484,13 @@ try {
         check('pdf: includes the AI explanation as text', report.includes('Second paragraph: update the drivers.') && report.includes('<b>bold</b>') && (await page.locator('#report b, #report img:not([src*="emblem.png"])').count()) === 0);
         check('pdf: no planted personal data', !PERSONAL.test(report), report.match(/.{0,20}(PC-NAME|DESKTOP-JD123|JohnDoe).{0,20}/));
         check('pdf: footer no longer says nothing was sent', !/nothing was sent/i.test(report), report.slice(-300));
+        check('pdf: heading says "System report (Windows)"', report.includes('System report (Windows)') && !report.includes('System report (Linux)'), report.slice(0, 300));
+        await page.click('#sys-os-linux', { timeout: 2000 }).catch(() => {});
+        check('pdf: Windows report not offered while Linux is selected', !(await page.locator('#pdf').isVisible().catch(() => true)));
+        await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+        check('pdf: no Windows system section while Linux is selected', !(await page.locator('#report').innerText()).includes('System report'));
+        await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
+        check('pdf: Windows report offered again with Windows selected', await page.locator('#pdf').isVisible().catch(() => false));
         await context.close();
       }
     }
@@ -1510,12 +1517,112 @@ try {
       check('ai: errors cause no page error', seen.errors.length === 0, seen.errors);
       await context.close();
     }
+    // Linux: the same flow with the Linux summary; the PDF follows the selected system
+    const LXF = (f) => fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', 'linux', f + '.txt'), 'utf8');
+    const LINUX_UA = 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0';
+    const plantedL = JSON.parse(fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', 'linux', 'PLANTED.json'), 'utf8'));
+    const PLANTED_L = [].concat(...Object.values(plantedL)).map((p) => String(p).toLowerCase());
+    const leaksL = (s) => PLANTED_L.filter((p) => s.toLowerCase().includes(p)).concat(/\/home\//.test(s) ? ['/home/'] : []);
+    const UBUNTU_TEXTS = { system: LXF('ubuntu-system'), journal: LXF('ubuntu-journal-boot'), boots: LXF('boots-ubuntu'), battery: LXF('upower-laptop'), disks: LXF('df-ubuntu') };
+    async function linuxAnalyzed(engine = browser) {
+      const made = await newPage('ok', { userAgent: LINUX_UA, viewport: { width: 1280, height: 900 } }, engine);
+      const { page } = made;
+      await page.waitForFunction(() => (document.getElementById('sys-banner') || {}).textContent, null, { timeout: 5000 }).catch(() => {});
+      await page.evaluate((map) => {
+        Object.keys(map).forEach((k) => { const ta = document.getElementById('sys-paste-' + k); if (ta) ta.value = map[k]; });
+      }, UBUNTU_TEXTS);
+      await page.click('#sys-linux-analyze', { timeout: 3000 });
+      await page.waitForSelector('#sys-results:not([hidden])', { timeout: 10000 });
+      return made;
+    }
+    {
+      let made;
+      try { made = await linuxAnalyzed(); } catch (e) { made = null; }
+      check('ai linux: setup (Ubuntu outputs analyzed)', !!made);
+      if (made) {
+        const { page, context, seen } = made;
+        const mock = { mode: 'ok', delay: 200 };
+        await mockExplain(page, mock);
+        check('ai linux: "Explain with AI" button appears after Analyze', await page.locator('#sys-ai-open').isVisible().catch(() => false));
+        check('ai linux: disclosure not shown before the click', !(await page.locator('#sys-ai-disclosure').isVisible().catch(() => false)));
+        const before = await page.locator('#ledger-list li').count();
+        await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
+        const disc = await page.locator('#sys-ai-disclosure').innerText({ timeout: 2000 }).catch(() => '');
+        check('ai linux: exact disclosure shown before sending', disc.trim() === DISCLOSURE, disc);
+        const shownText = await page.locator('#sys-ai-summary').innerText({ timeout: 2000 }).catch(() => '');
+        let shown = null;
+        try { shown = JSON.parse(shownText); } catch (e) { /* stays null */ }
+        check('ai linux: the summary shown is the Linux shape', shown !== null && shown.platform === 'linux' && shown.score === 25 && shown.distro === 'Ubuntu 24.04.1 LTS', shownText.slice(0, 200));
+        check('ai linux: nothing sent and nothing logged before Send', mock.bodies.length === 0 && (await page.locator('#ledger-list li').count()) === before);
+        await page.click('#sys-ai-send', { timeout: 2000 }).catch(() => {});
+        await page.waitForSelector('#sys-ai-text p', { timeout: 5000 }).catch(() => {});
+        check('ai linux: exactly one request', mock.bodies.length === 1, mock.bodies.length);
+        let body = null;
+        try { body = JSON.parse(mock.bodies[0]); } catch (e) { /* stays null */ }
+        check('ai linux: request body is exactly {summary} with platform "linux"', body !== null && JSON.stringify(Object.keys(body)) === '["summary"]' && body.summary.platform === 'linux', mock.bodies[0]);
+        check('ai linux: request body equals the summary shown', body !== null && JSON.stringify(body.summary) === JSON.stringify(shown), [mock.bodies[0], shownText]);
+        check('ai linux: no planted identifier in the request or the summary shown', !!mock.bodies[0] && leaksL(mock.bodies[0]).length === 0 && leaksL(shownText).length === 0, leaksL(String(mock.bodies[0])));
+        const ledger = await page.locator('#ledger-list').innerText();
+        check('ai linux: outbound log gains one entry', (await page.locator('#ledger-list li').count()) === before + 1 && /anonymised summary/.test(ledger), ledger.slice(-300));
+        const paras = await page.locator('#sys-ai-text p').allInnerTexts();
+        check('ai linux: explanation renders as text paragraphs', paras.length === 2 && paras[0].includes('Your PC is mostly fine') && paras[1].includes('Second paragraph'), paras);
+        check('ai linux: model output never parsed as HTML', paras.join(' ').includes('<b>bold</b>') && (await page.locator('#sys-ai-text b, #sys-ai-text img').count()) === 0 && !(await page.evaluate(() => window.__xss)));
+
+        check('pdf linux: PDF button available', await page.locator('#pdf').isVisible().catch(() => false));
+        await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+        const report = await page.locator('#report').innerText();
+        check('pdf linux: heading says "System report (Linux)"', report.includes('System report (Linux)') && !report.includes('System report (Windows)'), report.slice(0, 300));
+        check('pdf linux: score 25 / 100 and Ubuntu 24.04.1 LTS', /\b25 \/ 100/.test(report) && report.includes('Ubuntu 24.04.1 LTS'), report.slice(0, 600));
+        check('pdf linux: "Logs from" date line', /Logs from 2026-10-18/.test(report), report.slice(0, 400));
+        check('pdf linux: includes the AI explanation as text', report.includes('Second paragraph: update the drivers.') && (await page.locator('#report b, #report img:not([src*="emblem.png"])').count()) === 0);
+        check('pdf linux: no planted identifier, no /home/, no raw journal line', leaksL(report).length === 0 && !/CRTC gamma/.test(report), leaksL(report));
+        check('pdf linux: footer says a summary was sent', !/nothing was sent/i.test(report), report.slice(-300));
+
+        await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
+        check('pdf linux: Linux report not offered while Windows is selected', !(await page.locator('#pdf').isVisible().catch(() => true)));
+        await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+        check('pdf linux: no Linux system section while Windows is selected', !(await page.locator('#report').innerText()).includes('System report'));
+        await page.click('#sys-os-linux', { timeout: 2000 }).catch(() => {});
+        check('pdf linux: Linux report offered again with Linux selected', await page.locator('#pdf').isVisible().catch(() => false));
+        check('ai linux: no page errors', seen.errors.length === 0, seen.errors);
+        check('ai linux: no outside requests', seen.external.length === 0, seen.external);
+        await context.close();
+      }
+    }
+    {
+      // Linux errors: the same friendly messages as Windows
+      let made;
+      try { made = await linuxAnalyzed(); } catch (e) { made = null; }
+      if (made) {
+        const { page, context, seen } = made;
+        const mock = { mode: 429 };
+        await mockExplain(page, mock);
+        await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
+        const results = {};
+        for (const mode of [429, 503, 502]) {
+          mock.mode = mode;
+          await page.click('#sys-ai-send', { timeout: 3000 }).catch(() => {});
+          await waitErr(page);
+          results[mode] = await errText(page);
+          await page.waitForFunction(() => { const b = document.getElementById('sys-ai-send'); return b && !b.disabled; }, null, { timeout: 3000 }).catch(() => {});
+        }
+        check('ai linux: 429 says "limit"', /limit/i.test(results[429]), results[429]);
+        check('ai linux: 503 says not available', /not available/i.test(results[503]) && results[503] !== results[429], results[503]);
+        check('ai linux: 502 has its own friendly message', !!results[502] && results[502] !== results[503] && results[502] !== results[429], results[502]);
+        check('ai linux: every attempt sent with platform linux, no explanation shown', mock.bodies.length === 3 && mock.bodies.every((b) => JSON.parse(b).summary.platform === 'linux') && (await page.locator('#sys-ai-text p').count()) === 0, mock.bodies.length);
+        check('ai linux: errors cause no page error', seen.errors.length === 0, seen.errors);
+        await context.close();
+      } else {
+        check('ai linux: errors setup', false);
+      }
+    }
+
     // Not mocked: the real local endpoint (php -S, no key) must get past Content-Type, Origin and the summary
     // whitelist and stop at "not configured" (503). The paid upstream is never reached.
-    for (const [label, engineName] of [['Chromium', 'chromium'], ['WebKit', 'webkit']]) {
+    for (const [label, engineName] of [['Chromium', 'chromium'], ['WebKit', 'webkit'], ['Chromium, Linux', 'chromium'], ['WebKit, Linux', 'webkit']]) {
       const eng = engineName === 'webkit' ? await webkit.launch() : browser;
       try {
-        const { page, context, seen } = await analyzed({}, eng);
+        const { page, context, seen } = /Linux/.test(label) ? await linuxAnalyzed(eng) : await analyzed({}, eng);
         await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
         const res = page.waitForResponse(/\/api\/explain\.php/, { timeout: 8000 }).catch(() => null);
         await page.click('#sys-ai-send', { timeout: 2000 }).catch(() => {});

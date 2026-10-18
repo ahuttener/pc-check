@@ -291,7 +291,7 @@
       sysAiUpstream: 'The AI service did not answer. Try again in a minute.',
       sysAiFail: 'The explanation could not be fetched. Check your connection and try again.',
       lpExplain: 'AI explanation of the system report (this site, passed to Claude by Anthropic)',
-      reportSysTitle: 'System report',
+      reportSysTitle: function (platform) { return 'System report (' + (platform === 'linux' ? 'Linux' : 'Windows') + ')'; },
       reportSysScore: function (n) { return 'Health score: ' + n + ' / 100'; },
       reportAiTitle: 'AI explanation',
       reportFootAi: 'Generated locally in your browser. Only what is listed under “What left your device” was sent, including the anonymised system summary for the AI explanation. cybersecinfo.com/pccheck',
@@ -1796,6 +1796,7 @@
     state.sys.selected = os;
     renderSysOs();
     renderSysResults();
+    renderPdfButton();
   }
 
   function renderSysBanner() {
@@ -1905,8 +1906,6 @@
       root.appendChild(tiles);
     }
 
-    // The AI explanation is offered for Windows only until the server has a Linux prompt.
-    if (e.platform === 'linux') return;
     var ai = el('div', 'sys-ai');
     ai.id = 'sys-ai';
     root.appendChild(ai);
@@ -1985,7 +1984,7 @@
 
   function openSysAi() {
     var e = state.sys.evaluation;
-    if (!e || !window.PCSys || e.platform === 'linux') return;
+    if (!e || !window.PCSys) return;
     state.sys.ai = blankAi();
     state.sys.ai.open = true;
     state.sys.ai.summary = window.PCSys.buildSummary(e);
@@ -2116,8 +2115,14 @@
     return !!s && s !== 'idle' && s !== 'running';
   }
 
+  // The system report in the PDF is the one shown: only while its system's button is selected.
+  function shownSysEval() {
+    var e = state.sys.evaluation;
+    return e && e.platform === state.sys.selected ? e : null;
+  }
+
   function renderPdfButton() {
-    var show = REPORT_ORDER.some(hasResult) || !!state.sys.evaluation;
+    var show = REPORT_ORDER.some(hasResult) || !!shownSysEval();
     if ($('#pdf')) $('#pdf').hidden = !show;
     if ($('#pdf-hint')) $('#pdf-hint').hidden = !show;
   }
@@ -2159,12 +2164,12 @@
       root.appendChild(box);
     });
 
-    var sysEval = state.sys.evaluation;
+    var sysEval = shownSysEval();
     if (sysEval) {
       var sb = el('section', 'report-check report-sys');
       sb.setAttribute('data-status', bandOf(sysEval.score));
       var sh = el('h2');
-      sh.appendChild(el('span', null, t('reportSysTitle')));
+      sh.appendChild(el('span', null, t('reportSysTitle', sysEval.platform)));
       sh.appendChild(el('span', 'report-pill', t('reportSysScore', sysEval.score)));
       sb.appendChild(sh);
       var sysDate = isoDate(sysEval.reportDate);
