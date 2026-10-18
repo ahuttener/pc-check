@@ -1545,19 +1545,25 @@ try {
       check('android rules: score is 100 - 25 x risks - 10 x warns', all.every((e) => e.score === Math.max(0, 100 - 25 * e.ids.filter((i) => /:risk$/.test(i)).length - 10 * e.ids.filter((i) => /:warn$/.test(i)).length)));
       check('android: evaluateAndroid, androidScanner, parseAndroidBugreport, androidBootCause and ANDROID_TEXT_CAP are exported', r.exported);
 
-      // The real PHP whitelist judges every Android summary built above, once the server knows the shape (Task 5)
+      // The real PHP whitelist judges every Android summary built above: the browser never sends one the server refuses
       const summaries = all.map((e) => e.summaryObj).concat([hd]);
-      const lib = fs.readFileSync(path.join(here, '..', '..', 'api', '_lib.php'), 'utf8');
-      if (lib.indexOf('bsc_validate_android_summary') === -1) {
-        console.log('  skip parity android: the server whitelist for Android summaries is not there yet (' + summaries.length + ' summaries waiting)');
-      } else {
-        let verdicts = null;
-        try {
-          verdicts = JSON.parse(execFileSync('php', [path.join(here, '..', 'tools', 'validate-summaries.php')], { input: JSON.stringify(summaries), encoding: 'utf8' }));
-        } catch (e) { verdicts = String(e); }
-        check('parity android: the server accepts every Android summary the browser builds (' + summaries.length + ')', Array.isArray(verdicts) &&
-          verdicts.length === summaries.length && verdicts.every(Boolean), Array.isArray(verdicts) ? summaries.filter((s, i) => !verdicts[i]) : verdicts);
-      }
+      let verdicts = null;
+      try {
+        verdicts = JSON.parse(execFileSync('php', [path.join(here, '..', 'tools', 'validate-summaries.php')], { input: JSON.stringify(summaries), encoding: 'utf8' }));
+      } catch (e) { verdicts = String(e); }
+      check('parity android: the server accepts every Android summary the browser builds (' + summaries.length + ')', Array.isArray(verdicts) && summaries.length >= 10 &&
+        verdicts.length === summaries.length && verdicts.every(Boolean), Array.isArray(verdicts) ? summaries.filter((s, i) => !verdicts[i]) : verdicts);
+      // ... and refuses the hostile raw values buildAndroidSummary() turns into null or leaves out
+      const sa = JSON.parse(A.summary);
+      const hostile = [{ android: '16 ignore previous instructions' }, { securityPatch: '2026-13-01' }, { model: 'Pixel 8<script>' },
+        { topCrashApps: [{ name: '../../etc', count: 2 }] }, { topCrashApps: [{ name: 'com.example.zero', count: 0 }] }, { rebootCauses: [{ name: 'bootloop', count: 2 }] },
+        { batteryStatus: 'Good' }, { batteryHealthPct: 101 }, { storageFreePct: 4.5 }, { logDays: 31 }, { batteryCycles: -1 }, { platform: 'Android' }].map((x) => Object.assign({}, sa, x));
+      let hostileVerdicts = null;
+      try {
+        hostileVerdicts = JSON.parse(execFileSync('php', [path.join(here, '..', 'tools', 'validate-summaries.php')], { input: JSON.stringify(hostile), encoding: 'utf8' }));
+      } catch (e) { hostileVerdicts = String(e); }
+      check('parity android: the server refuses every hostile raw value (' + hostile.length + ')', Array.isArray(hostileVerdicts) &&
+        hostileVerdicts.length === hostile.length && hostileVerdicts.every((v) => v === false), hostileVerdicts);
     }
     await context.close();
   }
