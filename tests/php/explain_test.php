@@ -18,11 +18,11 @@ function t($name, $cond)
 
 // Exactly what PCSys.buildSummary() returns for the fixtures in tests/fixtures/sys
 // (reliability.xml + battery-report.html + msinfo32-head.txt, evaluated at 2026-10-18T09:00:00Z).
-$real = '{"os":"Microsoft Windows 11 Home","model":"Predator PTN16-51","ramGb":32,"score":50,'
-    . '"findings":[{"id":"shutdowns","severity":"warn"},{"id":"hardware","severity":"warn"},{"id":"crashes","severity":"warn"},'
+$real = '{"os":"Microsoft Windows 11 Home","model":"Predator PTN16-51","ramGb":32,"score":60,'
+    . '"findings":[{"id":"unclean_shutdowns","severity":"info"},{"id":"hardware","severity":"warn"},{"id":"crashes","severity":"warn"},'
     . '{"id":"stability","severity":"warn"},{"id":"updates","severity":"warn"}],'
     . '"topCrashApps":[{"name":"Java Update Scheduler","count":25},{"name":"AcerRegistrationBackGroundTask","count":25},'
-    . '{"name":"MiracastPowerManager.exe","count":25}],"batteryHealthPct":90.4,"shutdowns30d":1,"hardwareErrors30d":1,"stabilityNow":1.97}';
+    . '{"name":"MiracastPowerManager.exe","count":25}],"batteryHealthPct":90.4,"shutdowns30d":0,"hardwareErrors30d":1,"stabilityNow":1.97}';
 $valid = json_decode($real, true);
 
 $out = bsc_validate_summary($valid);

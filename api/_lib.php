@@ -457,7 +457,7 @@ function bsc_explain_load_config($__bscFile)
 // AI summary whitelist: exactly the shape of PCSys.buildSummary() in assets/sysreport.js
 // ---------------------------------------------------------------------------
 
-define('BSC_SUMMARY_FINDING_IDS', 'shutdowns,hardware,crashes,stability,updates,old_report,battery,windows10,devices');
+define('BSC_SUMMARY_FINDING_IDS', 'shutdowns,unclean_shutdowns,hardware,crashes,stability,updates,old_report,battery,windows10,devices');
 define('BSC_SUMMARY_SEVERITIES', 'risk,warn,info');
 define('BSC_SUMMARY_LINUX_FINDING_IDS', 'disk_errors,readonly_fs,hardware,driver_errors,repeated_errors,crashes,oom,prev_boot_crash,disk_full,battery,eol_release,journal_partial');
 define('BSC_SUMMARY_MAC_FINDING_IDS', 'panics,crashes,disk_smart,disk_full,battery,old_macos,old_report');

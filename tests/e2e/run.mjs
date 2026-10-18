@@ -1516,6 +1516,9 @@ try {
         real: { score: real.score, ids: ids(real), text: JSON.stringify(real.findings), formula: 100 - 25 * real.findings.filter((f) => f.severity === 'risk').length - 10 * real.findings.filter((f) => f.severity === 'warn').length },
         three: ids(S.evaluateWindows({ reliability: rel([ev(1, 'Shut down unexpectedly'), ev(5, 'Shut down unexpectedly'), ev(9, 'Shut down unexpectedly'), ev(40, 'Shut down unexpectedly')]) }, now)),
         one: ids(S.evaluateWindows({ reliability: rel([ev(3, 'Shut down unexpectedly')]) }, now)),
+        uncleanOne: (() => { const e = S.evaluateWindows({ reliability: rel([ev(3, 'Windows was not properly shut down')]) }, now); return { ids: ids(e), score: e.score, f: e.findings[0], shutdowns30d: e.shutdowns30d, summary: S.buildSummary(e) }; })(),
+        uncleanThree: (() => { const e = S.evaluateWindows({ reliability: rel([ev(1, 'Windows was not properly shut down'), ev(4, 'Windows was not properly shut down'), ev(8, 'Windows was not properly shut down'), ev(45, 'Windows was not properly shut down')]) }, now); return { ids: ids(e), score: e.score, summary: S.buildSummary(e) }; })(),
+        mixed: (() => { const e = S.evaluateWindows({ reliability: rel([ev(2, 'Shut down unexpectedly'), ev(3, 'Windows was not properly shut down')]) }, now); return { ids: ids(e), score: e.score, shutdowns30d: e.shutdowns30d }; })(),
         old: ids(S.evaluateWindows({ reliability: rel([ev(3, 'Shut down unexpectedly')]) }, new Date('2026-12-30T00:00:00Z'))),
         bat70: ids(S.evaluateWindows({ battery: { designMWh: 100, fullMWh: 70, cycles: 300, healthPct: 70 } }, now)),
         bat55: ids(S.evaluateWindows({ battery: { designMWh: 100, fullMWh: 55, cycles: 900, healthPct: 55 } }, now)),
@@ -1556,6 +1559,17 @@ try {
       check('score follows the formula', r.real.score === Math.max(0, r.real.formula) && r.real.score < 80, [r.real.score, r.real.formula]);
       check('3 unexpected shutdowns in 30 days -> risk', r.three.includes('shutdowns:risk'), r.three);
       check('1 unexpected shutdown -> warn', r.one.includes('shutdowns:warn'), r.one);
+      const uo = r.uncleanOne;
+      check('1 unfinished shutdown ("Windows was not properly shut down") -> info only, score 100, not counted as unexpected', uo.ids.join(',') === 'unclean_shutdowns:info' && uo.score === 100 && uo.shutdowns30d === 0, uo);
+      check('unfinished shutdown texts', uo.f.title === "Windows didn't finish shutting down 1 time in 30 days" &&
+        uo.f.detail === "A shutdown or restart didn't complete \u2014 often because an update or app hung while shutting down, the battery ran out, or the PC was switched off before it finished. This is usually harmless on its own." &&
+        uo.f.fix === "If it happens again, let shutdowns finish (wait for the screen to go dark), keep Windows Update current, and make sure the battery isn't running out. If it keeps happening, check for app or driver updates." &&
+        !/blue screen|power loss/i.test(uo.f.title + uo.f.detail + uo.f.fix), uo.f);
+      check('3 unfinished shutdowns in 30 days -> warn, score 90 (one older than 30 days ignored)', r.uncleanThree.ids.join(',') === 'unclean_shutdowns:warn' && r.uncleanThree.score === 90, r.uncleanThree);
+      check('an unexpected and an unfinished shutdown are counted apart', r.mixed.ids.join(',') === 'shutdowns:warn,unclean_shutdowns:info' && r.mixed.score === 90 && r.mixed.shutdowns30d === 1, r.mixed);
+      let uncleanVerdicts = null;
+      try { uncleanVerdicts = JSON.parse(execFileSync('php', [path.join(here, '..', 'tools', 'validate-summaries.php')], { input: JSON.stringify([uo.summary, r.uncleanThree.summary]), encoding: 'utf8' })); } catch (e) { uncleanVerdicts = String(e); }
+      check('parity windows: the server accepts the unclean_shutdowns finding (info and warn)', JSON.stringify(uncleanVerdicts) === '[true,true]', uncleanVerdicts);
       check('report older than 30 days adds an info note', r.old.includes('old_report:info'), r.old);
       check('battery 70 % -> warn, 55 % -> risk', r.bat70.includes('battery:warn') && r.bat55.includes('battery:risk'), [r.bat70, r.bat55]);
       check('Windows 10 -> warn', r.win10.includes('windows10:warn'), r.win10);
@@ -1744,11 +1758,11 @@ try {
       check('linux sources: repeated_errors names only the program, not the users', /NetworkManager \(6 errors\)/.test(y.repeated) && !/\b(al|mjones|kpat)\b/i.test(y.repeated), y.repeated);
       check('linux anonymiser: 60,000 unique hostnames in 2 MB -> evaluate + summary < 500 ms', r.perf.chars >= 2000000 && r.perf.names >= 50000 && r.perf.sources > 0 && r.perf.ms < 500, [Math.round(r.perf.ms), r.perf.names, r.perf.chars]);
       check('windows evaluation is marked platform windows', r.winPlatform === 'windows', r.winPlatform);
-      check('windows summary unchanged after anonymiser additions', r.winSummary === '{"os":"Microsoft Windows 11 Home","model":"Predator PTN16-51","ramGb":32,"score":50,'
-        + '"findings":[{"id":"shutdowns","severity":"warn"},{"id":"hardware","severity":"warn"},{"id":"crashes","severity":"warn"},'
+      check('windows summary unchanged after anonymiser additions', r.winSummary === '{"os":"Microsoft Windows 11 Home","model":"Predator PTN16-51","ramGb":32,"score":60,'
+        + '"findings":[{"id":"unclean_shutdowns","severity":"info"},{"id":"hardware","severity":"warn"},{"id":"crashes","severity":"warn"},'
         + '{"id":"stability","severity":"warn"},{"id":"updates","severity":"warn"}],'
         + '"topCrashApps":[{"name":"Java Update Scheduler","count":25},{"name":"AcerRegistrationBackGroundTask","count":25},'
-        + '{"name":"MiracastPowerManager.exe","count":25}],"batteryHealthPct":90.4,"shutdowns30d":1,"hardwareErrors30d":1,"stabilityNow":1.97}', r.winSummary);
+        + '{"name":"MiracastPowerManager.exe","count":25}],"batteryHealthPct":90.4,"shutdowns30d":0,"hardwareErrors30d":1,"stabilityNow":1.97}', r.winSummary);
     }
     await context.close();
   }

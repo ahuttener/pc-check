@@ -1100,7 +1100,10 @@
     { re: /jusched|Java Update Scheduler/i, what: 'Java’s update checker' }
   ];
   var CRASH_PROBLEMS = ['Stopped working', 'Stopped responding and was closed', 'Stopped responding'];
-  var SHUTDOWN_PROBLEMS = ['Shut down unexpectedly', 'Windows was not properly shut down'];
+  // A blue screen, a power loss or a forced restart. "Windows was not properly shut down" is counted on its own: it is
+  // usually a shutdown that did not finish (an update or app hung, the battery ran out), not a crash.
+  var SHUTDOWN_PROBLEMS = ['Shut down unexpectedly'];
+  var UNCLEAN_SHUTDOWN_PROBLEMS = ['Windows was not properly shut down'];
 
   // YYYY-MM-DD in the viewer's time zone: Windows writes local times, and a report saved late in the
   // evening must not show the next day's UTC date.
@@ -1136,6 +1139,12 @@
         add('shutdowns', shutdowns >= 3 ? 'risk' : 'warn', 'Windows shut down unexpectedly ' + plural(shutdowns, 'time', 'times') + ' in 30 days',
           'Usually a blue screen, a power loss or a forced restart. This report does not include the blue-screen error code.',
           'Install pending Windows updates, then update the graphics, chipset and storage drivers from your PC maker’s support page. If it happens under heavy load, check that the fans and vents are clean.');
+      }
+      var unclean = count(UNCLEAN_SHUTDOWN_PROBLEMS);
+      if (unclean >= 1) {
+        add('unclean_shutdowns', unclean >= 3 ? 'warn' : 'info', "Windows didn't finish shutting down " + plural(unclean, 'time', 'times') + ' in 30 days',
+          "A shutdown or restart didn't complete \u2014 often because an update or app hung while shutting down, the battery ran out, or the PC was switched off before it finished. This is usually harmless on its own.",
+          "If it happens again, let shutdowns finish (wait for the screen to go dark), keep Windows Update current, and make sure the battery isn't running out. If it keeps happening, check for app or driver updates.");
       }
       var hardware = count(['Hardware error']);
       out.hardwareErrors30d = hardware;
