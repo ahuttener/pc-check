@@ -896,6 +896,8 @@
   var IOS_MAJORS = [15, 16, 17, 18, 26, 27];
   var IOS_MODEL = /^(?:iPhone|iPad|iPod)[0-9]{1,2},[0-9]{1,2}$/;
   var IOS_KEY = /^[0-9A-Fa-f-]{8,64}$/;
+  // Pre-iOS 15 crash text: an iPhone, iPad or iPod model, or an iOS version
+  var OLD_IOS_CRASH = /^(?:Hardware Model:[ \t]+(?:iPhone|iPad|iPod)|OS Version:[ \t]+(?:iPhone OS|iPadOS|iOS)\b)/m;
 
   // Tested in this order on the first line of the panic string (a thermalmonitord watchdog is thermal, not watchdog)
   var IOS_PANIC_CAUSES = [
@@ -936,7 +938,10 @@
   function parseIosReport(text) {
     var ips = readIps(text);
     if (!ips) {
-      var legacy = macLegacyCrash(String(text === null || text === undefined ? '' : text).slice(0, IOS_REPORT_HEAD));
+      var plainText = String(text === null || text === undefined ? '' : text).slice(0, IOS_REPORT_HEAD);
+      // A .crash from iOS 14 and earlier (no .ips header): not read, the step says it is an old format
+      if (OLD_IOS_CRASH.test(plainText.slice(0, 65536))) return { error: 'old_ios_report' };
+      var legacy = macLegacyCrash(plainText);
       return legacy.error ? { error: 'not_ios_report' } : { error: 'mac_report' };
     }
     var header = ips.header;
@@ -964,22 +969,25 @@
       return { kind: 'other' };
     }
     var id = header.incident_id;
+    // No incident_id and no time: null, so uniqueIosReports keeps every such log (they are outside the 30-day counts)
     out.key = typeof id === 'string' && IOS_KEY.test(id) ? id :
-      out.kind + ' ' + (out.time ? out.time.toISOString() : '') + ' ' + (out.app || '');
+      (out.time ? out.kind + ' ' + out.time.toISOString() + ' ' + (out.app || '') : null);
     out.ios = os && os.length <= 64 ? os : null;
     out.model = model;
     return out;
   }
 
   // The first report per key (a panic-base and a panic-full copy of one panic, or a log saved twice, share their
-  // incident_id). Errors and skipped logs are dropped. Returns a new array.
+  // incident_id). A null key (no incident_id, no time) is never shared: each such log is kept. Errors and skipped
+  // logs are dropped. Returns a new array.
   function uniqueIosReports(list) {
     var seen = {};
     var out = [];
-    (Array.isArray(list) ? list : []).forEach(function (x) {
-      if (!x || x.error || (x.kind !== 'panic' && x.kind !== 'crash' && x.kind !== 'jetsam') || typeof x.key !== 'string') return;
-      if (Object.prototype.hasOwnProperty.call(seen, x.key)) return;
-      seen[x.key] = true;
+    (Array.isArray(list) ? list : []).forEach(function (x, i) {
+      if (!x || x.error || (x.kind !== 'panic' && x.kind !== 'crash' && x.kind !== 'jetsam') || (typeof x.key !== 'string' && x.key !== null)) return;
+      var key = x.key === null ? '#' + i : x.key;
+      if (Object.prototype.hasOwnProperty.call(seen, key)) return;
+      seen[key] = true;
       out.push(x);
     });
     return out;
@@ -1041,13 +1049,15 @@
   }
 
   // iPhone: everything under the mobile user's home (data containers hold personal file names, with spaces) up to the
-  // end of the quoted value or line; possessive device names ("Jane\u2019s iPhone", "James' iPad Pro (2)": a preceding
-  // ordinary word may be masked too); device host names ("Janes-iPhone.local"); international phone numbers with at
-  // least 8 digits (a "+0100" time zone or a "+0x1c" offset never matches).
+  // end of the quoted value or line; possessive device names in any case ("Jane\u2019s iPhone", "JANE'S IPHONE",
+  // "Mary Ann Smith's iPhone 15 Pro Max (2)": up to three name parts, a preceding ordinary word may be masked too, and
+  // the model and copy counter after the device word go with it); device host names ("Janes-iPhone.local");
+  // international phone numbers with at least 8 digits (a "+0100" time zone or a "+0x1c" offset never matches).
   var IOS_MOBILE_PATH = /(\/var\/mobile\/)[^"\n]*/g;
-  var DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30} ){0,2}[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30}['`\u2018\u2019\u02BC]s?\s+(?:iPhone|iPad|iPod touch|iPod|Apple Watch)(?: (?:Pro Max|Pro|Plus|mini|Air|SE))?(?: ?\(\d{1,3}\))?(?![A-Za-z0-9])/g;
-  // Default device names in other languages ("iPhone de Ana", "iPad von Jan Doe", "iPhone di Gio"): patterns only
-  var DEVICE_OF_NAME = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:iPhone|iPad|iPod)\s+(?:de|von|di)\s+[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30}(?:\s+[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F.\-]{0,30})?(?![A-Za-z0-9])/g;
+  var DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30} ){0,2}[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30}['`\u2018\u2019\u02BC]s?\s+(?:iPhone|iPad|iPod touch|iPod|Apple Watch)(?: (?:[0-9]{1,2}[a-z]?|SE|XR|XS|X))?(?: (?:Pro Max|Pro|Plus|Max|mini|Air|SE))?(?: [0-9]{1,2})?(?: ?\(\d{1,3}\))?(?![A-Za-z0-9])/gi;
+  // Default device names in other languages ("iPhone de Ana Maria Silva", "iPad von Jan van Dijk", "iPhone di Gio"):
+  // up to three capitalised name parts, with a lower-case particle between them, so "iPhone de la maison" stays.
+  var DEVICE_OF_NAME = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:iPhone|iPad|iPod)\s+(?:de|von|di)\s+[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F.\-]{0,30}(?:\s+(?:(?:da|das|de|del|della|der|den|di|do|dos|du|la|le|van|von|zu)\s+)?[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F.\-]{0,30}){0,2}(?![A-Za-z0-9])/g;
   var DEVICE_HOST = /(^|[^A-Za-z0-9\u00C0-\u024F-])[A-Za-z0-9\u00C0-\u024F-]{1,40}-(?:iPhone|iPad|iPod)(?:-\d{1,3})?(?:\.local)?(?![A-Za-z0-9])/gi;
   var PHONE_INTL = /\+[1-9][0-9 ().-]{6,20}[0-9]/g;
   var ANON_MAX_CHARS = 8192; // longer than any title, detail, fact or cause line PC Check builds

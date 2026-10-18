@@ -1015,6 +1015,36 @@ try {
         uniqKeptFull: uniq.indexOf(resA[1]) !== -1 && uniq.indexOf(resA[2]) === -1,
         swappedKeptBase: swapped.length === 1 && swapped[0] === resA[2],
         uniqNotSame: uniq !== resA,
+        oldIos: (() => {
+          const NL = String.fromCharCode(10);
+          const head = ['Incident Identifier: 5A0F1B2C-3D4E-4F50-8172-93A4B5C6D7E8', 'Process:             SnapNotes [1234]', 'Identifier:          com.example.snapnotes',
+            'Date/Time:           2026-10-12 11:02:04.000 +0100'];
+          const tail = ['', 'Exception Type:  EXC_CRASH (SIGABRT)', 'Thread 0 Crashed:', '0   libsystem_kernel.dylib  0x1 0x0 + 1'];
+          return [
+            head.concat(['Hardware Model:      iPhone12,1', 'OS Version:          iPhone OS 14.8 (18H17)'], tail),
+            head.concat(['OS Version:          iOS 12.5.7 (16H81)'], tail),
+            head.concat(['Hardware Model:      iPad8,1', 'OS Version:          Mac OS X 10.15.7'], tail),
+            head.concat(['Hardware Model:      iPod9,1'], tail)
+          ].map((ls) => S.parseIosReport(ls.join(NL)));
+        })(),
+        untimed: (() => {
+          const NL = String.fromCharCode(10);
+          const crash = (extra) => S.parseIosReport('{"bug_type":"309","os_version":"iPhone OS 26.0.1 (23A355)","app_name":"SnapNotes"' + extra + '}' + NL + '{}');
+          const timed = '"timestamp":"2026-10-16 15:30:12.00 +0100"';
+          const noId = [crash(''), crash(''), crash('')];
+          const sameId = [crash(',"incident_id":"7A8B9C0D-1E2F-4031-8425-364758697A8B"'), crash(',"incident_id":"7A8B9C0D-1E2F-4031-8425-364758697A8B"')];
+          const sameTime = [crash(',' + timed), crash(',' + timed)];
+          const withA = resA.concat(noId);
+          const now = new Date('2026-10-18T09:00:00Z');
+          return {
+            noId: S.uniqueIosReports(noId).length, sameId: S.uniqueIosReports(sameId).length, sameTime: S.uniqueIosReports(sameTime).length,
+            noTime: noId.every((x) => x.kind === 'crash' && (x.time === null || x.time === undefined)),
+            withA: S.uniqueIosReports(withA).length,
+            crashesA: S.evaluateIos({ reports: S.uniqueIosReports(resA) }, now).crashes30d,
+            crashesWith: S.evaluateIos({ reports: S.uniqueIosReports(withA) }, now).crashes30d,
+            again: S.uniqueIosReports(noId).length === S.uniqueIosReports(noId).length
+          };
+        })(),
         macOfIos: Object.keys(t.ios).filter((f) => /"os_version":"iPhone OS /.test(t.ios[f])).map((f) => JSON.stringify(S.parseMacReport(t.ios[f]))),
         macOfIpados: [JSON.stringify(S.parseMacReport('{"bug_type":"309","timestamp":"2026-10-17 10:00:00.00 +0100","os_version":"iPadOS 18.7 (22H20)","app_name":"Notes"}' + String.fromCharCode(10) + '{}')),
           JSON.stringify(S.parseMacReport('{"bug_type":"210","timestamp":"2026-10-17 10:00:00.00 +0100","os_version":"iOS 17.6.1 (21G93)"}' + String.fromCharCode(10) + '{"panicString" : "panic(cpu 0 caller 0x1): x"}'))]
@@ -1061,6 +1091,12 @@ try {
       check('mac parser: iPhone and iPad logs -> ios_report', r.macOfIos.length >= 10 && r.macOfIos.concat(r.macOfIpados).every((x) => x === '{"error":"ios_report"}'), [r.macOfIos, r.macOfIpados]);
       check('ios: uniqueIosReports keeps 2 panics, 3 crashes, 2 Jetsam (panic-base dropped when second)',
         r.uniqLen === 7 && same(r.uniq.slice().sort(), ['crash', 'crash', 'crash', 'jetsam', 'jetsam', 'panic', 'panic']) && r.uniqKeptFull && r.swappedKeptBase && r.uniqNotSame, r);
+      check('ios: pre-iOS 15 .crash text (iPhone, iPad or iPod model, or an iOS version) -> old_ios_report, not parsed',
+        r.oldIos.length === 4 && r.oldIos.every((x) => same(x, { error: 'old_ios_report' })), r.oldIos);
+      check('ios: a Mac .crash is still mac_report', same(r.macCrash, { error: 'mac_report' }), r.macCrash);
+      check('ios: untimed reports without incident_id each keep their own key (3 stay 3)', r.untimed.noTime && r.untimed.noId === 3 && r.untimed.again, r.untimed);
+      check('ios: one incident_id or one time + app still de-duplicates (2 -> 1)', r.untimed.sameId === 1 && r.untimed.sameTime === 1, r.untimed);
+      check('ios: untimed reports are kept but stay out of the 30-day counts', r.untimed.withA === 10 && r.untimed.crashesA === 3 && r.untimed.crashesWith === 3, r.untimed);
     }
     await context.close();
 
@@ -1317,6 +1353,12 @@ try {
           moreDevices: ['janes-iphone.local', 'JANES-IPAD-2', 'Jane\u2018s iPhone', 'Jane\u02BCs iPhone', 'Jane`s iPhone', 'Jane\u2019s  iPhone', 'Ren\u00E9e\u2019s iPad',
             'iPhone de Ana', 'iPad von Jan Doe', 'iPhone di Gio', 'iPhone de Ana Lima'].map((v) => S.anonymise(v)),
           stillPlain: ['the iPhone restarted', 'your iPhone', 'iPhone OS 26.0.1 (23A355)', 'iPad Pro', 'Update the app'].map((v) => S.anonymise(v))
+          , ofNames: ['iPhone de Ana Maria Silva', 'iPad von Jan van Dijk', 'iPhone de Maria da Silva Santos', 'iPod di Gio Rossi Bianchi', 'iPhone de Ren\u00E9e Lef\u00E8vre'].map((v) => S.anonymise(v)),
+          ofSentence: ['iPhone de la maison', 'mon iPhone de la maison est lent', 'iPhone de Ana Maria Silva crashed', 'iPhone de Ana Maria Silva Costa'].map((v) => S.anonymise(v)),
+          upper: ["JANE'S IPHONE", "jane's iphone", "Jane'S iPhone", 'JANE DOE\u2019S IPAD PRO', "MARY ANN SMITH'S IPHONE 15 PRO MAX (2)"].map((v) => S.anonymise(v)),
+          upperPlain: ['your iPhone', 'the iPhone restarted', 'iPad Pro', 'YOUR IPHONE', 'THE IPHONE RESTARTED', 'IPAD PRO', 'Your iPhone 15 Pro restarted'].map((v) => S.anonymise(v)),
+          models: ["Mary Ann Smith's iPhone 15 Pro Max (2)", "Jane's iPhone SE", "Jane's iPad mini (3)", "Jane's iPhone 16e", "Jane's iPad Air 2", "Jane's iPhone 15 Pro Max(2)", "James' iPhone 14 Plus"].map((v) => S.anonymise(v)),
+          modelTail: ["Mary Ann Smith's iPhone 15 Pro Max (2) restarted", "from Jane's iPhone 15 Pro."].map((v) => S.anonymise(v))
         },
         exported: typeof S.uniqueIosReports === 'function' && typeof S.parseIosReport === 'function'
         , goodA: S.evaluateIos({ reports: reps(t.setA), batteryPct: 84 }, now).goodNews, goodB: S.evaluateIos({ reports: reps(t.setB), batteryPct: 58 }, now).goodNews,
@@ -1395,6 +1437,12 @@ try {
       check('ios anonymiser: real international numbers -> [phone]', same(x.phones, ['[phone]', '[phone]', 'call [phone] now', '([phone])']), x.phones);
       check('ios anonymiser: lower-case host names, other apostrophes, extra spaces and localized default names -> [device]', x.moreDevices.every((v) => v === '[device]'), x.moreDevices);
       check('ios anonymiser: ordinary iPhone wording stays', same(x.stillPlain, ['the iPhone restarted', 'your iPhone', 'iPhone OS 26.0.1 (23A355)', 'iPad Pro', 'Update the app']), x.stillPlain);
+      check('ios anonymiser: "iPhone de" + up to three name parts -> [device], no surname left', x.ofNames.every((v) => v === '[device]'), x.ofNames);
+      check('ios anonymiser: "iPhone de la maison" sentences stay, a fourth word is not eaten', same(x.ofSentence, ['iPhone de la maison', 'mon iPhone de la maison est lent', '[device] crashed', '[device] Costa']), x.ofSentence);
+      check('ios anonymiser: upper- and mixed-case possessive device names -> [device]', x.upper.every((v) => v === '[device]'), x.upper);
+      check('ios anonymiser: your / the iPhone, iPad Pro stay in any case', same(x.upperPlain, ['your iPhone', 'the iPhone restarted', 'iPad Pro', 'YOUR IPHONE', 'THE IPHONE RESTARTED', 'IPAD PRO', 'Your iPhone 15 Pro restarted']), x.upperPlain);
+      check('ios anonymiser: model and copy-counter suffixes are swallowed', x.models.every((v) => v === '[device]'), x.models);
+      check('ios anonymiser: the words after a device name stay', same(x.modelTail, ['[device] restarted', '[device].']), x.modelTail);
       check('ios summary: real iOS versions kept (incl. a Rapid Security Response)', same(r.goodIos, ['iPhone OS 26.0.1 (23A355)', 'iOS 16.5.1 (c) (20F770750d)', 'iPadOS 18.7 (22H20)', 'iPhone OS 27.0 (24A100)', 'iOS 17.6.1']), r.goodIos);
       check('ios summary: a build token that is not an Apple build -> null', r.badIos.every((v) => v === null), r.badIos);
       check('ios summary: score is a whole number from 0 to 100', same(r.scores.map((sm) => sm.score), [100, 0, 0, 0, 0, 65]), r.scores.map((sm) => sm.score));
@@ -2483,6 +2531,19 @@ try {
       check('anonymiser: 60,000 hyphens are anonymised in under a second', r.ms < 1000, r.ms);
       check('anonymiser: strings under the cap come out as before', r.short && r.plain === 'MobileSafari', [r.short, r.plain]);
       check('anonymiser: a longer string is cut and the token the cut ran through is dropped', r.cut === 'x '.repeat(4090), r.cut.slice(-40));
+      const redos = await page.evaluate(() => {
+        const S = window.PCSys;
+        const fit = (s) => (s + ' '.repeat(8192)).slice(0, 8192);
+        const inputs = [
+          'iPhone de ' + 'A'.repeat(8182), 'iPhone de ' + 'Ab '.repeat(2727) + '1', 'iPhone de Ana ' + 'da '.repeat(2725) + 'x1', 'iPhone de ' + 'Ana da '.repeat(1169) + '1',
+          "a's ".repeat(2048), 'Ab '.repeat(2730) + "x's", ('x'.repeat(30) + ' ').repeat(263) + "'s iphone", "Jane's iPhone 15 Pro ".repeat(390),
+          "JANE'S IPHONE ".repeat(585), ("Jane's iPhone " + '1 '.repeat(20)).repeat(150), '\u00C9'.repeat(8192), '\u00E9\u00E9 '.repeat(2730), 'a-'.repeat(4096),
+          '+1 '.repeat(2730), "Mary Ann Smith's iPhone 15 Pro Max (".repeat(220), 'iPad von ' + 'Jan '.repeat(2045), 'iPhone de ' + 'A'.repeat(30) + ' ' + 'Ab-'.repeat(2700)
+        ].map(fit);
+        return inputs.map((s, i) => { const t0 = performance.now(); S.anonymise(s); return { i, len: s.length, ms: performance.now() - t0 }; });
+      });
+      check('anonymiser: crafted 8192-character inputs (device names, phones, hyphens) each take < 50 ms', redos.every((x) => x.len === 8192 && x.ms < 50),
+        redos.filter((x) => x.len !== 8192 || x.ms >= 50));
       await context.close();
     }
     {
@@ -2608,6 +2669,14 @@ try {
       check('ios ui: a .spx alone -> none of these files is a log', (await msg(page, 'logs')) === NONE, await msg(page, 'logs'));
       await choose(page, [{ name: 'photo.png', mimeType: 'image/png', buffer: PNG }]);
       check('ios ui: a photo alone -> none of these files is a log', (await msg(page, 'logs')) === NONE, await msg(page, 'logs'));
+      const OLD_IOS = Buffer.from(['Incident Identifier: 5A0F1B2C-3D4E-4F50-8172-93A4B5C6D7E8', 'Hardware Model:      iPhone12,1', 'Process:             SnapNotes [1234]',
+        'Date/Time:           2026-10-12 11:02:04.000 +0100', 'OS Version:          iPhone OS 14.8 (18H17)', '', 'Exception Type:  EXC_CRASH (SIGABRT)', ''].join('\n'));
+      await choose(page, [{ name: 'SnapNotes-2021-10-12-110204.crash', mimeType: 'application/octet-stream', buffer: OLD_IOS }]);
+      const oldOne = await msg(page, 'logs');
+      check('ios ui: an old iPhone .crash alone -> the old-format message', oldOne === 'This is an old iPhone crash log format that PC Check can\u2019t read.', oldOne);
+      await choose(page, SET_A.map((f) => ({ name: f, mimeType: 'application/octet-stream', buffer: fs.readFileSync(IFX(f)) })).concat([{ name: 'old.crash', mimeType: 'application/octet-stream', buffer: OLD_IOS }]));
+      const oldMixed = await msg(page, 'logs');
+      check('ios ui: an old iPhone .crash among logs -> counted and named, not a Mac log', /^Read 7 logs: /.test(oldMixed) && / 1 file is an old iPhone crash log format that PC Check can\u2019t read\./.test(oldMixed) && !/from a Mac/.test(oldMixed), oldMixed);
       const safari = fs.readFileSync(IFX('MobileSafari-2026-10-15-091244.ips'));
       await choose(page, Array.from({ length: 101 }, (_, i) => ({ name: 'MobileSafari-2026-10-15-0912' + String(i).padStart(3, '0') + '.ips', mimeType: 'application/octet-stream', buffer: safari })));
       const capped = await msg(page, 'logs');

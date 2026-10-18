@@ -312,6 +312,8 @@
       sysIosDuplicates: function (n) { return ' ' + n + (n === 1 ? ' duplicate' : ' duplicates') + ' left out.'; },
       sysIosSkipped: function (n) { return ' ' + n + (n === 1 ? ' file' : ' files') + ' skipped (not a panic, crash or low-memory log).'; },
       sysIosFromMac: function (n) { return ' ' + n + ' of them ' + (n === 1 ? 'comes' : 'come') + ' from a Mac; choose Mac above for those.'; },
+      sysIosOldOnly: function (n) { return n === 1 ? 'This is an old iPhone crash log format that PC Check can’t read.' : 'These are old iPhone crash logs in a format PC Check can’t read.'; },
+      sysIosOld: function (n) { return ' ' + n + (n === 1 ? ' file is an old iPhone crash log format' : ' files are old iPhone crash logs in a format') + ' that PC Check can’t read.'; },
       sysIosUnreadable: function (n) { return ' The browser could not read ' + n + (n === 1 ? ' file' : ' files') + '. Save them to On My iPhone and choose them again.'; },
       sysIosNoLogs: 'None of these files is a panic, crash or low-memory log. Look for names that start with panic-full, JetsamEvent or an app’s name.',
       sysIosBattery: function (n) { return 'Battery: ' + n + ' %.'; },
@@ -2089,6 +2091,7 @@
       return readBuffer(file.slice(0, S.IOS_REPORT_HEAD)).then(function (buffer) {
         var parsed = S.parseIosReport(S.decode(buffer));
         if (parsed && !parsed.error && (parsed.kind === 'panic' || parsed.kind === 'crash' || parsed.kind === 'jetsam')) return { report: parsed };
+        if (parsed && parsed.error === 'old_ios_report') return { oldIos: true };
         return { skipped: true, mac: !!parsed && parsed.error === 'mac_report' };
       }, function () { return { unreadable: true }; });
     }).then(function (results) {
@@ -2097,9 +2100,11 @@
       var skipped = 0;
       var fromMac = 0;
       var unreadable = 0;
+      var oldIos = 0;
       results.forEach(function (r) {
         if (r.report) accepted.push(r.report);
         else if (r.unreadable) unreadable++;
+        else if (r.oldIos) oldIos++;
         else { skipped++; if (r.mac) fromMac++; }
       });
       var reports = S.uniqueIosReports(accepted);
@@ -2111,6 +2116,11 @@
       }
       var count = function (kind) { return reports.filter(function (x) { return x.kind === kind; }).length; };
       var msg;
+      if (oldIos && oldIos === results.length) {
+        // Only pre-iOS 15 crash logs: say that alone
+        setIosStep('logs', 'error', t('sysIosOldOnly', oldIos));
+        return;
+      }
       if (reports.length) {
         var dups = accepted.length - reports.length;
         msg = t('sysIosReadLogs', reports.length, count('panic'), count('crash'), count('jetsam')) +
@@ -2118,7 +2128,7 @@
       } else {
         msg = t('sysIosNoLogs');
       }
-      msg += (fromMac ? t('sysIosFromMac', fromMac) : '') + (capped ? t('sysMacCapped', MAC_MAX_REPORTS) : '') +
+      msg += (fromMac ? t('sysIosFromMac', fromMac) : '') + (oldIos ? t('sysIosOld', oldIos) : '') + (capped ? t('sysMacCapped', MAC_MAX_REPORTS) : '') +
         (unreadable ? t('sysIosUnreadable', unreadable) : '');
       setIosStep('logs', reports.length ? 'ok' : 'error', msg);
     }).catch(function () {
