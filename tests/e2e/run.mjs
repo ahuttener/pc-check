@@ -2356,7 +2356,7 @@ try {
       const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
       check('system: macOS UA -> Mac banner', /You.re on macOS/.test(banner), banner);
       check('system: macOS UA -> Mac pre-selected', (await pressed(page, 'mac')) === 'true');
-      check('system: macOS UA -> Mac steps, Coming soon only on Android', await page.locator('#sys-mac-steps').isVisible().catch(() => false) && (await page.locator('.sys-soon-tag').count()) === 1 && (await page.locator('#sys-os-android .sys-soon-tag').count()) === 1);
+      check('system: macOS UA -> Mac steps, no Coming soon tag on the page', await page.locator('#sys-mac-steps').isVisible().catch(() => false) && (await page.locator('.sys-soon-tag').count()) === 0);
       await context.close();
     }
     {
@@ -2491,7 +2491,7 @@ try {
       check('linux ui: Linux UA -> banner says Linux (Ubuntu) and five read-only commands', /You.re on Linux \(Ubuntu\)\. Run the five read-only commands below in a terminal and paste what they print\./.test(banner), banner);
       check('linux ui: Linux UA -> Linux button pre-selected', (await pressed(page, 'linux')) === 'true');
       check('linux ui: Linux button has no "Coming soon"', !/Coming soon/i.test(await page.locator('#sys-os-linux').innerText().catch(() => 'Coming soon')));
-      check('linux ui: only the Android button says "Coming soon"', (await page.locator('.sys-os-btn').evaluateAll((bs) => bs.filter((b) => /Coming soon/i.test(b.textContent)).map((b) => b.id)).catch(() => [])).join() === 'sys-os-android');
+      check('linux ui: no OS button says "Coming soon"', (await page.locator('.sys-os-btn').evaluateAll((bs) => bs.filter((b) => /Coming soon/i.test(b.textContent)).map((b) => b.id)).catch(() => ['?'])).length === 0 && (await page.locator('.sys-soon-tag').count()) === 0);
       check('linux ui: Linux steps shown, Windows and Mac steps hidden', await page.locator('#sys-linux-steps').isVisible().catch(() => false) &&
         !(await page.locator('#sys-steps').isVisible().catch(() => true)) && !(await page.locator('#sys-mac-steps').isVisible().catch(() => true)));
       const lead = await page.locator('#sys-lead').innerText().catch(() => '');
@@ -2693,8 +2693,8 @@ try {
       const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
       check('mac ui: Mac UA -> banner says macOS, no Terminal needed', /^You.re on macOS\. Save the reports with apps already on your Mac and choose them below\. No Terminal needed\.$/.test(banner.trim()), banner);
       check('mac ui: Mac UA -> Mac button pre-selected', (await pressed(page, 'mac')) === 'true');
-      check('mac ui: one "Coming soon" tag, on Android, and no old soon box', (await page.locator('.sys-soon-tag').count()) === 1 && (await page.locator('#sys-os-android .sys-soon-tag').count()) === 1 &&
-        (await page.locator('#sys-soon').count()) === 0 && !(await page.locator('#sys-android-soon').isVisible().catch(() => true)));
+      check('mac ui: no "Coming soon" tag and no soon box', (await page.locator('.sys-soon-tag').count()) === 0 &&
+        (await page.locator('#sys-soon').count()) === 0 && (await page.locator('#sys-android-soon').count()) === 0 && !(await page.locator('#sys-android-steps').isVisible().catch(() => true)));
       check('mac ui: Mac steps shown, Windows and Linux steps hidden', await page.locator('#sys-mac-steps').isVisible().catch(() => false) &&
         !(await page.locator('#sys-steps').isVisible().catch(() => true)) && !(await page.locator('#sys-linux-steps').isVisible().catch(() => true)));
       const lead = await page.locator('#sys-lead').innerText().catch(() => '');
@@ -2986,11 +2986,10 @@ try {
         banner.trim() === 'You’re on an iPhone. Follow the steps below right here on this iPhone. No computer or app needed.', banner);
       const ids = await page.locator('.sys-os-btn').evaluateAll((bs) => bs.map((b) => b.id));
       check('ios ui: five OS buttons in order', JSON.stringify(ids) === JSON.stringify(['sys-os-windows', 'sys-os-mac', 'sys-os-linux', 'sys-os-ios', 'sys-os-android']), ids);
-      check('ios ui: exactly one Coming soon tag, inside Android', (await page.locator('.sys-soon-tag').count()) === 1 && (await page.locator('#sys-os-android .sys-soon-tag').count()) === 1 &&
-        (await page.locator('#sys-os-android .sys-soon-tag').innerText()).trim() === 'Coming soon');
+      check('ios ui: no Coming soon tag on the page', (await page.locator('.sys-soon-tag').count()) === 0 && !/Coming soon/i.test(await page.locator('.sys-os').innerText()));
       check('ios ui: group label asks which device', (await page.getAttribute('.sys-os', 'aria-label')) === 'Which device are you checking?');
       check('ios ui: iPhone steps shown, the others hidden', await visible(page, '#sys-ios-steps') && !(await visible(page, '#sys-steps')) &&
-        !(await visible(page, '#sys-mac-steps')) && !(await visible(page, '#sys-linux-steps')) && !(await visible(page, '#sys-android-soon')));
+        !(await visible(page, '#sys-mac-steps')) && !(await visible(page, '#sys-linux-steps')) && !(await visible(page, '#sys-android-steps')));
       const lead = (await page.locator('#sys-lead').innerText().catch(() => '')).trim();
       check('ios ui: lead explains the iPhone steps', lead === 'Your iPhone keeps a log each time an app crashes, iOS runs short of memory or the iPhone restarts by itself. Save a few of those logs to Files, choose them below and add the battery figure from Settings: PC Check reads them right here in your browser. Nothing leaves your iPhone.', lead);
       const guide = await page.locator('#sys-ios-steps').innerText().catch(() => '');
@@ -3129,7 +3128,7 @@ try {
         ['iPad UA', { userAgent: IPAD_UA }, 'ios', /^You.re on an iPad\. The steps below work on iPad too, right here on this iPad\.$/],
         ['Mac UA with 5 touch points (iPadOS)', { userAgent: MAC_UA, initScript: TOUCH(5) }, 'ios', /^You.re on an iPad\. The steps below work on iPad too, right here on this iPad\.$/],
         ['Mac UA with 0 touch points', { userAgent: MAC_UA, initScript: TOUCH(0) }, 'mac', /^You.re on macOS\. Save the reports with apps already on your Mac and choose them below\. No Terminal needed\.$/],
-        ['Android UA', { userAgent: ANDROID_UA }, 'android', /^You.re on Android\. Android reports are coming soon\. To check a computer or an iPhone, pick it above\.$/]
+        ['Android UA', { userAgent: ANDROID_UA }, 'android', /^You.re on Android\. Follow the steps below right here on this phone\. No computer, cable or app needed\.$/]
       ];
       for (const [label, opts, want, bannerRe] of cases) {
         const { page, context, seen } = await newPage('ok', opts);
@@ -3138,14 +3137,13 @@ try {
         check('ios ui: ' + label + ' -> ' + want + ' pre-selected', (await pressed(page, want)) === 'true', [await pressed(page, 'ios'), await pressed(page, 'mac'), await pressed(page, 'android')]);
         check('ios ui: ' + label + ' banner', bannerRe.test(banner), banner);
         if (want === 'android') {
-          const soon = (await page.locator('#sys-android-soon').innerText().catch(() => '')).trim();
-          check('ios ui: Android box says coming soon', await visible(page, '#sys-android-soon') && soon === 'Android reports are coming soon. Until then, PC Check can check a Windows, Mac or Linux computer, or an iPhone: pick it above.', soon);
-          check('ios ui: Android lead', (await page.locator('#sys-lead').innerText()).trim() === 'Android reports are coming soon.');
+          check('ios ui: Android steps shown, no soon box', await visible(page, '#sys-android-steps') && (await page.locator('#sys-android-soon').count()) === 0);
+          check('ios ui: Android lead', (await page.locator('#sys-lead').innerText()).trim() === 'Your Android phone can save a bug report: a zip file with its own record of crashes, unexpected restarts, battery and storage. Save one with the phone’s own menus, choose it below and PC Check reads it right here in your browser. Nothing leaves your phone.');
           const analyzeShown = [];
-          for (const s of ['#sys-analyze', '#sys-linux-analyze', '#sys-mac-analyze', '#sys-ios-analyze']) if (await visible(page, s)) analyzeShown.push(s);
-          check('ios ui: Android shows no Analyze button', analyzeShown.length === 0, analyzeShown);
+          for (const s of ['#sys-analyze', '#sys-linux-analyze', '#sys-mac-analyze', '#sys-ios-analyze', '#sys-android-analyze']) if (await visible(page, s)) analyzeShown.push(s);
+          check('ios ui: Android shows only its own Analyze button', analyzeShown.join() === '#sys-android-analyze', analyzeShown);
           const sys = await page.locator('#system').innerText().catch(() => '');
-          check('ios ui: no computer sentence on the Android box', !COMPUTER_SENTENCE.test(sys), sys.match(COMPUTER_SENTENCE));
+          check('ios ui: no computer sentence on the Android steps', !COMPUTER_SENTENCE.test(sys) && !/on that computer/.test(sys), sys.match(COMPUTER_SENTENCE));
         }
         if (want === 'ios') check('ios ui: ' + label + ' -> iPhone steps shown', await visible(page, '#sys-ios-steps'));
         check('ios ui: ' + label + ' -> no page errors', seen.errors.length === 0, seen.errors);
@@ -3156,7 +3154,7 @@ try {
       // A computer visitor who picks iPhone or Android gets a neutral banner, never their own computer's
       const WIN_UA6 = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + fullVersion + ' Safari/537.36';
       const IOS_BANNER = /^The iPhone steps below are done on the iPhone itself; you can read them here\.$/;
-      const ANDROID_BANNER = /^Android reports are coming soon\.$/;
+      const ANDROID_BANNER = /^The Android steps below are done on the Android phone itself; you can read them here\.$/;
       for (const [label, opts, own] of [['Windows', { userAgent: WIN_UA6 }, /^You.re on Windows[^.]*\. Follow the three steps below to check this PC\.$/],
         ['Mac', { userAgent: MAC_UA, initScript: TOUCH(0) }, /^You.re on macOS\. Save the reports with apps already on your Mac/]]) {
         const { page, context, seen } = await newPage('ok', opts);
@@ -3166,7 +3164,7 @@ try {
         check('ios ui: ' + label + ' visitor picks iPhone -> neutral iPhone banner', IOS_BANNER.test(bIos), bIos);
         await page.click('#sys-os-android', { timeout: 2000 }).catch(() => {});
         const bAnd = (await bannerOf(page)).trim();
-        check('ios ui: ' + label + ' visitor picks Android -> coming soon banner', ANDROID_BANNER.test(bAnd), bAnd);
+        check('ios ui: ' + label + ' visitor picks Android -> neutral Android banner', ANDROID_BANNER.test(bAnd), bAnd);
         await page.click('#sys-os-' + (label === 'Mac' ? 'mac' : 'windows'), { timeout: 2000 }).catch(() => {});
         const bOwn = (await bannerOf(page)).trim();
         check('ios ui: ' + label + ' visitor back on their own system -> their own banner', own.test(bOwn), bOwn);
@@ -3214,6 +3212,275 @@ try {
         check('ios ui: tap targets at least 44 px at ' + label, sizes.buttons.length === 5 && sizes.buttons.every((x) => x >= 44) && sizes.analyze >= 44 && sizes.clear >= 44 && sizes.fieldH >= 44, sizes);
         check('ios ui: battery field 16 px or more, numeric keypad at ' + label, sizes.font >= 16 && sizes.inputmode === 'numeric', sizes);
         check('ios ui: no page errors at ' + label, seen.errors.length === 0, seen.errors);
+        if (shot) await page.locator('#system').screenshot({ path: path.join(shots, shot) }).catch(() => {});
+        await context.close();
+      } finally {
+        if (eng !== browser) await eng.close();
+      }
+    }
+  }
+
+  // 8c-android. Android steps: detection, banners, guide, the bug report read in the page, errors, privacy, phone layout
+  console.log('Android steps');
+  {
+    const adir = path.join(here, '..', 'fixtures', 'sys', 'android');
+    const azips = androidZips(adir);
+    const PIXEL = devices['Pixel 7'];
+    const ANDROID_UA = PIXEL.userAgent;
+    const WIN_UA7 = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + fullVersion + ' Safari/537.36';
+    const NAME_A = 'bugreport-shiba-BP3A.250905.014-2026-10-17-21-14-05.zip';
+    const NAME_B = 'bugreport-a51nsxx-TP1A.220624.014-2026-10-16-19-40-12.zip';
+    const zipOf = (name, key) => ({ name, mimeType: 'application/zip', buffer: azips[key] });
+    const MSG_A = 'Read the bug report from 2026-10-17: Android 16, security patch 2026-09-05.';
+    const MSG_C = 'Read the bug report from 2026-10-17: Android 15, security patch 2026-07-05.';
+    const ERR_NOT = 'This doesn’t look like an Android bug report. Choose the .zip file saved from Take bug report.';
+    const ERR_KIND = 'PC Check can’t open this kind of zip. Take a new bug report and choose that file.';
+    const ERR_DAMAGED = 'This zip looks damaged or incomplete. Wait until the bug report is fully saved, or take a new one.';
+    const ERR_NO_DEFLATE = 'This browser can’t unpack the bug report. Update Chrome (or your browser) from the Play Store and try again.';
+    const NEED = 'Choose a bug report first.';
+    const TRUNC = 'Only the first 30 MB of its log were read; that is enough for this check.';
+    const REMINDER = 'When you are done, turn Developer options off again (the switch at the top of the Developer options screen) and delete the bug report from Downloads: it holds personal data.';
+    const LEAD = 'Your Android phone can save a bug report: a zip file with its own record of crashes, unexpected restarts, battery and storage. Save one with the phone’s own menus, choose it below and PC Check reads it right here in your browser. Nothing leaves your phone.';
+    const BANNER = 'You’re on Android. Follow the steps below right here on this phone. No computer, cable or app needed.';
+    const aplanted = JSON.parse(fs.readFileSync(path.join(adir, 'PLANTED.json'), 'utf8'));
+    const APLANTED = [].concat(...Object.values(aplanted)).map((p) => String(p).toLowerCase());
+    const FILE_BITS = ['bugreport-', 'shiba', 'a51nsxx', '.zip', 'main_entry', 'anr_', 'screenshot'];
+    const leaks = (s) => { const l = String(s).toLowerCase(); return APLANTED.concat(FILE_BITS).filter((p) => l.includes(p)); };
+    const HARMFUL = /\broot|cleaner|booster|antivirus|\badb\b|USB debugging|OEM unlocking|computer|cable|Terminal|sudo|fastboot|custom ROM|bootloader/i;
+    const COMPUTER = /done on a computer|on the computer|on that computer/;
+    const pressed = (page, os) => page.getAttribute('#sys-os-' + os, 'aria-pressed', { timeout: 2000 }).catch(() => null);
+    const waitBanner = (page) => page.waitForFunction(() => (document.getElementById('sys-banner') || {}).textContent, null, { timeout: 5000 }).catch(() => {});
+    const bannerOf = async (page) => (await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '')).trim();
+    const visible = (page, sel) => page.locator(sel).isVisible().catch(() => false);
+    const msg = async (page) => (await page.locator('#sys-step-android-file [data-role="msg"]').innerText({ timeout: 2000 }).catch(() => '')).trim();
+    const status = async (page) => (await page.locator('#sys-android-status').innerText({ timeout: 2000 }).catch(() => '')).trim();
+    const settled = (page) => page.waitForFunction(() => /^(ok|error)$/.test((document.getElementById('sys-step-android-file') || { getAttribute: () => '' }).getAttribute('data-state') || ''), null, { timeout: 20000 }).catch(() => {});
+    const choose = async (page, f) => { await page.setInputFiles('#sys-file-android', f, { timeout: 10000 }); await settled(page); };
+    const analyze = (page) => page.click('#sys-android-analyze', { timeout: 3000 }).catch(() => {});
+    const analyzed = async (page) => { await analyze(page); await page.waitForSelector('#sys-results:not([hidden])', { timeout: 10000 }); };
+    const score = async (page) => (await page.locator('#sys-score').innerText({ timeout: 2000 }).catch(() => '')).trim();
+    const shownText = (page) => page.evaluate(() => ['#sys-results', '#sys-banner', '#sys-android-status'].map((s) => (document.querySelector(s) || {}).innerText || '')
+      .concat(Array.from(document.querySelectorAll('#system [data-role="msg"]')).map((n) => n.innerText)).join('\n'));
+
+    {
+      const { page, context, seen } = await newPage('ok', PIXEL);
+      await waitBanner(page);
+      const banner = await bannerOf(page);
+      check('android ui: Pixel 7 -> Android pre-selected', (await pressed(page, 'android')) === 'true');
+      check('android ui: Pixel 7 banner says right here on this phone', banner === BANNER, banner);
+      check('android ui: Android steps and Analyze shown, no soon box, no soon tag', await visible(page, '#sys-android-steps') && await visible(page, '#sys-android-analyze') &&
+        (await page.locator('#sys-android-soon').count()) === 0 && (await page.locator('.sys-soon-tag').count()) === 0 && !/Coming soon/i.test(await page.locator('#system').innerText()));
+      const ids = await page.locator('.sys-os-btn').evaluateAll((bs) => bs.map((b) => b.id));
+      check('android ui: five OS buttons in order Windows, Mac, Linux, iPhone, Android', JSON.stringify(ids) === JSON.stringify(['sys-os-windows', 'sys-os-mac', 'sys-os-linux', 'sys-os-ios', 'sys-os-android']), ids);
+      const others = [];
+      for (const s of ['#sys-steps', '#sys-linux-steps', '#sys-mac-steps', '#sys-ios-steps']) if (await visible(page, s)) others.push(s);
+      check('android ui: the other systems\' steps are hidden', others.length === 0, others);
+      const lead = (await page.locator('#sys-lead').innerText().catch(() => '')).trim();
+      check('android ui: Android lead', lead === LEAD, lead);
+      const sys = await page.locator('#system').innerText().catch(() => '');
+      check('android ui: no computer sentence on the phone\'s own steps', !!sys && !COMPUTER.test(sys), sys.match(COMPUTER));
+      const guide = await page.locator('#sys-android-steps').innerText().catch(() => '');
+      const missing = ['Build number', '7 times', 'Take bug report', '1 to 3 minutes', 'personal data', 'never uploads', 'Menus differ', 'search box', 'turn off the switch', 'Delete the bug report']
+        .filter((w) => !guide.includes(w));
+      check('android ui: guide says how, how long, personal data, menus differ and how to switch off', missing.length === 0, missing);
+      const steps = await page.locator('#sys-android-steps .sys-step').evaluateAll((ls) => ls.map((l) => l.id + ':' + l.querySelectorAll('[data-role="msg"]').length));
+      check('android ui: four steps, only the file step has a message line', steps.join() === 'sys-step-android-dev:0,sys-step-android-report:0,sys-step-android-file:1,sys-step-android-off:0', steps);
+      check('android ui: no harmful advice in the guide or the lead', !HARMFUL.test(guide) && !HARMFUL.test(lead), (guide + '\n' + lead).match(HARMFUL));
+      check('android ui: no <code> in the Android guide', (await page.locator('#sys-android-steps code').count()) === 0);
+      const picker = await page.evaluate(() => { const i = document.getElementById('sys-file-android'); return i ? { multiple: i.hasAttribute('multiple'), accept: i.getAttribute('accept') } : null; });
+      check('android ui: one-file picker for .zip and .txt', !!picker && !picker.multiple && picker.accept === '.zip,.txt,application/zip,application/x-zip-compressed,text/plain', picker);
+      const before = await page.locator('#ledger-list li').count();
+
+      await analyze(page);
+      check('android ui: Analyze with nothing chosen asks for a bug report', (await status(page)) === NEED && !(await visible(page, '#sys-results')), await status(page));
+
+      await choose(page, zipOf(NAME_A, 'set-a.zip'));
+      const mA = await msg(page);
+      check('android ui: Set A -> read message with date, Android version and patch', mA === MSG_A, mA);
+      let okA = true;
+      try { await analyzed(page); } catch (e) { okA = false; }
+      check('android ui: Set A -> score 80', okA && (await score(page)) === '80', await score(page));
+      const findA = await page.locator('.sys-findings').innerText().catch(() => '');
+      check('android ui: Set A findings mention the restart and the crashing app', /restarted by itself/.test(findA) && findA.includes('com.example.snapnotes'), findA.slice(0, 300));
+      const factsA = await page.locator('.sys-tiles').innerText().catch(() => '');
+      check('android ui: Set A facts show the model, storage and battery estimate', factsA.includes('Google Pixel 8') && factsA.includes('31 %') && factsA.includes('85 %'), factsA);
+      const headsA = (await page.locator('#sys-results h4').allTextContents()).map((x) => x.trim());
+      check('android ui: facts heading is "This phone"', headsA.includes('This phone') && !headsA.includes('This PC'), headsA);
+      check('android ui: Set A good news row shows', (await page.locator('#sys-results .sys-good').count()) === 1);
+      check('android ui: Set A status says nothing was sent', (await status(page)) === 'Analyzed on this device. Nothing was sent.', await status(page));
+      const dateA = (await page.locator('.sys-date').innerText().catch(() => '')).trim();
+      check('android ui: date line says bug report, read on this device', dateA === 'Bug report from 2026-10-17 · read on this device, nothing uploaded', dateA);
+      const reminders = await page.locator('#sys-results').evaluate((r, want) => r.innerText.split(want).length - 1, REMINDER).catch(() => -1);
+      check('android ui: the Developer options reminder shows once with the results', reminders === 1 && await visible(page, '#sys-android-reminder'), reminders);
+      check('android ui: no Explain with AI for Android yet', (await page.locator('#sys-ai, #sys-ai-open').count()) === 0);
+      const shownA = await shownText(page);
+
+      await choose(page, zipOf(NAME_B, 'set-b.zip'));
+      const mB = await msg(page);
+      check('android ui: Set B -> read message says Android 13', /^Read the bug report from 2026-10-16: Android 13, security patch 20\d\d-\d\d-\d\d\.$/.test(mB), mB);
+      check('android ui: a new choice hides the old results', !(await visible(page, '#sys-results')));
+      let okB = true;
+      try { await analyzed(page); } catch (e) { okB = false; }
+      check('android ui: Set B -> score 15', okB && (await score(page)) === '15', await score(page));
+      const resB = await page.locator('#sys-results').innerText().catch(() => '');
+      check('android ui: Set B shows Android 13, 4 % storage and a 257-day-old patch', resB.includes('Android 13') && resB.includes('4 %') && resB.includes('257 days'), resB.slice(0, 400));
+      const verdictB = (await page.locator('.sys-verdict').innerText().catch(() => '')).trim();
+      check('android ui: Set B verdict names the phone', verdictB === 'This phone has problems worth fixing soon.', verdictB);
+      const shownB = await shownText(page);
+      check('android ui: file names and planted identifiers are never shown', leaks(shownA + '\n' + shownB).length === 0, leaks(shownA + '\n' + shownB));
+      check('android ui: Analyze sends nothing (outbound log unchanged)', (await page.locator('#ledger-list li').count()) === before && seen.external.length === 0, seen.external);
+
+      await page.click('#sys-android-clear', { timeout: 3000 });
+      const cleared = await page.evaluate(() => ({ files: document.getElementById('sys-file-android').files.length,
+        state: document.getElementById('sys-step-android-file').getAttribute('data-state') }));
+      check('android ui: Clear empties the file, the message, the status and the results', cleared.files === 0 && cleared.state === 'empty' && (await msg(page)) === '' &&
+        (await status(page)) === '' && !(await visible(page, '#sys-results')), cleared);
+      await analyze(page);
+      check('android ui: after Clear, Analyze asks for a bug report again', (await status(page)) === NEED);
+      check('android ui: Pixel 7 flow -> no page errors', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // A bug report a file manager has already unzipped: the plain text
+      const { page, context, seen } = await newPage('ok', PIXEL);
+      await waitBanner(page);
+      await choose(page, { name: 'bugreport-c.txt', mimeType: 'text/plain', buffer: fs.readFileSync(path.join(adir, 'bugreport-c.txt')) });
+      const m = await msg(page);
+      check('android ui: plain text bug report -> read message', m === MSG_C, m);
+      let ok = true;
+      try { await analyzed(page); } catch (e) { ok = false; }
+      check('android ui: plain text bug report -> score 80', ok && (await score(page)) === '80', await score(page));
+      check('android ui: plain text -> no page errors', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // Every refusal has its own message; Analyze then shows nothing
+      const { page, context, seen } = await newPage('ok', PIXEL);
+      await waitBanner(page);
+      const cases = [
+        ['encrypted.zip', 'This zip is password-protected. Take a new bug report and choose that file.'],
+        ['bzip2.zip', ERR_KIND], ['zip64.zip', ERR_KIND], ['multidisk.zip', ERR_KIND],
+        ['truncated.zip', ERR_DAMAGED], ['cd-too-big.zip', ERR_DAMAGED],
+        ['no-main.zip', 'This zip has no bug report inside. Choose the .zip file saved from Take bug report.'],
+        ['empty.zip', 'This zip has no bug report inside. Choose the .zip file saved from Take bug report.']
+      ];
+      for (const [k, want] of cases) {
+        await choose(page, zipOf(k, k));
+        const m = await msg(page);
+        check('android ui: ' + k + ' -> its message', m === want, m);
+        await analyze(page);
+        check('android ui: ' + k + ' -> Analyze asks for a bug report, no results', (await status(page)) === NEED && !(await visible(page, '#sys-results')), await status(page));
+      }
+      await choose(page, { name: 'photo.png', mimeType: 'image/png', buffer: PNG });
+      check('android ui: a photo -> not a bug report', (await msg(page)) === ERR_NOT, await msg(page));
+      await choose(page, { name: 'bugreport.zip', mimeType: 'application/zip', buffer: Buffer.alloc(0) });
+      check('android ui: a zero-byte file -> empty', (await msg(page)) === 'This file is empty. Save the bug report again and choose it.', await msg(page));
+      await analyze(page);
+      check('android ui: after errors, Analyze shows no results', (await status(page)) === NEED && !(await visible(page, '#sys-results')));
+      check('android ui: wrong files -> no page errors', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // A deflate bomb: progress while reading, then only the first 30 MB
+      const { page, context, seen } = await newPage('ok', PIXEL);
+      await waitBanner(page);
+      await page.evaluate(() => {
+        window.__amsgs = [];
+        const n = document.querySelector('#sys-step-android-file [data-role="msg"]');
+        new MutationObserver(() => window.__amsgs.push(n.textContent)).observe(n, { childList: true, characterData: true, subtree: true });
+      });
+      const t0 = Date.now();
+      await choose(page, zipOf('bomb.zip', 'bomb.zip'));
+      const took = Date.now() - t0;
+      const m = await msg(page);
+      check('android ui: bomb.zip -> only the first 30 MB were read', m.endsWith(' ' + TRUNC), m);
+      const progress = (await page.evaluate(() => window.__amsgs)).map((s) => (s.match(/^Reading the bug report on this phone… (\d+) MB$/) || [])[1]).filter(Boolean).map(Number);
+      check('android ui: bomb.zip -> progress in MB while reading', progress.some((n) => n >= 1), progress);
+      check('android ui: bomb.zip read in under 20 s', took < 20000, took);
+      check('android ui: bomb.zip -> no page errors', seen.errors.length === 0, seen.errors);
+
+      // A new choice while a big read runs: the old read is cancelled and never shows
+      await page.setInputFiles('#sys-file-android', zipOf('bomb.zip', 'bomb.zip'), { timeout: 10000 });
+      await page.waitForTimeout(150);
+      await choose(page, zipOf(NAME_B, 'set-b.zip'));
+      await page.waitForTimeout(1500);
+      const mB = await msg(page);
+      check('android ui: a new choice during a read -> only the new file\'s message', /^Read the bug report from 2026-10-16: Android 13/.test(mB) && !mB.includes(TRUNC), mB);
+      let ok = true;
+      try { await analyzed(page); } catch (e) { ok = false; }
+      check('android ui: a new choice during a read -> the new file\'s results', ok && (await score(page)) === '15', await score(page));
+      check('android ui: cancelled read -> no page errors', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // A browser without DecompressionStream: a deflated report cannot be unpacked; a stored one still reads
+      const { page, context, seen } = await newPage('ok', Object.assign({}, PIXEL, { initScript: 'delete window.DecompressionStream;' }));
+      await waitBanner(page);
+      await choose(page, zipOf(NAME_A, 'set-a.zip'));
+      check('android ui: no DecompressionStream -> update your browser', (await msg(page)) === ERR_NO_DEFLATE, await msg(page));
+      await choose(page, zipOf(NAME_B, 'set-b.zip'));
+      let ok = true;
+      try { await analyzed(page); } catch (e) { ok = false; }
+      check('android ui: no DecompressionStream -> a stored report still scores 15', ok && (await score(page)) === '15', await score(page));
+      check('android ui: no DecompressionStream -> no page errors', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // Banners: a phone on the Android steps never says "done on a computer"; others keep their B4 texts
+      const { page, context, seen } = await newPage('ok', PIXEL);
+      await waitBanner(page);
+      await choose(page, zipOf(NAME_A, 'set-a.zip'));
+      for (const [os, want] of [['windows', 'You’re on Android. The Windows steps below are done on that computer; you can read them here.'],
+        ['mac', 'You’re on Android. The Mac steps below are done on that computer; you can read them here.'],
+        ['ios', 'You’re on Android. The iPhone steps below are done on the iPhone itself; you can read them here.']]) {
+        await page.click('#sys-os-' + os, { timeout: 2000 }).catch(() => {});
+        check('android ui: Android UA + ' + os + ' selected -> B4 banner', (await bannerOf(page)) === want, await bannerOf(page));
+      }
+      await page.click('#sys-os-android', { timeout: 2000 }).catch(() => {});
+      check('android ui: back on Android -> Android banner, the chosen report kept', (await bannerOf(page)) === BANNER && (await msg(page)) === MSG_A, [await bannerOf(page), await msg(page)]);
+      check('android ui: banner switches -> no page errors', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      const { page, context } = await newPage('ok', { userAgent: WIN_UA7 });
+      await waitBanner(page);
+      await page.click('#sys-os-android', { timeout: 2000 }).catch(() => {});
+      check('android ui: Windows visitor picks Android -> neutral Android banner', (await bannerOf(page)) === 'The Android steps below are done on the Android phone itself; you can read them here.', await bannerOf(page));
+      check('android ui: Windows visitor picks Android -> Android steps shown', await visible(page, '#sys-android-steps') && !(await visible(page, '#sys-steps')));
+      await context.close();
+    }
+    {
+      const wk = await webkit.launch();
+      try {
+        const { page, context } = await newPage('ok', devices['iPhone 14'], wk);
+        await waitBanner(page);
+        await page.click('#sys-os-android', { timeout: 2000 }).catch(() => {});
+        check('android ui: iPhone visitor picks Android -> iPhone banner for the Android steps', (await bannerOf(page)) === 'You’re on an iPhone. The Android steps below are done on the Android phone itself; you can read them here.', await bannerOf(page));
+        await context.close();
+      } finally {
+        await wk.close();
+      }
+    }
+    for (const [label, opts, engineName, shot, pick] of [['Pixel 7', PIXEL, 'chromium', 'system-android-pixel.png', false],
+      ['360 px Chromium', { userAgent: ANDROID_UA, viewport: { width: 360, height: 740 } }, 'chromium', null, false],
+      ['375 px Chromium', { userAgent: ANDROID_UA, viewport: { width: 375, height: 812 } }, 'chromium', 'system-android-375.png', false],
+      ['iPhone SE (3rd gen) WebKit', devices['iPhone SE (3rd gen)'], 'webkit', null, true]]) {
+      const eng = engineName === 'webkit' ? await webkit.launch() : browser;
+      try {
+        const { page, context, seen } = await newPage('ok', opts, eng);
+        await waitBanner(page);
+        if (pick) await page.click('#sys-os-android', { timeout: 2000 }).catch(() => {});
+        let ok = true;
+        try { await choose(page, zipOf(NAME_A, 'set-a.zip')); await analyzed(page); } catch (e) { ok = false; }
+        check('android ui: works at ' + label, ok && (await score(page)) === '80', await score(page));
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        check('android ui: no horizontal scroll at ' + label + ' with the Android steps and results', overflow <= 0, overflow);
+        const sizes = await page.evaluate(() => {
+          const h = (n) => n.getBoundingClientRect().height;
+          return { buttons: Array.from(document.querySelectorAll('.sys-os-btn')).map(h), analyze: h(document.getElementById('sys-android-analyze')), clear: h(document.getElementById('sys-android-clear')) };
+        });
+        check('android ui: tap targets at least 44 px at ' + label, sizes.buttons.length === 5 && sizes.buttons.every((x) => x >= 44) && sizes.analyze >= 44 && sizes.clear >= 44, sizes);
+        check('android ui: no page errors at ' + label, seen.errors.length === 0, seen.errors);
         if (shot) await page.locator('#system').screenshot({ path: path.join(shots, shot) }).catch(() => {});
         await context.close();
       } finally {

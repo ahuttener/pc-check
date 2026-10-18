@@ -225,16 +225,16 @@
         var computer = { windows: 'Windows', mac: 'Mac', linux: 'Linux' }[selected];
         var phone = family === 'ios' || family === 'android';
         if (phone && computer) return 'You’re on ' + label + '. The ' + computer + ' steps below are done on that computer; you can read them here.';
-        if (family === 'ios' && selected === 'android') return 'You’re on ' + (label === 'iPad' ? 'an iPad' : 'an iPhone') + '. Android reports are coming soon; pick iPhone above to check this ' + label + '.';
+        if (family === 'ios' && selected === 'android') return 'You’re on ' + (label === 'iPad' ? 'an iPad' : 'an iPhone') + '. The Android steps below are done on the Android phone itself; you can read them here.';
         if (family === 'android' && selected === 'ios') return 'You’re on Android. The iPhone steps below are done on the iPhone itself; you can read them here.';
         // A computer visitor who picks a phone gets a neutral line, not their own computer's steps.
         if (!phone && selected === 'ios') return 'The iPhone steps below are done on the iPhone itself; you can read them here.';
-        if (!phone && selected === 'android') return 'Android reports are coming soon.';
+        if (!phone && selected === 'android') return 'The Android steps below are done on the Android phone itself; you can read them here.';
         switch (family) {
           case 'windows': return 'You’re on ' + label + '. Follow the three steps below to check this PC.';
           case 'mac': return 'You’re on ' + label + '. Save the reports with apps already on your Mac and choose them below. No Terminal needed.';
           case 'linux': return 'You’re on ' + label + '. Run the five read-only commands below in a terminal and paste what they print.';
-          case 'android': return 'You’re on Android. Android reports are coming soon. To check a computer or an iPhone, pick it above.';
+          case 'android': return 'You’re on Android. Follow the steps below right here on this phone. No computer, cable or app needed.';
           case 'ios': return label === 'iPad' ? 'You’re on an iPad. The steps below work on iPad too, right here on this iPad.' :
             'You’re on an iPhone. Follow the steps below right here on this iPhone. No computer or app needed.';
           default: return 'Pick the system of the computer you want to check.';
@@ -244,7 +244,7 @@
       sysLeadLinux: 'Linux already keeps an error journal and knows your battery and disks. Five read-only commands print it; paste their output below and PC Check reads it right here in your browser. Nothing you paste leaves your device.',
       sysLeadMac: 'Your Mac already keeps a system profile and a record of crashes and unexpected restarts. Save them with System Information and Finder, then choose the files below: PC Check reads them right here in your browser. Nothing leaves your device.',
       sysLeadIos: 'Your iPhone keeps a log each time an app crashes, iOS runs short of memory or the iPhone restarts by itself. Save a few of those logs to Files, choose them below and add the battery figure from Settings: PC Check reads them right here in your browser. Nothing leaves your iPhone.',
-      sysLeadAndroid: 'Android reports are coming soon.',
+      sysLeadAndroid: 'Your Android phone can save a bug report: a zip file with its own record of crashes, unexpected restarts, battery and storage. Save one with the phone’s own menus, choose it below and PC Check reads it right here in your browser. Nothing leaves your phone.',
       sysReading: 'Reading the file on this device…',
       sysReadReliability: function (date, n) { return 'Read: reliability history' + (date ? ' saved ' + date : '') + ', ' + n + (n === 1 ? ' event.' : ' events.'); },
       sysReadBattery: 'Read: battery report.',
@@ -264,10 +264,13 @@
       sysScoreTitle: 'Health score',
       sysVerdictOk: 'No serious problems in these reports.',
       sysVerdictWarn: 'A few things need attention.',
-      sysVerdictRisk: function (platform) { return platform === 'ios' ? 'This iPhone has problems worth fixing soon.' : (platform === 'ipad' ? 'This iPad has problems worth fixing soon.' : 'This PC has problems worth fixing soon.'); },
+      sysVerdictRisk: function (platform) {
+        return platform === 'ios' ? 'This iPhone has problems worth fixing soon.' : (platform === 'ipad' ? 'This iPad has problems worth fixing soon.' :
+          (platform === 'android' ? 'This phone has problems worth fixing soon.' : 'This PC has problems worth fixing soon.'));
+      },
       sysReportFrom: function (date, platform, fromSpx) {
         var what = platform === 'linux' ? 'Logs from ' : (platform === 'mac' ? (fromSpx ? 'System Information from ' : 'Newest report from ') :
-          (platform === 'ios' ? 'Newest log from ' : 'Reliability history from '));
+          (platform === 'ios' ? 'Newest log from ' : (platform === 'android' ? 'Bug report from ' : 'Reliability history from ')));
         return what + date + ' · read on this device, nothing uploaded';
       },
       // Linux: text pasted from five read-only commands
@@ -319,10 +322,27 @@
       sysIosBattery: function (n) { return 'Battery: ' + n + ' %.'; },
       sysIosBatteryBad: 'Enter a whole number from 1 to 100: the Maximum Capacity percentage.',
       sysIosNeed: 'Choose at least one log or type the battery figure first.',
+      // Android: one bug report (zip or its unzipped text) read on this phone. File and entry names are never shown.
+      sysAndroidReading: 'Reading the bug report on this phone…',
+      sysAndroidProgress: function (mb) { return 'Reading the bug report on this phone… ' + mb + ' MB'; },
+      sysAndroidRead: function (date, android, patch, truncated) {
+        return 'Read the bug report' + (date ? ' from ' + date : '') + (android ? ': Android ' + android : '') +
+          (patch ? (android ? ', ' : ': ') + 'security patch ' + patch : '') + '.' +
+          (truncated ? ' Only the first 30 MB of its log were read; that is enough for this check.' : '');
+      },
+      sysAndroidNotReport: 'This doesn’t look like an Android bug report. Choose the .zip file saved from Take bug report.',
+      sysAndroidNoMain: 'This zip has no bug report inside. Choose the .zip file saved from Take bug report.',
+      sysAndroidEncrypted: 'This zip is password-protected. Take a new bug report and choose that file.',
+      sysAndroidZipKind: 'PC Check can’t open this kind of zip. Take a new bug report and choose that file.',
+      sysAndroidDamaged: 'This zip looks damaged or incomplete. Wait until the bug report is fully saved, or take a new one.',
+      sysAndroidNoDeflate: 'This browser can’t unpack the bug report. Update Chrome (or your browser) from the Play Store and try again.',
+      sysAndroidEmpty: 'This file is empty. Save the bug report again and choose it.',
+      sysAndroidReadError: 'The browser could not read this file. Save it to Downloads and choose it again.',
+      sysAndroidNeed: 'Choose a bug report first.',
       sysLocalOnly: 'Read on this device, nothing uploaded',
       sysFindingsTitle: 'What we found',
       sysNoFindings: 'Nothing to fix in these reports.',
-      sysFactsTitle: function (platform) { return platform === 'ios' ? 'This iPhone' : (platform === 'ipad' ? 'This iPad' : 'This PC'); },
+      sysFactsTitle: function (platform) { return platform === 'ios' ? 'This iPhone' : (platform === 'ipad' ? 'This iPad' : (platform === 'android' ? 'This phone' : 'This PC')); },
       sysFix: 'Fix: ',
       sev_risk: 'Risk',
       sev_warn: 'Attention',
@@ -347,7 +367,7 @@
       sysAiUpstream: 'The AI service did not answer. Try again in a minute.',
       sysAiFail: 'The explanation could not be fetched. Check your connection and try again.',
       lpExplain: 'AI explanation of the system report (this site, passed to Claude by Anthropic)',
-      reportSysTitle: function (platform) { return 'System report (' + (platform === 'linux' ? 'Linux' : (platform === 'mac' ? 'Mac' : (platform === 'ios' ? 'iPhone' : (platform === 'ipad' ? 'iPad' : 'Windows')))) + ')'; },
+      reportSysTitle: function (platform) { return 'System report (' + (platform === 'linux' ? 'Linux' : (platform === 'mac' ? 'Mac' : (platform === 'ios' ? 'iPhone' : (platform === 'ipad' ? 'iPad' : (platform === 'android' ? 'Android' : 'Windows'))))) + ')'; },
       reportSysScore: function (n) { return 'Health score: ' + n + ' / 100'; },
       reportAiTitle: 'AI explanation',
       reportFootAi: 'Generated locally in your browser. Only what is listed under “What left your device” was sent, including the anonymised system summary for the AI explanation. cybersecinfo.com/pccheck',
@@ -400,6 +420,8 @@
       mac: blankMac(),
       // iPhone: reports = accepted logs (no file names), battery = the typed Maximum Capacity, steps = per-step message
       ios: blankIos(),
+      // Android: report = the scanner's result (no file or entry names), truncated = the 30 MB cap stopped the read
+      android: blankAndroid(),
       evaluation: null,
       // Explain with AI: open = disclosure shown; busy = request in flight; text/model = the answer
       ai: blankAi()
@@ -422,6 +444,10 @@
 
   function blankIos() {
     return { reports: [], battery: { raw: '', value: null, error: false }, steps: { logs: null, battery: null }, status: null };
+  }
+
+  function blankAndroid() {
+    return { report: null, truncated: false, steps: { file: null }, status: null };
   }
 
   function blankAi() {
@@ -2221,6 +2247,123 @@
     if (status) status.textContent = state.sys.ios.status ? resolve(state.sys.ios.status) : '';
   }
 
+  // ---------------------------------------------------------------------------
+  // Android: one bug report saved from Developer options > Take bug report, read on this phone by PCZip (only the main
+  // text, at most its first 30 MB) and fed to PCSys.androidScanner. File and entry names are never read, shown or
+  // stored. Reading starts on choice; a new choice or Clear cancels the old read. Only evaluateAndroid output is shown.
+  // ---------------------------------------------------------------------------
+  var androidRead = null;
+  var androidToken = 0;
+  var ANDROID_ERRORS = {
+    not_bugreport: 'sysAndroidNotReport', not_zip: 'sysAndroidNotReport', no_main: 'sysAndroidNoMain', encrypted: 'sysAndroidEncrypted',
+    zip64: 'sysAndroidZipKind', multi_disk: 'sysAndroidZipKind', unsupported_method: 'sysAndroidZipKind', damaged: 'sysAndroidDamaged',
+    no_deflate: 'sysAndroidNoDeflate', empty: 'sysAndroidEmpty'
+  };
+  var MIB = 1048576;
+  // Thrown from the scanner callbacks of a read that a new choice or Clear replaced: PCZip then cancels its stream
+  function StaleRead() {}
+
+  function dropAndroidEvaluation() {
+    if (state.sys.evaluation && state.sys.evaluation.platform === 'android') {
+      state.sys.evaluation = null;
+      state.sys.ai = blankAi();
+    }
+    state.sys.android.status = null;
+  }
+
+  function loadAndroidFile(file) {
+    if (!file) return Promise.resolve();
+    var token = ++androidToken;
+    var a = state.sys.android;
+    a.report = null;
+    a.truncated = false;
+    dropAndroidEvaluation();
+    renderSysResults();
+    renderPdfButton();
+    var S = window.PCSys;
+    var Z = window.PCZip;
+    if (!S || !Z) { androidRead = null; setAndroidStep('error', ['sysAndroidReadError']); return Promise.resolve(); }
+    setAndroidStep('reading', ['sysAndroidReading']);
+    var scanner = S.androidScanner();
+    var job = Promise.resolve().then(function () {
+      return Z.readBugreport(file, {
+        maxBytes: S.ANDROID_TEXT_CAP,
+        onText: function (chunk) {
+          if (token !== androidToken) throw new StaleRead();
+          scanner.push(chunk);
+        },
+        onProgress: function (bytes) {
+          if (token !== androidToken) throw new StaleRead();
+          setAndroidStep('reading', ['sysAndroidProgress', Math.floor(bytes / MIB)]);
+        }
+      });
+    }).then(function (r) {
+      if (token !== androidToken) return;
+      if (!r || r.error) {
+        setAndroidStep('error', [ANDROID_ERRORS[r && r.error] || 'sysAndroidReadError']);
+        return;
+      }
+      var report = scanner.finish();
+      a.report = report;
+      a.truncated = r.truncated === true;
+      // The read message shows only values evaluateAndroid accepts (it validates the version and the patch date)
+      var e = S.evaluateAndroid({ report: report, truncated: a.truncated }, new Date());
+      setAndroidStep('ok', ['sysAndroidRead', isoDate(e.reportDate), e.android, e.securityPatch, a.truncated]);
+    }).catch(function () {
+      if (token === androidToken) setAndroidStep('error', ['sysAndroidReadError']);
+    });
+    androidRead = job;
+    return job;
+  }
+
+  function setAndroidStep(status, msg) {
+    state.sys.android.steps.file = status ? { status: status, msg: msg } : null;
+    renderAndroidSteps();
+  }
+
+  function analyzeAndroid() {
+    return (androidRead || Promise.resolve()).then(function () {
+      var a = state.sys.android;
+      var S = window.PCSys;
+      dropAndroidEvaluation();
+      if (!S || !a.report) {
+        a.status = ['sysAndroidNeed'];
+      } else {
+        state.sys.evaluation = S.evaluateAndroid({ report: a.report, truncated: a.truncated }, new Date());
+        state.sys.ai = blankAi();
+        a.status = ['sysDone'];
+      }
+      renderAndroidSteps();
+      renderSysResults();
+      renderPdfButton();
+      var heading = $('#sys-results h3');
+      if (state.sys.evaluation && state.sys.evaluation.platform === 'android' && heading) heading.focus();
+    });
+  }
+
+  function clearAndroid() {
+    androidToken++;
+    androidRead = null;
+    var input = document.getElementById('sys-file-android');
+    if (input) input.value = '';
+    dropAndroidEvaluation();
+    state.sys.android = blankAndroid();
+    renderAndroidSteps();
+    renderSysResults();
+    renderPdfButton();
+  }
+
+  function renderAndroidSteps() {
+    var root = document.getElementById('sys-step-android-file');
+    if (root) {
+      var step = state.sys.android.steps.file;
+      root.setAttribute('data-state', step ? step.status : 'empty');
+      $('[data-role="msg"]', root).textContent = step ? resolve(step.msg) : '';
+    }
+    var status = $('#sys-android-status');
+    if (status) status.textContent = state.sys.android.status ? resolve(state.sys.android.status) : '';
+  }
+
   function selectSysOs(os) {
     state.sys.selected = os;
     renderSysBanner();
@@ -2251,7 +2394,7 @@
     if ($('#sys-linux-steps')) $('#sys-linux-steps').hidden = !linux;
     if ($('#sys-mac-steps')) $('#sys-mac-steps').hidden = !mac;
     if ($('#sys-ios-steps')) $('#sys-ios-steps').hidden = state.sys.selected !== 'ios';
-    if ($('#sys-android-soon')) $('#sys-android-soon').hidden = state.sys.selected !== 'android';
+    if ($('#sys-android-steps')) $('#sys-android-steps').hidden = state.sys.selected !== 'android';
     var lead = { linux: 'sysLeadLinux', mac: 'sysLeadMac', ios: 'sysLeadIos', android: 'sysLeadAndroid' }[state.sys.selected] || 'sysLeadWindows';
     if ($('#sys-lead')) $('#sys-lead').textContent = t(lead);
     // On a phone or tablet the Mac steps are read here and done on the Mac.
@@ -2350,6 +2493,12 @@
       });
       root.appendChild(list);
     }
+    // Android: once with the results, the reminder to switch Developer options off and delete the bug report
+    if (e.platform === 'android' && typeof e.reminder === 'string' && e.reminder) {
+      var reminder = el('p', 'sys-reminder', e.reminder);
+      reminder.id = 'sys-android-reminder';
+      root.appendChild(reminder);
+    }
 
     if (e.facts.length) {
       root.appendChild(el('h4', 'sys-subtitle', t('sysFactsTitle', sysDevice(e))));
@@ -2363,6 +2512,8 @@
       root.appendChild(tiles);
     }
 
+    // No AI explanation for Android yet: nothing builds or sends an Android summary
+    if (e.platform === 'android') return;
     var ai = el('div', 'sys-ai');
     ai.id = 'sys-ai';
     root.appendChild(ai);
@@ -2497,6 +2648,7 @@
     renderLinuxSteps();
     renderMacSteps();
     renderIosSteps();
+    renderAndroidSteps();
     renderSysResults();
   }
 
@@ -2593,6 +2745,23 @@
     if ($('#sys-ios-battery')) $('#sys-ios-battery').addEventListener('input', onIosBattery);
     if ($('#sys-ios-analyze')) $('#sys-ios-analyze').addEventListener('click', analyzeIos);
     if ($('#sys-ios-clear')) $('#sys-ios-clear').addEventListener('click', clearIos);
+    var androidInput = document.getElementById('sys-file-android');
+    var androidZone = $('#sys-step-android-file .sys-drop');
+    if (androidInput && androidZone) {
+      androidInput.addEventListener('change', function () {
+        loadAndroidFile(androidInput.files && androidInput.files[0]);
+      });
+      androidZone.addEventListener('dragover', function (ev) { ev.preventDefault(); androidZone.classList.add('is-over'); });
+      androidZone.addEventListener('dragleave', function () { androidZone.classList.remove('is-over'); });
+      androidZone.addEventListener('drop', function (ev) {
+        ev.preventDefault();
+        androidZone.classList.remove('is-over');
+        var files = ev.dataTransfer && ev.dataTransfer.files;
+        if (files && files[0]) loadAndroidFile(files[0]);
+      });
+    }
+    if ($('#sys-android-analyze')) $('#sys-android-analyze').addEventListener('click', analyzeAndroid);
+    if ($('#sys-android-clear')) $('#sys-android-clear').addEventListener('click', clearAndroid);
 
     detectOs().then(function (os) {
       state.sys.os = os;
@@ -2670,7 +2839,7 @@
       sb.appendChild(sh);
       var sysDate = isoDate(sysEval.reportDate);
       if (sysDate) sb.appendChild(el('p', null, t('sysReportFrom', sysDate, sysEval.platform, state.sys.mac.fromSpx)));
-      else if (sysEval.platform === 'ios') sb.appendChild(el('p', null, t('sysLocalOnly')));
+      else if (sysEval.platform === 'ios' || sysEval.platform === 'android') sb.appendChild(el('p', null, t('sysLocalOnly')));
       sb.appendChild(el('h3', null, t('sysFindingsTitle')));
       var sysFindings = sysEval.findings.slice().sort(function (a, b) {
         return SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity);

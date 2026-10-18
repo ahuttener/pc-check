@@ -23,11 +23,11 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/fonts/roboto-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/orbitron-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/styles.css?v=14">
+  <link rel="stylesheet" href="assets/styles.css?v=15">
   <script src="assets/gauge.js?v=3" defer></script>
   <script src="assets/sysreport.js?v=25" defer></script>
   <script src="assets/zipread.js?v=1" defer></script>
-  <script src="assets/app.js?v=24" defer></script>
+  <script src="assets/app.js?v=25" defer></script>
 </head>
 <body>
   <svg class="sprite" aria-hidden="true" focusable="false">
@@ -274,7 +274,7 @@
         <button id="sys-os-mac" class="sys-os-btn" type="button" data-os="mac" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-mac"></use></svg><span>Mac</span></button>
         <button id="sys-os-linux" class="sys-os-btn" type="button" data-os="linux" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-linux"></use></svg><span>Linux</span></button>
         <button id="sys-os-ios" class="sys-os-btn" type="button" data-os="ios" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-phone"></use></svg><span>iPhone</span></button>
-        <button id="sys-os-android" class="sys-os-btn" type="button" data-os="android" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-phone"></use></svg><span>Android</span><span class="sys-soon-tag">Coming soon</span></button>
+        <button id="sys-os-android" class="sys-os-btn" type="button" data-os="android" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-phone"></use></svg><span>Android</span></button>
       </div>
       <div id="sys-steps" class="sys-steps">
         <ol class="sys-step-list">
@@ -457,8 +457,50 @@
         <p class="sys-privacy">Analyze runs on this device. Nothing is uploaded, so nothing is added to the outbound log.</p>
       </div>
 
-      <div id="sys-android-soon" class="sys-steps sys-android" hidden>
-        <p class="sys-soon-box">Android reports are coming soon. Until then, PC Check can check a Windows, Mac or Linux computer, or an iPhone: pick it above.</p>
+      <div id="sys-android-steps" class="sys-steps sys-android" hidden>
+        <ol class="sys-step-list">
+          <li id="sys-step-android-dev" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">1</span>Turn on Developer options (once)</h3>
+            <ol class="sys-how">
+              <li>Open Settings &gt; About phone (on Samsung: About phone &gt; Software information).</li>
+              <li>Tap Build number 7 times. Enter your PIN if asked. You’ll see “You are now a developer”.</li>
+            </ol>
+            <p class="sys-note">Menus differ between phone makers. If you can’t find an item, type its name in the search box at the top of Settings.</p>
+          </li>
+          <li id="sys-step-android-report" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">2</span>Take a bug report</h3>
+            <ol class="sys-how">
+              <li>Open Settings &gt; System &gt; Developer options (on many phones Developer options is at the bottom of Settings).</li>
+              <li>Tap Take bug report, choose Interactive report and tap Report.</li>
+              <li>Wait 1 to 3 minutes. A notification says the bug report is ready.</li>
+              <li>Tap the notification. If Android warns that bug reports contain personal data, that is expected: continue. In the share menu choose Files, My Files or Save to device, and save the .zip file in Downloads.</li>
+            </ol>
+            <p class="sys-note">The bug report contains personal data, such as app names, network names and parts of your logs. Don’t send it to anyone. PC Check reads only the parts it needs, right here on this phone, and never uploads it.</p>
+            <p class="sys-note">An Interactive report may include a screenshot; PC Check never opens it.</p>
+          </li>
+          <li id="sys-step-android-file" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">3</span>Choose the bug report</h3>
+            <ol class="sys-how">
+              <li>Tap the box below and pick the bug report .zip from Downloads.</li>
+            </ol>
+            <input id="sys-file-android" class="sys-file" type="file" accept=".zip,.txt,application/zip,application/x-zip-compressed,text/plain">
+            <label class="sys-drop" for="sys-file-android"><span class="sys-drop-main">Choose the bug report</span><span class="sys-drop-sub">The .zip file from Take bug report</span></label>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+          <li id="sys-step-android-off" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">4</span>Turn Developer options off again</h3>
+            <ol class="sys-how">
+              <li>When you are done, open Settings &gt; System &gt; Developer options and turn off the switch at the top (Use developer options).</li>
+              <li>Delete the bug report from Downloads: it holds personal data and you no longer need it.</li>
+            </ol>
+          </li>
+        </ol>
+        <div class="sys-actions">
+          <button id="sys-android-analyze" class="btn btn-primary" type="button">Analyze</button>
+          <button id="sys-android-clear" class="btn btn-ghost" type="button">Clear</button>
+          <p id="sys-android-status" class="sys-status" role="status" aria-live="polite"></p>
+        </div>
+        <p class="sys-privacy">Analyze runs on this phone. Nothing is uploaded, so nothing is added to the outbound log.</p>
       </div>
 
       <div id="sys-results" class="sys-results" aria-live="polite" hidden></div>
