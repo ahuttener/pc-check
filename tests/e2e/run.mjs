@@ -980,6 +980,23 @@ try {
           distro: hostUbuntu.facts.filter((f) => f.label === 'System').map((f) => f.value)[0],
           distroSummary: S.buildSummary(hostUbuntu).distro
         },
+        fix1: (() => {
+          const jl = ['Oct 18 09:00:00 tuxbox-jdoe jdoe-sync.sh[77]: sync failed', 'Oct 18 09:00:01 tuxbox-jdoe jdoe-sync.sh[77]: sync failed',
+            'Oct 18 09:00:02 tuxbox-jdoe jdoe-sync.sh[77]: sync failed', 'Oct 18 09:00:03 tuxbox-jdoe jdoe-sync.sh[77]: sync failed',
+            'Oct 18 09:00:04 tuxbox-jdoe jdoe-sync.sh[77]: sync failed', 'Oct 18 09:00:05 tuxbox-jdoe mailsync[9]: login failed for asmith@example.org',
+            'Oct 18 09:00:06 tuxbox-jdoe asmith-backup[9]: x', 'Oct 18 09:00:07 tuxbox-jdoe kernel: totem[42]: segfault at 0 ip 0 sp 0 error 4'];
+          const e = S.evaluateLinux({ journal: S.parseJournal(jl.join('\n'), now) }, now);
+          const raw = JSON.stringify(Object.assign({}, e, { names: [] }));
+          const inode = S.evaluateLinux({ disks: S.parseDisks('Filesystem       Inodes   IUsed    IFree IUse% Mounted on\n/dev/sda1 1000 960 40 96% /\n') }, now);
+          return {
+            journalOnly: text(e) + '\n' + raw,
+            inodeSummary: S.buildSummary(inode).diskInodes, inodeIds: ids(inode), inodeTitle: (inode.findings[0] || {}).title,
+            mapped: S.anonymise('::ffff:192.0.2.44 mapped'), v6colon: S.anonymise('lease 2001:db8::1f: failed'), v6dot: S.anonymise('lease 2001:db8::1f.'),
+            ssids: [S.anonymise("SSID: 'Home Net'"), S.anonymise('SSID "Home Net" lost'), S.anonymise('ssid=HomeNet5 reason=3')],
+            mixed: S.anonymise('id 0A1b2C3d4E5f60718293A4b5C6d7E8f9 x'), under: S.anonymise('unit_f1e2d3c4b5a69788_x and 0123456789ABCDEF_y'),
+            win: S.anonymise('C:\\Users\\JohnDoe\\app.exe at 10.0.0.1 fe80::1ff:fe23:4567:890a', ['JohnDoe'])
+          };
+        })(),
         winPlatform: win.platform,
         winSummary: JSON.stringify(S.buildSummary(win))
       };
@@ -988,7 +1005,7 @@ try {
     if (r) {
       check('linux ubuntu: platform linux, score 25', r.ub.platform === 'linux' && r.ub.score === 25, [r.ub.platform, r.ub.score]);
       check('linux ubuntu: findings in order', r.ub.ids.join(',') === 'driver_errors:warn,repeated_errors:warn,crashes:info,oom:warn,prev_boot_crash:risk,disk_full:warn,battery:warn', r.ub.ids);
-      check('linux ubuntu: summary JSON is exact', r.ub.summary === '{"platform":"linux","distro":"Ubuntu 24.04.1 LTS","kernel":"6.8.0-45-generic","score":25,"findings":[{"id":"driver_errors","severity":"warn"},{"id":"repeated_errors","severity":"warn"},{"id":"crashes","severity":"info"},{"id":"oom","severity":"warn"},{"id":"prev_boot_crash","severity":"risk"},{"id":"disk_full","severity":"warn"},{"id":"battery","severity":"warn"}],"bootErrors":25,"topErrorSources":[{"name":"kernel","count":10},{"name":"gnome-shell","count":5},{"name":"NetworkManager","count":2}],"topCrashApps":[{"name":"firefox","count":2}],"oomKills":1,"previousBootErrors":3,"diskMaxUsedPct":93,"batteryHealthPct":72.3}', r.ub.summary);
+      check('linux ubuntu: summary JSON is exact', r.ub.summary === '{"platform":"linux","distro":"Ubuntu 24.04.1 LTS","kernel":"6.8.0-45-generic","score":25,"findings":[{"id":"driver_errors","severity":"warn"},{"id":"repeated_errors","severity":"warn"},{"id":"crashes","severity":"info"},{"id":"oom","severity":"warn"},{"id":"prev_boot_crash","severity":"risk"},{"id":"disk_full","severity":"warn"},{"id":"battery","severity":"warn"}],"bootErrors":25,"topErrorSources":[{"name":"kernel","count":10},{"name":"gnome-shell","count":5},{"name":"NetworkManager","count":2}],"topCrashApps":[{"name":"firefox","count":2}],"oomKills":1,"previousBootErrors":3,"diskMaxUsedPct":93,"diskInodes":false,"batteryHealthPct":72.3}', r.ub.summary);
       const fact = (facts, label) => (facts.filter((f) => f.label === label)[0] || {}).value;
       check('linux ubuntu: facts (system, kernel, disks, fullest, battery, errors, date)',
         fact(r.ub.facts, 'System') === 'Ubuntu 24.04.1 LTS' && fact(r.ub.facts, 'Kernel') === '6.8.0-45-generic' && fact(r.ub.facts, 'Disks') === '2 (476.9G, 1.8T)' &&
@@ -1012,6 +1029,16 @@ try {
       check('linux anonymiser: std::vector unchanged', r.anon.cpp === 'terminate called: std::vector::_M_range_check', r.anon.cpp);
       check('linux anonymiser: 16+ hex runs -> [id]', r.anon.hex === 'boot [id] usb [id]', r.anon.hex);
       check('linux anonymiser: hostname "ubuntu" never replaces Ubuntu in the distro', r.anon.distro === 'Ubuntu 24.04.1 LTS' && r.anon.distroSummary === 'Ubuntu 24.04.1 LTS', r.anon);
+      const x = r.fix1;
+      check('linux fix: IPv4-mapped IPv6 keeps the IPv4 rule (::ffff:[ip])', x.mapped === '::ffff:[ip] mapped', x.mapped);
+      check('linux fix: IPv6 followed by ":" or "." -> [ip]', x.v6colon === 'lease [ip]: failed' && x.v6dot === 'lease [ip].', [x.v6colon, x.v6dot]);
+      check('linux fix: SSID: \'X\', SSID "X", ssid=X -> ssid="[wifi]"', x.ssids.every((s) => s.includes('ssid="[wifi]"') && !/Home/.test(s)), x.ssids);
+      check('linux fix: mixed-case 32-hex run -> [id]', x.mixed === 'id [id] x', x.mixed);
+      check('linux fix: hex runs next to an underscore -> [id]', x.under === 'unit_[id]_x and [id]_y', x.under);
+      check('linux fix: Windows-style path, IPv4 and full IPv6 still masked as before', x.win === 'C:\\Users\\[user]\\app.exe at [ip] [ip]', x.win);
+      check('linux fix: journal-only paste -> no user name (hostname part, e-mail local part) in summary, facts, findings or evaluation fields',
+        !/jdoe|asmith/i.test(x.journalOnly), (x.journalOnly.match(/.{0,40}(?:jdoe|asmith).{0,20}/i) || [])[0]);
+      check('linux fix: inode usage -> diskInodes true and an inode-worded disk_full', x.inodeSummary === true && x.inodeIds.join(',') === 'disk_full:risk' && /inodes/.test(x.inodeTitle), [x.inodeSummary, x.inodeIds, x.inodeTitle]);
       check('windows evaluation is marked platform windows', r.winPlatform === 'windows', r.winPlatform);
       check('windows summary unchanged after anonymiser additions', r.winSummary === '{"os":"Microsoft Windows 11 Home","model":"Predator PTN16-51","ramGb":32,"score":50,'
         + '"findings":[{"id":"shutdowns","severity":"warn"},{"id":"hardware","severity":"warn"},{"id":"crashes","severity":"warn"},'

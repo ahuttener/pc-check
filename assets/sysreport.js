@@ -225,12 +225,26 @@
     if (n && !set.seen[n]) { set.seen[n] = true; set.list.push(n); }
   }
 
+  // Generic words and distribution names found inside hostnames ("jdoe-laptop", "arch-box"): never names on their own,
+  // so they do not garble the distro string or ordinary words.
+  var HOST_PART_STOPLIST = toSet(['desktop', 'laptop', 'linux', 'home', 'server', 'user', 'local', 'localdomain', 'host',
+    'workstation', 'computer', 'machine', 'main', 'test', 'work', 'office', 'node', 'guest', 'admin', 'root', 'wifi',
+    'arch', 'mint', 'elementary', 'zorin', 'endeavouros', 'gentoo', 'void', 'nixos', 'centos', 'rocky', 'alma', 'rhel',
+    'suse', 'kubuntu', 'xubuntu', 'lubuntu', 'neon', 'deepin', 'solus', 'garuda', 'slackware', 'tumbleweed', 'leap',
+    'raspberry', 'thinkpad', 'macbook', 'dell', 'lenovo', 'asus', 'acer']);
+
   function addHostname(set, host) {
     var h = String(host || '').trim();
-    if (!h || DEFAULT_HOST_SET[h.toLowerCase()]) return;
+    if (!h || set.seen[h] || DEFAULT_HOST_SET[h.toLowerCase()]) return;
     addName(set, h);
     var label = h.split('.')[0];
     if (label && !DEFAULT_HOST_SET[label.toLowerCase()]) addName(set, label);
+    // Parts of 4+ characters ("tuxbox-jdoe" -> "tuxbox", "jdoe"): a user name inside the hostname often shows up
+    // elsewhere too (jdoe-sync.sh) where no other rule would catch it.
+    h.split(/[-_.]/).forEach(function (part) {
+      var p = part.toLowerCase();
+      if (part.length >= 4 && !DEFAULT_HOST_SET[p] && !HOST_PART_STOPLIST[p] && !/^\d+$/.test(part)) addName(set, part);
+    });
   }
 
   function addUser(set, user) {
@@ -286,6 +300,12 @@
     while ((m = re.exec(message)) !== null) addUser(names, m[1]);
     re = /\b(?:user|logname|ruser)=([^\s;,\]\)'"]+)/g;
     while ((m = re.exec(message)) !== null) addUser(names, m[1]);
+    // The local part of an e-mail address is usually the person's name or user name
+    re = /([A-Za-z0-9._%+-]{1,64})@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+    while (message.indexOf('@') !== -1 && (m = re.exec(message)) !== null) {
+      var local = m[1];
+      if (local.length >= 3 && !SYSTEM_USER_SET[local.toLowerCase()]) addName(names, local);
+    }
     if (source === 'pkexec' || source === 'sudo') {
       m = /^([A-Za-z_][A-Za-z0-9_.-]{0,31}) ?: /.exec(message);
       if (m) addUser(names, m[1]);
@@ -498,15 +518,19 @@
   function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
   // Compressed IPv6 ("2001:db8::1f", "fe80::1"): hex groups around a "::", not glued to a word ("std::vector").
-  var IPV6_COMPRESSED = /(^|[^\w:])((?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?|::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})(?![\w:])/gi;
+  var IPV6_COMPRESSED = /(^|[^\w:])((?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?|::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})(?![\w]|[:.][0-9a-f])/gi;
+  // 16+ hex characters in one case (boot IDs, USB serials), or 32+ in any case, not glued to letters or digits
+  // ("_" counts as a separator, so unit_<id> is caught too)
+  var HEX_RUN = /(^|[^0-9A-Za-z])([0-9a-f]{16,}|[0-9A-F]{16,}|[0-9a-fA-F]{32,})(?![0-9A-Za-z])/g;
 
   function anonymise(value, names) {
     var s = String(value === null || value === undefined ? '' : value)
       .replace(/\\x2d/gi, '-') // systemd unit names escape "-" as \x2d (dev-disk-by\x2duuid-…)
-      .replace(/\bssid(?:=| )?"[^"\r\n]{0,128}"/gi, 'ssid="[wifi]"')
-      .replace(/\bssid(?:=| )?'[^'\r\n]{0,128}'/gi, 'ssid="[wifi]"')
+      .replace(/\bssid[ \t]*[=:]?[ \t]*"[^"\r\n]{0,128}"/gi, 'ssid="[wifi]"')
+      .replace(/\bssid[ \t]*[=:]?[ \t]*'[^'\r\n]{0,128}'/gi, 'ssid="[wifi]"')
+      .replace(/\bssid=(?!["'])[^\s,;]{1,128}/gi, 'ssid="[wifi]"')
       .replace(IPV6_COMPRESSED, function (all, before, ip) { return /\d/.test(ip) ? before + '[ip]' : all; })
-      .replace(/\b(?:[0-9a-f]{16,}|[0-9A-F]{16,})\b/g, '[id]'); // boot IDs, machine IDs, USB serials
+      .replace(HEX_RUN, '$1[id]');
     (names || []).filter(function (n) { return n && n.length >= 3; }).forEach(function (n) {
       s = s.replace(new RegExp(escapeRe(n), 'gi'), '[name]');
     });
@@ -741,6 +765,7 @@
       distro: sys ? sys.distro : null, kernel: sys ? sys.kernel : null,
       bootErrors: journal ? journal.total : null, topErrorSources: [], topCrashApps: [], oomKills: null,
       previousBootErrors: prev ? prev.total : null, diskMaxUsedPct: disks ? disks.worstPct : null,
+      diskInodes: !!(disks && disks.inodes), // diskMaxUsedPct is then the share of file entries (df -i), not space
       batteryHealthPct: bat && bat.present && typeof bat.healthPct === 'number' ? bat.healthPct : null, names: names.list };
     function add(id, severity, title, detail, fix) { findings.push({ id: id, severity: severity, title: title, detail: detail || '', fix: fix || '' }); }
 
@@ -900,6 +925,14 @@
     if (journal || boots) facts.push({ label: 'Logs from', value: localDate(out.reportDate) });
     facts.forEach(function (f) { f.value = anonymise(f.value, out.names); });
     findings.forEach(function (f) { f.title = anonymise(f.title, out.names); f.detail = anonymise(f.detail, out.names); });
+    // Every text field of the evaluation is anonymised here too, so no screen or PDF can show a raw value by mistake.
+    out.distro = out.distro === null ? null : anonymise(out.distro, out.names);
+    out.kernel = out.kernel === null ? null : anonymise(out.kernel, out.names);
+    var anonList = function (items) {
+      return items.map(function (a) { return { name: anonymise(a.name, out.names), count: a.count }; }).sort(byCountThenName);
+    };
+    out.topErrorSources = anonList(out.topErrorSources);
+    out.topCrashApps = anonList(out.topCrashApps);
     return out;
   }
 
@@ -952,6 +985,7 @@
       oomKills: summaryNumber(e.oomKills, 100000),
       previousBootErrors: summaryNumber(e.previousBootErrors, 100000),
       diskMaxUsedPct: summaryNumber(e.diskMaxUsedPct, 100),
+      diskInodes: e.diskInodes === true,
       batteryHealthPct: summaryNumber(e.batteryHealthPct, 200)
     };
   }
