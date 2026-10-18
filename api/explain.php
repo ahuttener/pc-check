@@ -90,7 +90,10 @@ $system = bsc_explain_system_prompt(isset($summary['platform']) ? 'linux' : 'win
 
 $request = array(
     'model' => $model,
-    'max_tokens' => 1200,
+    // Haiku 5.5 thinks by default and thinking counts against max_tokens,
+    // so keep effort low and leave room for the ~180-word answer.
+    'max_tokens' => 3000,
+    'output_config' => array('effort' => 'low'),
     'system' => $system,
     'messages' => array(
         array('role' => 'user', 'content' => json_encode($summary, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)),
