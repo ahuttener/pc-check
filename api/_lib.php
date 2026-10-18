@@ -576,15 +576,18 @@ function bsc_validate_summary($s)
     return $s;
 }
 
-/** A list of at most 3 {name, count} entries: printable short names, whole non-negative counts. */
-function bsc_summary_name_counts($value, $maxCount)
+/**
+ * A list of at most 3 {name, count} entries: printable short names, whole counts from $minCount to 100000
+ * (Linux lists may hold 0; the Mac and iPhone lists pass 1).
+ */
+function bsc_summary_name_counts($list, $minCount = 0)
 {
-    if (!bsc_is_list($value) || count($value) > 3) {
+    if (!bsc_is_list($list) || count($list) > 3) {
         return false;
     }
-    foreach ($value as $a) {
+    foreach ($list as $a) {
         if (!bsc_has_exact_keys($a, array('name', 'count')) || !bsc_summary_string($a['name'])
-            || !bsc_summary_count($a['count'], $maxCount)) {
+            || !bsc_summary_count($a['count'], 100000) || $a['count'] < $minCount) {
             return false;
         }
     }
@@ -637,7 +640,7 @@ function bsc_validate_linux_summary($s)
             return null;
         }
     }
-    if (!bsc_summary_name_counts($s['topErrorSources'], 100000) || !bsc_summary_name_counts($s['topCrashApps'], 100000)) {
+    if (!bsc_summary_name_counts($s['topErrorSources']) || !bsc_summary_name_counts($s['topCrashApps'])) {
         return null;
     }
     return $s;
@@ -707,13 +710,8 @@ function bsc_validate_mac_summary($s)
             return null;
         }
     }
-    if (!bsc_summary_name_counts($s['topCrashApps'], 100000)) {
+    if (!bsc_summary_name_counts($s['topCrashApps'], 1)) {
         return null;
-    }
-    foreach ($s['topCrashApps'] as $a) {
-        if ($a['count'] < 1) {
-            return null;
-        }
     }
     return $s;
 }
@@ -774,13 +772,8 @@ function bsc_validate_ios_summary($s)
             return null;
         }
     }
-    if (!bsc_summary_name_counts($s['topCrashApps'], 100000)) {
+    if (!bsc_summary_name_counts($s['topCrashApps'], 1)) {
         return null;
-    }
-    foreach ($s['topCrashApps'] as $a) {
-        if ($a['count'] < 1) {
-            return null;
-        }
     }
     return $s;
 }

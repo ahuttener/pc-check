@@ -620,5 +620,23 @@ foreach ((array) glob($tmpDir . DIRECTORY_SEPARATOR . '*') as $f) {
 }
 rmdir($tmpDir);
 
+// The shared {name, count} list check: Linux allows a zero count, Mac and iPhone pass a minimum of 1.
+$nc = function ($count) { return array(array('name' => 'SnapNotes', 'count' => $count)); };
+t('name counts: default minimum 0 accepts 0 and 100000', bsc_summary_name_counts($nc(0)) && bsc_summary_name_counts($nc(100000)));
+t('name counts: minimum 1 refuses 0, accepts 1 and 100000', !bsc_summary_name_counts($nc(0), 1) && bsc_summary_name_counts($nc(1), 1) && bsc_summary_name_counts($nc(100000), 1));
+t('name counts: 100001, -1, "2" and 4 entries refused', !bsc_summary_name_counts($nc(100001)) && !bsc_summary_name_counts($nc(-1)) && !bsc_summary_name_counts($nc('2'))
+    && !bsc_summary_name_counts(array_merge($nc(1), $nc(1), $nc(1), $nc(1)), 1));
+foreach (array('mac' => json_decode($macA, true), 'ios' => $ios) as $p => $sum) {
+    $z = $sum;
+    $z['topCrashApps'][0]['count'] = 0;
+    t($p . ': a zero topCrashApps count -> null', bsc_validate_summary($z) === null);
+    $z = $sum;
+    $z['panicCauses'][0]['count'] = 0;
+    t($p . ': a zero panicCauses count -> null', bsc_validate_summary($z) === null);
+}
+$z = $lin;
+$z['topCrashApps'] = $nc(0);
+t('linux: a zero topCrashApps count still passes', is_array(bsc_validate_summary($z)));
+
 echo 'explain: ' . ($failures ? "$failures failed" : 'all passed') . "\n";
 exit($failures ? 1 : 0);

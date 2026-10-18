@@ -1471,24 +1471,8 @@ try {
       check('ios good news: 84 % and 80 % -> healthy row; 58 % or no number -> none', JSON.stringify(r.goodA) === JSON.stringify([{ title: 'Battery is healthy \u2014 it holds 84 % of its original capacity.' }]) &&
         r.good80.length === 1 && r.goodB.length === 0 && r.goodNone.length === 0 && !/healthy/.test(A.summary), [r.goodA, r.good80, r.goodB, r.goodNone]);
 
-      // The server's iOS checks (bsc_validate_ios_summary in api/_lib.php), mirrored here; then the real PHP whitelist
-      // judges the same summaries.
-      const IOS_RE = /^(?:iPhone OS|iOS|iPadOS) [0-9]{1,2}(?:\.[0-9]{1,3}){0,2}(?: \([a-z]\))?(?: \([0-9]{2}[A-Z][0-9]{1,6}[a-z]?\))?$/;
-      const MODEL_RE = /^(?:iPhone|iPad|iPod)[0-9]{1,2},[0-9]{1,2}$/;
-      const IDS = ['panics', 'crashes', 'jetsam', 'battery', 'old_ios', 'old_report'];
-      const CAUSES = ['sensor', 'thermal', 'sep', 'storage', 'gpu', 'watchdog', 'data_abort', 'other'];
-      const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
-      const str80 = (v) => typeof v === 'string' && [...v].length <= 80 && !/[\u0000-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/.test(v);
-      const serverOk = (s) => same(Object.keys(s).sort(), KEYS.slice().sort()) && s.platform === 'ios' &&
-        (s.ios === null || (typeof s.ios === 'string' && IOS_RE.test(s.ios))) && (s.model === null || (typeof s.model === 'string' && MODEL_RE.test(s.model))) &&
-        int(s.score, 0, 100) && Array.isArray(s.findings) && s.findings.length <= 20 &&
-        s.findings.every((f) => same(Object.keys(f).sort(), ['id', 'severity']) && IDS.includes(f.id) && ['risk', 'warn', 'info'].includes(f.severity)) &&
-        ['panics30d', 'crashes30d', 'jetsam30d'].every((k) => s[k] === null || int(s[k], 0, 100000)) &&
-        Array.isArray(s.panicCauses) && s.panicCauses.length <= 3 && s.panicCauses.every((c) => same(Object.keys(c).sort(), ['count', 'name']) && CAUSES.includes(c.name) && int(c.count, 1, 100000)) &&
-        Array.isArray(s.topCrashApps) && s.topCrashApps.length <= 3 && s.topCrashApps.every((a) => same(Object.keys(a).sort(), ['count', 'name']) && str80(a.name) && int(a.count, 1, 100000)) &&
-        (s.batteryHealthPct === null || int(s.batteryHealthPct, 1, 100));
+      // The real PHP whitelist (bsc_validate_ios_summary in api/_lib.php) judges every summary built above.
       const summaries = allEdge.map((e) => e.summaryObj).concat([h], r.badBattery.map((b) => JSON.parse(b[2])), r.scores);
-      check('parity ios: every summary passes the server\'s iOS checks (mirrored)', summaries.every(serverOk), summaries.filter((s) => !serverOk(s)));
       // Unconditional: the real PHP whitelist must accept every one of them.
       let verdicts = null;
       try {
