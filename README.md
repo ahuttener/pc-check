@@ -106,7 +106,9 @@ The end-to-end suite checks that nothing leaves before the click, that the passw
 
 Requirements: PHP 7.4+ with cURL (falls back to `file_get_contents` with TLS verification), Apache with `mod_headers` for the security headers.
 
-Upload `index.html`, `.htaccess`, `assets/` and `api/` (with `api/cache/.htaccess`) to `public_html/pccheck/`. Leave out `tests/`, `README.md`, `LICENSE` and `HANDOFF.md`. Make sure `api/cache/` is writable by PHP.
+Pushing to `main` deploys automatically: `.github/workflows/deploy.yml` uploads the site to `public_html/pccheck/` over FTP with TLS. It never deletes anything on the server and skips `tests/`, `docs/`, `api/cache/` and the repository's own files. It needs three repository secrets, `FTP_SERVER`, `FTP_USERNAME` and `FTP_PASSWORD` (hPanel → Files → FTP Accounts); until they exist it only prints a warning. The workflow can also be run by hand from the Actions tab.
+
+To deploy by hand, upload `index.html`, `.htaccess`, `assets/` and `api/` (with `api/cache/.htaccess`) to `public_html/pccheck/`. Leave out `tests/`, `README.md`, `LICENSE` and `HANDOFF.md`. Make sure `api/cache/` is writable by PHP.
 
 ### Configuring the AI explanation
 
