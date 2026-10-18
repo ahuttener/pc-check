@@ -363,6 +363,48 @@
       reportPrefix: function (p) { return 'Sent to Pwned Passwords: only the first 5 characters of the hash (' + p + '). The password itself is not in this report.'; },
       reportFoot: 'Generated locally in your browser — nothing was sent to CyberSecInfo. cybersecinfo.com/pccheck',
 
+      // System report (Windows reports read on this device)
+      sysBanner: function (family, label) {
+        switch (family) {
+          case 'windows': return 'You’re on ' + label + '. Follow the three steps below to check this PC.';
+          case 'mac': return 'You’re on macOS. Mac reports are coming soon; for now PC Check reads Windows reports.';
+          case 'linux': return 'You’re on Linux. Linux reports are coming soon; for now PC Check reads Windows reports.';
+          case 'android': return 'You’re on Android. These steps are done on a computer: open this page there, or follow them on the computer and come back with the files.';
+          case 'ios': return 'You’re on an iPhone or iPad. These steps are done on a computer: open this page there, or follow them on the computer and come back with the files.';
+          default: return 'Pick the system of the computer you want to check.';
+        }
+      },
+      sysSoon: function (name) { return name + ' reports are coming soon. For now PC Check reads Windows reports; the browser checks above work on any system.'; },
+      sysReading: 'Reading the file on this device…',
+      sysReadReliability: function (date, n) { return 'Read: reliability history' + (date ? ' saved ' + date : '') + ', ' + n + (n === 1 ? ' event.' : ' events.'); },
+      sysReadBattery: 'Read: battery report.',
+      sysReadMsinfo: 'Read: system information.',
+      sysNotReliability: 'This doesn’t look like a Reliability history file. In Reliability Monitor, use “Save reliability history…” and pick the .xml file.',
+      sysNotBattery: 'This doesn’t look like a battery report. Pick the battery-report.html file the command saved on your Desktop.',
+      sysNotMsinfo: 'This doesn’t look like a System Information export. In msinfo32, use File > Export and pick the .txt file.',
+      sysLooksLike: function (step) { return ' It looks like the file for step ' + step + '.'; },
+      sysLanguage: 'This report is in a language PC Check can’t read yet — the crash history still works.',
+      sysTooBig: 'This file is larger than 40 MB, so it is not one of the reports PC Check reads.',
+      sysReadError: 'This file could not be read. Try saving it again.',
+      sysNeedFile: 'Add at least one report first. The crash history (step 1) tells the most.',
+      sysDone: 'Analyzed on this device. Nothing was sent.',
+      sysNoCrash: 'Analyzed on this device. Nothing was sent. Add the crash history (step 1) for the full picture.',
+      sysCopied: 'Copied',
+      sysCopy: 'Copy',
+      sysScoreTitle: 'Health score',
+      sysVerdictOk: 'No serious problems in these reports.',
+      sysVerdictWarn: 'A few things need attention.',
+      sysVerdictRisk: 'This PC has problems worth fixing soon.',
+      sysReportFrom: function (date) { return 'Reliability history from ' + date + ' · read on this device, nothing uploaded'; },
+      sysLocalOnly: 'Read on this device, nothing uploaded',
+      sysFindingsTitle: 'What we found',
+      sysNoFindings: 'Nothing to fix in these reports.',
+      sysFactsTitle: 'This PC',
+      sysFix: 'Fix: ',
+      sev_risk: 'Risk',
+      sev_warn: 'Attention',
+      sev_info: 'For your info',
+
       aboutTitle: 'How it works',
       aboutPw: 'Password: your browser turns the password into a code (SHA-1 hash) and sends only the first 5 characters. Pwned Passwords returns hundreds of codes that start the same way, and the comparison happens here. Not even the service knows which password you checked.',
       aboutDns: 'DNS: your browser looks up 20 test addresses that exist only for you. The bash.ws service records which DNS servers made those lookups and compares them with your connection’s network.',
@@ -398,7 +440,16 @@
     pwVisible: false,
     pwBusy: false,
     pwError: null,
-    speed: { running: false, result: null, controller: null }
+    speed: { running: false, result: null, controller: null },
+    // System report: os = detected system, selected = button chosen, steps = per-file message for the UI
+    sys: {
+      os: null,
+      selected: 'windows',
+      files: { reliability: null, battery: null, msinfo: null },
+      steps: { reliability: null, battery: null, msinfo: null },
+      status: null,
+      evaluation: null
+    }
   };
 
   function blankCheck() {
@@ -647,6 +698,7 @@
     renderSpeedButtons();
     Object.keys(state.checks).forEach(renderCheck);
     renderLedger();
+    renderSys();
   }
 
   // ---------------------------------------------------------------------------
@@ -1305,6 +1357,304 @@
   }
 
   // ---------------------------------------------------------------------------
+  // System report: Windows reports read and judged on this device only.
+  // Nothing here touches the network, so nothing is added to the outbound log.
+  // ---------------------------------------------------------------------------
+  var SYS_KINDS = ['reliability', 'battery', 'msinfo'];
+  var SYS_MAX_BYTES = 40 * 1024 * 1024;
+  var SYS_MSINFO_HEAD_BYTES = 4 * 1024 * 1024; // about 2 million UTF-16 characters: System Summary and Problem Devices come first
+  var SYS_PARSER = { reliability: 'parseReliability', battery: 'parseBattery', msinfo: 'parseMsinfo' };
+  var SYS_WRONG = { reliability: 'sysNotReliability', battery: 'sysNotBattery', msinfo: 'sysNotMsinfo' };
+  var SYS_STEP_NO = { reliability: 1, battery: 2, msinfo: 3 };
+  var SYS_OS_NAMES = { windows: 'Windows', mac: 'Mac', linux: 'Linux' };
+  var SYS_GLYPH = { windows: 'os-windows', mac: 'os-mac', linux: 'os-linux', android: 'os-phone', ios: 'os-phone', other: 'os-windows' };
+  var SEVERITY_ORDER = ['risk', 'warn', 'info'];
+  var sysReads = {};
+
+  function detectOs() {
+    var ua = navigator.userAgent || '';
+    var uad = navigator.userAgentData;
+    var family;
+    if (/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) family = 'ios';
+    else if (/Android/.test(ua)) family = 'android';
+    else if (/Windows/.test(ua)) family = 'windows';
+    else if (/Mac OS X|Macintosh/.test(ua)) family = 'mac';
+    else if (/CrOS/.test(ua)) family = 'other';
+    else if (/Linux|X11/.test(ua)) family = 'linux';
+    else family = 'other';
+    var labels = { windows: 'Windows', mac: 'macOS', linux: 'Linux', android: 'Android', ios: 'iPhone or iPad', other: 'this device' };
+    var info = { family: family, label: labels[family] };
+    if (family !== 'windows' || !uad || uad.platform !== 'Windows' || typeof uad.getHighEntropyValues !== 'function') return Promise.resolve(info);
+    // Windows 11 reports platformVersion 13 or higher; Windows 10 reports 1 to 10.
+    return uad.getHighEntropyValues(['platformVersion']).then(function (h) {
+      var major = parseInt(String((h && h.platformVersion) || ''), 10);
+      if (major >= 13) info.label = 'Windows 11';
+      else if (major >= 1) info.label = 'Windows 10';
+      return info;
+    }).catch(function () { return info; });
+  }
+
+  function svgUse(id, cls) {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    if (cls) svg.setAttribute('class', cls);
+    var use = document.createElementNS(ns, 'use');
+    use.setAttribute('href', '#' + id);
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function readBuffer(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject(reader.error); };
+      reader.readAsArrayBuffer(blob);
+    });
+  }
+
+  // Which report a text looks like, to point a file dropped in the wrong box to the right step.
+  function sniffKind(text) {
+    var head = String(text).slice(0, 5000);
+    if (/<RelMonReport[\s>]/.test(head)) return 'reliability';
+    if (/schemas\.microsoft\.com\/battery|<title>\s*Battery report/i.test(head)) return 'battery';
+    if (/^\s*\[(System Summary|Resumo do Sistema)\]\s*$/m.test(head)) return 'msinfo';
+    return null;
+  }
+
+  function isoDate(d) { return d && !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : null; }
+
+  function setSysStep(kind, status, msg) {
+    state.sys.steps[kind] = status ? { status: status, msg: msg } : null;
+    renderSysStep(kind);
+  }
+
+  function loadSysFile(kind, file) {
+    if (!file) return Promise.resolve();
+    state.sys.files[kind] = null;
+    state.sys.evaluation = null;
+    state.sys.status = null;
+    renderSysResults();
+    if (!window.PCSys) { setSysStep(kind, 'error', ['sysReadError']); return Promise.resolve(); }
+    if (file.size > SYS_MAX_BYTES) { setSysStep(kind, 'error', ['sysTooBig']); return Promise.resolve(); }
+    setSysStep(kind, 'reading', ['sysReading']);
+    var blob = kind === 'msinfo' ? file.slice(0, SYS_MSINFO_HEAD_BYTES) : file;
+    var job = readBuffer(blob).then(function (buffer) {
+      var text = window.PCSys.decode(buffer);
+      var parsed = window.PCSys[SYS_PARSER[kind]](text);
+      if (parsed && parsed.error) {
+        var other = sniffKind(text);
+        var msg = t(SYS_WRONG[kind]) + (other && other !== kind ? t('sysLooksLike', SYS_STEP_NO[other]) : '');
+        setSysStep(kind, 'error', msg);
+      } else if (parsed && parsed.unsupportedLanguage) {
+        setSysStep(kind, 'error', ['sysLanguage']);
+      } else {
+        state.sys.files[kind] = parsed;
+        if (kind === 'reliability') setSysStep(kind, 'ok', ['sysReadReliability', isoDate(parsed.generated), parsed.events.length]);
+        else setSysStep(kind, 'ok', [kind === 'battery' ? 'sysReadBattery' : 'sysReadMsinfo']);
+      }
+    }).catch(function () {
+      setSysStep(kind, 'error', ['sysReadError']);
+    });
+    sysReads[kind] = job;
+    return job;
+  }
+
+  function analyzeSys() {
+    var pending = SYS_KINDS.map(function (k) { return sysReads[k] || Promise.resolve(); });
+    return Promise.all(pending).then(function () {
+      var f = state.sys.files;
+      if (!f.reliability && !f.battery && !f.msinfo) {
+        state.sys.evaluation = null;
+        state.sys.status = ['sysNeedFile'];
+      } else {
+        state.sys.evaluation = window.PCSys.evaluateWindows({ reliability: f.reliability, battery: f.battery, msinfo: f.msinfo }, new Date());
+        state.sys.status = f.reliability ? ['sysDone'] : ['sysNoCrash'];
+      }
+      renderSysResults();
+      var heading = $('#sys-results h3');
+      if (state.sys.evaluation && heading) heading.focus();
+    });
+  }
+
+  function selectSysOs(os) {
+    state.sys.selected = os;
+    renderSysOs();
+  }
+
+  function renderSysBanner() {
+    var banner = $('#sys-banner');
+    if (!banner || !state.sys.os) return;
+    banner.textContent = '';
+    banner.appendChild(svgUse(SYS_GLYPH[state.sys.os.family] || 'os-windows', 'sys-glyph'));
+    banner.appendChild(el('span', null, t('sysBanner', state.sys.os.family, state.sys.os.label)));
+  }
+
+  function renderSysOs() {
+    if (!$('#system')) return;
+    $all('.sys-os-btn').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-os') === state.sys.selected));
+    });
+    var windows = state.sys.selected === 'windows';
+    $('#sys-steps').hidden = !windows;
+    var soon = $('#sys-soon');
+    soon.hidden = windows;
+    soon.textContent = windows ? '' : t('sysSoon', SYS_OS_NAMES[state.sys.selected]);
+  }
+
+  function renderSysStep(kind) {
+    var root = document.getElementById('sys-step-' + kind);
+    if (!root) return;
+    var step = state.sys.steps[kind];
+    root.setAttribute('data-state', step ? step.status : 'empty');
+    $('[data-role="msg"]', root).textContent = step ? resolve(step.msg) : '';
+  }
+
+  function bandOf(score) { return score >= 80 ? 'ok' : (score >= 50 ? 'warn' : 'risk'); }
+
+  function renderSysResults() {
+    var root = $('#sys-results');
+    if (!root) return;
+    $('#sys-status').textContent = state.sys.status ? resolve(state.sys.status) : '';
+    root.textContent = '';
+    var e = state.sys.evaluation;
+    root.hidden = !e;
+    if (!e) return;
+
+    var band = bandOf(e.score);
+    var top = el('div', 'sys-summary');
+    var ring = el('div', 'sys-ring');
+    ring.setAttribute('data-band', band);
+    // A CSS custom property set through CSSOM: allowed by the strict CSP (no style attribute in markup).
+    ring.style.setProperty('--score', String(e.score));
+    var num = el('span', 'sys-score', String(e.score));
+    num.id = 'sys-score';
+    ring.appendChild(num);
+    ring.appendChild(el('span', 'sys-score-of', '/ 100'));
+    top.appendChild(ring);
+    var words = el('div', 'sys-summary-text');
+    var h = el('h3', null, t('sysScoreTitle'));
+    h.tabIndex = -1;
+    words.appendChild(h);
+    words.appendChild(el('p', 'sys-verdict', t(band === 'ok' ? 'sysVerdictOk' : (band === 'warn' ? 'sysVerdictWarn' : 'sysVerdictRisk'))));
+    var date = isoDate(e.reportDate);
+    words.appendChild(el('p', 'sys-date', date ? t('sysReportFrom', date) : t('sysLocalOnly')));
+    top.appendChild(words);
+    root.appendChild(top);
+
+    root.appendChild(el('h4', 'sys-subtitle', t('sysFindingsTitle')));
+    var findings = e.findings.slice().sort(function (a, b) {
+      return SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity);
+    });
+    if (!findings.length) {
+      root.appendChild(el('p', 'sys-none', t('sysNoFindings')));
+    } else {
+      var list = el('ul', 'sys-findings');
+      findings.forEach(function (f) {
+        var li = el('li', 'sys-finding');
+        li.setAttribute('data-severity', f.severity);
+        li.appendChild(svgUse('i-' + f.severity, 'sys-mark'));
+        var body = el('div', 'sys-finding-body');
+        var title = el('p', 'sys-finding-title');
+        title.appendChild(el('span', 'sys-sev', t('sev_' + f.severity)));
+        title.appendChild(el('span', null, f.title));
+        body.appendChild(title);
+        if (f.detail) body.appendChild(el('p', 'sys-detail', f.detail));
+        if (f.fix) {
+          var fix = el('p', 'sys-fix');
+          fix.appendChild(el('strong', null, t('sysFix')));
+          fix.appendChild(document.createTextNode(f.fix));
+          body.appendChild(fix);
+        }
+        li.appendChild(body);
+        list.appendChild(li);
+      });
+      root.appendChild(list);
+    }
+
+    if (e.facts.length) {
+      root.appendChild(el('h4', 'sys-subtitle', t('sysFactsTitle')));
+      var tiles = el('dl', 'sys-tiles');
+      e.facts.forEach(function (f) {
+        var tile = el('div', 'sys-tile');
+        tile.appendChild(el('dt', null, f.label));
+        tile.appendChild(el('dd', null, f.value));
+        tiles.appendChild(tile);
+      });
+      root.appendChild(tiles);
+    }
+  }
+
+  function renderSys() {
+    if (!$('#system')) return;
+    renderSysBanner();
+    renderSysOs();
+    SYS_KINDS.forEach(renderSysStep);
+    renderSysResults();
+  }
+
+  function copyText(button) {
+    var code = document.getElementById(button.getAttribute('aria-controls'));
+    if (!code) return;
+    var done = function () {
+      button.textContent = t('sysCopied');
+      setTimeout(function () { button.textContent = t('sysCopy'); }, 2000);
+    };
+    var selectIt = function () {
+      var range = document.createRange();
+      range.selectNodeContents(code);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code.textContent).then(done, selectIt);
+    } else {
+      selectIt();
+    }
+  }
+
+  function initSys() {
+    if (!$('#system')) return;
+    $all('.sys-os-btn').forEach(function (b) {
+      b.addEventListener('click', function () { selectSysOs(b.getAttribute('data-os')); });
+    });
+    SYS_KINDS.forEach(function (kind) {
+      var input = document.getElementById('sys-file-' + kind);
+      var zone = $('#sys-step-' + kind + ' .sys-drop');
+      input.addEventListener('change', function () {
+        var file = input.files && input.files[0];
+        loadSysFile(kind, file).then(function () { input.value = ''; });
+      });
+      zone.addEventListener('dragover', function (ev) { ev.preventDefault(); zone.classList.add('is-over'); });
+      zone.addEventListener('dragleave', function () { zone.classList.remove('is-over'); });
+      zone.addEventListener('drop', function (ev) {
+        ev.preventDefault();
+        zone.classList.remove('is-over');
+        var files = ev.dataTransfer && ev.dataTransfer.files;
+        if (files && files[0]) loadSysFile(kind, files[0]);
+      });
+    });
+    // A file dropped outside the boxes would make the browser open it and leave the page.
+    ['dragover', 'drop'].forEach(function (type) {
+      window.addEventListener(type, function (ev) {
+        var types = ev.dataTransfer && ev.dataTransfer.types;
+        if (types && Array.prototype.indexOf.call(types, 'Files') !== -1) ev.preventDefault();
+      });
+    });
+    $all('.sys-copy').forEach(function (b) { b.addEventListener('click', function () { copyText(b); }); });
+    $('#sys-analyze').addEventListener('click', analyzeSys);
+
+    detectOs().then(function (os) {
+      state.sys.os = os;
+      if (os.family === 'mac' || os.family === 'linux') state.sys.selected = os.family;
+      renderSys();
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // PDF report: built from the current results only when asked, then printed
   // ---------------------------------------------------------------------------
   var REPORT_ORDER = ['browser', 'connection', 'dns', 'webrtc', 'tracking', 'password', 'speed'];
@@ -1522,6 +1872,7 @@
       value = null;
     });
 
+    initSys();
     renderAll();
   }
 
@@ -1537,7 +1888,8 @@
     evaluateTracking: evaluateTracking,
     evaluateSpeed: evaluateSpeed,
     sha1Hex: sha1Hex,
-    shortVersion: shortVersion
+    shortVersion: shortVersion,
+    detectOs: detectOs
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

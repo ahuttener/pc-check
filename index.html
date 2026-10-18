@@ -23,10 +23,10 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/fonts/roboto-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/orbitron-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/styles.css?v=7">
+  <link rel="stylesheet" href="assets/styles.css?v=8">
   <script src="assets/gauge.js?v=3" defer></script>
   <script src="assets/sysreport.js?v=1" defer></script>
-  <script src="assets/app.js?v=7" defer></script>
+  <script src="assets/app.js?v=8" defer></script>
 </head>
 <body>
   <svg class="sprite" aria-hidden="true" focusable="false">
@@ -42,6 +42,11 @@
     <symbol id="n-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="n-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7zM14 2v4a2 2 0 0 0 2 2h4M10 9H8M16 13H8M16 17H8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="n-pulse" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <!-- System glyphs: plain generic shapes, not vendor logos -->
+    <symbol id="os-windows" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3v18M3 12h18" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="os-mac" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 19h20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="os-linux" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 10l3 2.5L7 15M12.5 15.5H17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="os-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M11 18h2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   </svg>
 
   <div id="bait" class="adsbox ad-banner sponsor-ad pub_300x250 text-ad" aria-hidden="true"></div>
@@ -256,6 +261,64 @@
       <p class="ledger-note" data-i18n="ledgerNote">Every request shows the destination your IP address and browser type. That is part of every connection on the internet.</p>
     </aside>
     </div>
+
+    <section id="system" class="system" aria-labelledby="system-title" tabindex="-1">
+      <div class="system-head">
+        <h2 id="system-title">System report</h2>
+        <p class="system-lead">Windows already keeps a crash history, a battery report and a system summary. Save them with the steps below and PC Check reads them right here in your browser. The files never leave your device.</p>
+      </div>
+      <p id="sys-banner" class="sys-banner" aria-live="polite"></p>
+      <div class="sys-os" role="group" aria-label="Which computer are you checking?">
+        <button id="sys-os-windows" class="sys-os-btn" type="button" data-os="windows" aria-pressed="true"><svg aria-hidden="true" focusable="false"><use href="#os-windows"></use></svg><span>Windows</span></button>
+        <button id="sys-os-mac" class="sys-os-btn" type="button" data-os="mac" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-mac"></use></svg><span>Mac</span><span class="sys-soon-tag">Coming soon</span></button>
+        <button id="sys-os-linux" class="sys-os-btn" type="button" data-os="linux" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-linux"></use></svg><span>Linux</span><span class="sys-soon-tag">Coming soon</span></button>
+      </div>
+      <p id="sys-soon" class="sys-soon" hidden></p>
+
+      <div id="sys-steps" class="sys-steps">
+        <ol class="sys-step-list">
+          <li id="sys-step-reliability" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">1</span>Crash history</h3>
+            <ol class="sys-how">
+              <li>Press <kbd>Win</kbd> + <kbd>R</kbd>, type <code>perfmon /rel</code> and press Enter.</li>
+              <li>At the bottom of Reliability Monitor, click “Save reliability history…” and save the <code>.xml</code> file.</li>
+            </ol>
+            <input id="sys-file-reliability" class="sys-file" type="file" accept=".xml,text/xml,application/xml">
+            <label class="sys-drop" for="sys-file-reliability"><span class="sys-drop-main">Choose the .xml file</span><span class="sys-drop-sub">or drop it here</span></label>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+          <li id="sys-step-battery" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">2</span>Battery <span class="sys-optional">(optional, laptops)</span></h3>
+            <ol class="sys-how">
+              <li>Press <kbd>Win</kbd> + <kbd>R</kbd>, paste this command and press Enter:
+                <span class="sys-cmd"><code id="sys-cmd-battery">powercfg /batteryreport /output "%USERPROFILE%\Desktop\battery-report.html"</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-cmd-battery">Copy</button></span>
+              </li>
+              <li>It creates a battery report file on your Desktop; it changes nothing.</li>
+            </ol>
+            <input id="sys-file-battery" class="sys-file" type="file" accept=".html,.htm,text/html">
+            <label class="sys-drop" for="sys-file-battery"><span class="sys-drop-main">Choose battery-report.html</span><span class="sys-drop-sub">or drop it here</span></label>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+          <li id="sys-step-msinfo" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">3</span>System info <span class="sys-optional">(optional)</span></h3>
+            <ol class="sys-how">
+              <li>Press <kbd>Win</kbd> + <kbd>R</kbd>, type <code>msinfo32</code> and press Enter.</li>
+              <li>Choose File &gt; Export and save the <code>.txt</code> file. It can be large; only the first part is read.</li>
+            </ol>
+            <input id="sys-file-msinfo" class="sys-file" type="file" accept=".txt,text/plain">
+            <label class="sys-drop" for="sys-file-msinfo"><span class="sys-drop-main">Choose the .txt file</span><span class="sys-drop-sub">or drop it here</span></label>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+        </ol>
+        <div class="sys-actions">
+          <button id="sys-analyze" class="btn btn-primary" type="button">Analyze</button>
+          <p id="sys-status" class="sys-status" role="status" aria-live="polite"></p>
+        </div>
+        <p class="sys-privacy">Analyze runs on this device. Nothing is uploaded, so nothing is added to the outbound log.</p>
+      </div>
+
+      <div id="sys-results" class="sys-results" aria-live="polite" hidden></div>
+    </section>
 
     <section class="about" aria-labelledby="about-title">
       <h2 id="about-title" data-i18n="aboutTitle">How it works</h2>

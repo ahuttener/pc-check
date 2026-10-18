@@ -595,6 +595,107 @@ try {
     await context.close();
   }
 
+  // 8c. System report panel (UI): OS banner, buttons, guide, uploads, results
+  console.log('System report panel');
+  {
+    const FX = (f) => path.join(here, '..', 'fixtures', 'sys', f);
+    const WIN_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + fullVersion + ' Safari/537.36';
+    const MAC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
+    const pressed = (page, os) => page.getAttribute('#sys-os-' + os, 'aria-pressed', { timeout: 2000 }).catch(() => null);
+    const waitBanner = (page) => page.waitForFunction(() => (document.getElementById('sys-banner') || {}).textContent, null, { timeout: 5000 }).catch(() => {});
+
+    {
+      const { page, context } = await newPage('ok', { userAgent: WIN_UA });
+      await waitBanner(page);
+      const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
+      check('system: Windows UA -> banner says Windows', /You.re on Windows/.test(banner), banner);
+      check('system: Windows UA -> Windows button pre-selected', (await pressed(page, 'windows')) === 'true');
+      check('system: banner has an inline SVG glyph', (await page.locator('#sys-banner svg').count()) === 1);
+      const guide = await page.locator('#system').innerText({ timeout: 2000 }).catch(() => '');
+      check('system: guide shows the three steps', /perfmon \/rel/.test(guide) && /powercfg \/batteryreport \/output "%USERPROFILE%\\Desktop\\battery-report.html"/.test(guide) && /msinfo32/.test(guide), guide.slice(0, 300));
+      await page.click('#sys-os-mac', { timeout: 2000 }).catch(() => {});
+      check('system: Mac button shows Coming soon and hides the Windows steps', /Coming soon/i.test(await page.locator('#sys-soon').innerText({ timeout: 2000 }).catch(() => '')) && !(await page.locator('#sys-steps').isVisible()));
+      await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
+      check('system: back to Windows hides Coming soon', await page.locator('#sys-steps').isVisible().catch(() => false));
+      await context.close();
+    }
+    {
+      const { page, context } = await newPage('ok', { userAgent: MAC_UA });
+      await waitBanner(page);
+      const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
+      check('system: macOS UA -> Mac banner', /You.re on macOS/.test(banner), banner);
+      check('system: macOS UA -> Mac pre-selected', (await pressed(page, 'mac')) === 'true');
+      check('system: macOS UA -> Coming soon', /Coming soon/i.test(await page.locator('#sys-soon').innerText({ timeout: 2000 }).catch(() => '')));
+      await context.close();
+    }
+    {
+      const { page, context, seen } = await newPage('ok', { userAgent: WIN_UA, viewport: { width: 1280, height: 900 } });
+      const before = await page.locator('#ledger-list li').count();
+      let ok = true;
+      try {
+        await page.setInputFiles('#sys-file-reliability', FX('reliability.xml'), { timeout: 3000 });
+        await page.setInputFiles('#sys-file-battery', FX('battery-report.html'), { timeout: 3000 });
+        await page.setInputFiles('#sys-file-msinfo', FX('msinfo32-head.txt'), { timeout: 3000 });
+        await page.click('#sys-analyze', { timeout: 3000 });
+        await page.waitForSelector('#sys-results:not([hidden])', { timeout: 10000 });
+      } catch (e) { ok = false; }
+      check('system: fixtures upload and Analyze shows results', ok);
+      const score = ok ? await page.locator('#sys-score').innerText() : '';
+      check('system: a score is shown', /^\d{1,3}$/.test(score.trim()), score);
+      const res = ok ? await page.locator('#sys-results').innerText() : '';
+      check('system: a finding mentions MiracastPowerManager', /MiracastPowerManager/.test(res), res.slice(0, 300));
+      check('system: findings come with fixes', ok && (await page.locator('#sys-results .sys-finding .sys-fix').count()) > 0);
+      check('system: fact tiles shown (battery, memory)', /Battery health/.test(res) && /32 GB/.test(res), res.slice(0, 300));
+      check('system: report date shown', /2026-10-17/.test(res), res.slice(0, 300));
+      check('system: Analyze sends nothing (outbound log unchanged)', (await page.locator('#ledger-list li').count()) === before);
+      check('system: Analyze makes no outside requests', seen.external.length === 0, seen.external);
+      check('system: no page errors', seen.errors.length === 0, seen.errors);
+      check('system: computer name never on screen', !/PC-NAME/.test(res), res.match(/.{0,20}PC-NAME.{0,20}/));
+      await page.locator('#system').screenshot({ path: path.join(shots, 'system-desktop.png') }).catch(() => {});
+      await context.close();
+    }
+    {
+      const { page, context, seen } = await newPage('ok', { userAgent: WIN_UA });
+      await page.setInputFiles('#sys-file-reliability', FX('battery-report.html'), { timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      const msg = await page.locator('#sys-step-reliability [data-role="msg"]').innerText({ timeout: 2000 }).catch(() => '');
+      check('wrong file gives a clear message', /doesn.t look like a Reliability history file/i.test(msg), msg);
+      await page.setInputFiles('#sys-file-msinfo', FX('msinfo32-de.txt'), { timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      const de = await page.locator('#sys-step-msinfo [data-role="msg"]').innerText({ timeout: 2000 }).catch(() => '');
+      check('system: other-language report says so', /language PC Check can.t read yet/i.test(de), de);
+      check('system: wrong file causes no page error', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    for (const [label, opts, engineName] of [['375 px', { userAgent: WIN_UA, viewport: { width: 375, height: 812 } }, 'chromium'], ['iPhone', devices['iPhone 14'], 'webkit']]) {
+      const eng = engineName === 'webkit' ? await webkit.launch() : browser;
+      try {
+        const { page, context, seen } = await newPage('ok', opts, eng);
+        await waitBanner(page);
+        if (engineName === 'webkit') {
+          const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
+          check('system: on a phone the banner says the steps are done on a computer', /computer/i.test(banner), banner);
+          check('system: on a phone Windows is still pre-selected', (await pressed(page, 'windows')) === 'true');
+        }
+        let ok = true;
+        try {
+          await page.setInputFiles('#sys-file-reliability', FX('reliability.xml'), { timeout: 3000 });
+          await page.setInputFiles('#sys-file-battery', FX('battery-report.html'), { timeout: 3000 });
+          await page.click('#sys-analyze', { timeout: 3000 });
+          await page.waitForSelector('#sys-results:not([hidden])', { timeout: 10000 });
+        } catch (e) { ok = false; }
+        check('system: works at ' + label, ok);
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        check('system: no horizontal scroll at ' + label, overflow <= 0, overflow);
+        check('system: no page errors at ' + label, seen.errors.length === 0, seen.errors);
+        await page.locator('#system').screenshot({ path: path.join(shots, engineName === 'webkit' ? 'system-iphone.png' : 'system-375.png') }).catch(() => {});
+        await context.close();
+      } finally {
+        if (eng !== browser) await eng.close();
+      }
+    }
+  }
+
   // 6c1. Link previews (WhatsApp, LinkedIn, Instagram read Open Graph tags)
   console.log('Link preview');
   {
