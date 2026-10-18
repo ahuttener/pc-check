@@ -945,6 +945,128 @@ try {
     }
   }
 
+  // 8a-ios. iPhone log parsers (and the Mac parser after the shared .ips refactor), on synthetic files
+  console.log('iPhone log parsers');
+  {
+    const sysDir = path.join(here, '..', 'fixtures', 'sys');
+    const iosDir = path.join(sysDir, 'ios');
+    const macDir = path.join(sysDir, 'mac');
+    const rd = (dir, f) => fs.readFileSync(path.join(dir, f), 'utf8');
+    const iosFiles = fs.readdirSync(iosDir).filter((f) => /\.ips$/.test(f)).sort();
+    const ios = {};
+    iosFiles.forEach((f) => { ios[f] = rd(iosDir, f); });
+    const macExpected = JSON.parse(rd(sysDir, 'mac-parse-expected.json'));
+    const mac = {};
+    Object.keys(macExpected).forEach((f) => { mac[f] = rd(macDir, f); });
+    const setA = ['panic-full-2026-10-14-224107.000.ips', 'panic-full-2026-10-02-081533.000.ips', 'panic-base-2026-10-02-081533.000.ips',
+      'MobileSafari-2026-10-15-091244.ips', 'MobileSafari-2026-10-16-200103.ips', 'SnapNotes-2026-10-16-153012.ips',
+      'JetsamEvent-2026-10-16-071002.ips', 'JetsamEvent-2026-10-17-130512.ips', 'Analytics-2026-10-17-020304.ips',
+      'SnapNotes.cpu_resource-2026-10-11-101010.ips'];
+    const setB = ['panic-full-2026-10-09-213301.000.ips', 'panic-full-2026-08-20-101500.000.ips', 'SnapNotes-2026-10-12-110204.ips',
+      'SnapNotes-2026-10-16-171544.ips', 'Carousel-2026-10-13-120000.ips'];
+    const planted = JSON.parse(rd(iosDir, 'PLANTED.json'));
+    const plantedValues = [].concat(...Object.keys(planted).map((k) => planted[k])).map((v) => v.toLowerCase()).concat(['/var/mobile/']);
+    const input = {
+      ios, mac, setA, setB,
+      macWord: rd(macDir, 'Microsoft Word-2026-10-12-110204.ips'), macCrash: rd(macDir, 'Safari_2026-10-01-090909_Priyas-iMac.crash'),
+      df: rd(path.join(sysDir, 'linux'), 'df-ubuntu.txt')
+    };
+    const { page, context } = await newPage('ok');
+    const r = await page.evaluate((t) => {
+      const S = window.PCSys;
+      if (!S || !S.parseMacReport) return null;
+      const iso = (d) => (d instanceof Date ? d.toISOString() : d);
+      const plain = (x) => JSON.parse(JSON.stringify(Object.assign({}, x, x && 'time' in x ? { time: iso(x.time) } : {})));
+      const macNow = {};
+      Object.keys(t.mac).forEach((f) => { macNow[f] = plain(S.parseMacReport(t.mac[f])); });
+      if (!S.parseIosReport || !S.uniqueIosReports) return { macNow };
+      const rep = {};
+      Object.keys(t.ios).forEach((f) => { rep[f] = plain(S.parseIosReport(t.ios[f])); });
+      const panicLine = (rest) => plain(S.parseIosReport('{"bug_type":"210","timestamp":"2026-10-17 10:00:00.00 +0100","os_version":"iPhone OS 26.0.1 (23A355)"}\n{\n  "product" : "iPhone15,4",\n  "panicString" : "panic(cpu 0 caller 0xfffffff012345678): ' + rest + '\\nDebugger message: panic"\n}\n'));
+      const jet = t.ios['JetsamEvent-2026-10-17-130512.ips'];
+      const cut = '"largestProcess" : "MobileSafari",';
+      const resA = t.setA.map((f) => S.parseIosReport(t.ios[f]));
+      const resB = t.setB.map((f) => S.parseIosReport(t.ios[f]));
+      const uniq = S.uniqueIosReports(resA);
+      const swapped = S.uniqueIosReports([resA[2], resA[1]]);
+      return {
+        head: S.IOS_REPORT_HEAD, majors: S.IOS_MAJORS, macNow, rep,
+        causes: ['Missing sensor(s): mic1', 'AOP PANIC - ...', 'userspace watchdog timeout: no successful checkins from backboardd', 'AGX: GPU restart', 'sepfw assert', 'something else']
+          .map((l) => panicLine(l).cause),
+        truncated: plain(S.parseIosReport(jet.slice(0, jet.indexOf(cut) + cut.length))),
+        macWord: S.parseIosReport(t.macWord), macCrash: S.parseIosReport(t.macCrash), df: S.parseIosReport(t.df),
+        badHeader: S.parseIosReport('{"bug_type":\n{\n  "panicString" : "panic(cpu 0 caller 0x1): watchdog"\n}\n'),
+        allJson: resA.concat(resB).map((x) => JSON.stringify(x)),
+        uniq: uniq.map((x) => x.kind), uniqLen: uniq.length,
+        uniqKeptFull: uniq.indexOf(resA[1]) !== -1 && uniq.indexOf(resA[2]) === -1,
+        swappedKeptBase: swapped.length === 1 && swapped[0] === resA[2],
+        uniqNotSame: uniq !== resA
+      };
+    }, input);
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const deepEq = (a, b) => same(a, b) || (a && b && typeof a === 'object' && typeof b === 'object' && Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((k) => deepEq(a[k], b[k])));
+    const macDiff = r ? Object.keys(macExpected).filter((f) => !deepEq(r.macNow[f], macExpected[f])) : ['no PCSys'];
+    check('mac parser unchanged after the refactor', macDiff.length === 0, macDiff.map((f) => [f, r && r.macNow[f], macExpected[f]]));
+    check('ios: parsers are loaded', r !== null && r.rep !== undefined);
+    if (r && r.rep) {
+      check('ios: report head is 1 MB and the majors end with 26, 27', r.head === 1048576 && r.majors.slice(-2).join(',') === '26,27' && r.majors.indexOf(16) !== -1, [r.head, r.majors]);
+      const P = (f) => r.rep[f];
+      const th = P('panic-full-2026-10-14-224107.000.ips');
+      check('ios panic: thermalmonitord watchdog -> thermal, time, os, model, key, cause line',
+        th.kind === 'panic' && th.cause === 'thermal' && th.ios === 'iPhone OS 26.0.1 (23A355)' && th.model === 'iPhone15,4' && th.key === '0B1C2D3E-4F50-4617-8293-A4B5C6D7E8F0' &&
+        th.time === '2026-10-14T21:41:07.000Z' && /^userspace watchdog timeout: no successful checkins from thermalmonitord/.test(th.causeLine) && th.causeLine.length <= 4096, th);
+      const da = P('panic-full-2026-10-02-081533.000.ips');
+      const db = P('panic-base-2026-10-02-081533.000.ips');
+      check('ios panic: full and base copies -> data_abort with the same key', da.cause === 'data_abort' && db.cause === 'data_abort' && da.kind === 'panic' && db.kind === 'panic' &&
+        da.key === db.key && da.key === '1C2D3E4F-5061-4728-93A4-B5C6D7E8F901', [da, db]);
+      const st = P('panic-full-2026-10-09-213301.000.ips');
+      check('ios panic: ANS2 -> storage, iPhone10,4', st.cause === 'storage' && st.model === 'iPhone10,4' && st.ios === 'iPhone OS 16.7.10 (20H350)', st);
+      const se = P('panic-full-2026-08-20-101500.000.ips');
+      check('ios panic: SEP Panic -> sep, time', se.cause === 'sep' && se.time === '2026-08-20T09:15:00.000Z', se);
+      check('ios panic: cause table on single first lines', same(r.causes, ['sensor', 'sensor', 'watchdog', 'gpu', 'other', 'other']), r.causes);
+      const safari = ['MobileSafari-2026-10-15-091244.ips', 'MobileSafari-2026-10-16-200103.ips'].map(P);
+      check('ios crash: both MobileSafari crashes', safari.every((c) => c.kind === 'crash' && c.app === 'MobileSafari' && c.exception === 'EXC_BAD_ACCESS' && c.model === 'iPhone15,4'), safari);
+      check('ios crash: SnapNotes 309 -> EXC_CRASH', P('SnapNotes-2026-10-16-153012.ips').kind === 'crash' && P('SnapNotes-2026-10-16-153012.ips').exception === 'EXC_CRASH', P('SnapNotes-2026-10-16-153012.ips'));
+      const legacy = P('SnapNotes-2026-10-12-110204.ips');
+      check('ios crash: legacy 109 text body -> app, exception, model, os, time', legacy.kind === 'crash' && legacy.app === 'SnapNotes' && legacy.exception === 'EXC_CRASH' &&
+        legacy.model === 'iPhone10,4' && legacy.ios === 'iPhone OS 16.7.10 (20H350)' && legacy.time === '2026-10-12T10:02:04.000Z', legacy);
+      const j17 = P('JetsamEvent-2026-10-17-130512.ips');
+      check('ios jetsam: largest process and the app over its own limit', j17.kind === 'jetsam' && j17.largest === 'MobileSafari' && same(j17.overLimit, ['SnapNotes']) && j17.model === 'iPhone15,4', j17);
+      const j16 = P('JetsamEvent-2026-10-16-071002.ips');
+      check('ios jetsam: no app over its own limit -> overLimit []', j16.kind === 'jetsam' && same(j16.overLimit, []), j16);
+      check('ios jetsam: truncated JSON -> largest from the bounded regex, overLimit []', r.truncated.kind === 'jetsam' && r.truncated.largest === 'MobileSafari' && same(r.truncated.overLimit, []), r.truncated);
+      check('ios: analytics, cpu_resource and Apple Watch logs -> other', ['Analytics-2026-10-17-020304.ips', 'SnapNotes.cpu_resource-2026-10-11-101010.ips', 'Carousel-2026-10-13-120000.ips']
+        .every((f) => same(P(f), { kind: 'other' })), ['Analytics-2026-10-17-020304.ips', 'SnapNotes.cpu_resource-2026-10-11-101010.ips', 'Carousel-2026-10-13-120000.ips'].map(P));
+      check('ios: Mac .ips and Mac .crash -> mac_report', same(r.macWord, { error: 'mac_report' }) && same(r.macCrash, { error: 'mac_report' }), [r.macWord, r.macCrash]);
+      check('ios: df output and a broken header -> not_ios_report', same(r.df, { error: 'not_ios_report' }) && same(r.badHeader, { error: 'not_ios_report' }), [r.df, r.badHeader]);
+      const leaks = r.allJson.map((s) => plantedValues.filter((v) => s.toLowerCase().indexOf(v) !== -1)).reduce((a, b) => a.concat(b), []);
+      check('ios parsers keep no identifiers', leaks.length === 0, leaks);
+      check('ios: uniqueIosReports keeps 2 panics, 3 crashes, 2 Jetsam (panic-base dropped when second)',
+        r.uniqLen === 7 && same(r.uniq.slice().sort(), ['crash', 'crash', 'crash', 'jetsam', 'jetsam', 'panic', 'panic']) && r.uniqKeptFull && r.swappedKeptBase && r.uniqNotSame, r);
+    }
+    await context.close();
+
+    // 3 MB of padding inside processByPid (after panicString): still thermal, fast, in both engines
+    for (const engineName of ['chromium', 'webkit']) {
+      const eng = engineName === 'webkit' ? await webkit.launch() : browser;
+      try {
+        const made = await newPage('ok', {}, eng);
+        const b = await made.page.evaluate((text) => {
+          const S = window.PCSys;
+          if (!S || !S.parseIosReport) return null;
+          const padded = text.replace('"processByPid" : {', '"processByPid" : {"pad" : "' + 'x'.repeat(3000000) + '",');
+          const t0 = performance.now();
+          const res = S.parseIosReport(padded);
+          return { ms: performance.now() - t0, cause: res.cause, kind: res.kind, len: padded.length };
+        }, ios['panic-full-2026-10-14-224107.000.ips']);
+        check('ios panic: 3 MB of padding after panicString -> still thermal, < 200 ms (' + engineName + ')', b !== null && b.len > 3000000 && b.kind === 'panic' && b.cause === 'thermal' && b.ms < 200, b && [Math.round(b.ms), b]);
+        await made.context.close();
+      } finally {
+        if (eng !== browser) await eng.close();
+      }
+    }
+  }
+
   // 8a-mac-rules. Mac rules, score, facts, anonymiser additions and the AI summary
   console.log('Mac report rules');
   {

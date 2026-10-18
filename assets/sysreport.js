@@ -766,8 +766,9 @@
     { name: 'data_abort', re: /data abort|instruction fetch abort|page fault|Kernel trap at/i }
   ];
 
-  function panicCause(line) {
-    for (var i = 0; i < PANIC_CAUSES.length; i++) if (PANIC_CAUSES[i].re.test(line)) return PANIC_CAUSES[i].name;
+  // The first cause in the table whose regex matches the line, else 'other'
+  function panicCauseFrom(line, table) {
+    for (var i = 0; i < table.length; i++) if (table[i].re.test(line)) return table[i].name;
     return 'other';
   }
 
@@ -797,21 +798,47 @@
     return i;
   }
 
-  function macPanic(body, time) {
+  function isJsonBody(body) { return body.charAt(skipSpace(body, 0)) === '{'; }
+
+  // One .ips report (macOS 12+, iOS): line 1 is a one-line JSON header with a string bug_type, the rest is the body.
+  // Only the first MAC_REPORT_HEAD characters are read. null when the text has no such header.
+  function readIps(text) {
+    var s = String(text === null || text === undefined ? '' : text).slice(0, MAC_REPORT_HEAD);
+    var nl = s.indexOf('\n');
+    var first = nl === -1 ? s : s.slice(0, nl);
+    var header = null;
+    if (first.length <= 8192) { try { header = JSON.parse(first); } catch (e) { header = null; } }
+    if (!isObj(header) || typeof header.bug_type !== 'string') return null;
+    return { header: header, body: nl === -1 ? '' : s.slice(nl + 1), time: macReportTime(header.timestamp) };
+  }
+
+  // The panic text of a panic report: the unescaped "panicString" of a JSON body, or everything from the first
+  // "panic(" of a text body. null when there is none.
+  function ipsPanicText(body) {
     var panicText = null;
-    if (body.charAt(skipSpace(body, 0)) === '{') {
+    if (isJsonBody(body)) {
       var m = /"panicString"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/.exec(body);
       if (m) { try { panicText = JSON.parse('"' + m[1] + '"'); } catch (e) { panicText = null; } }
     } else {
       var p = body.indexOf('panic(');
       if (p !== -1) panicText = body.slice(p);
     }
-    if (typeof panicText !== 'string' || !panicText) return { error: 'not_mac_report' };
+    return typeof panicText === 'string' && panicText ? panicText : null;
+  }
+
+  // The first line of the panic text (at most LINE_CHARS) without its "panic(cpu N caller 0x…): " prefix
+  function panicFirstLine(panicText) {
     var nl = panicText.indexOf('\n');
     var first = trimEnd((nl === -1 ? panicText : panicText.slice(0, nl)).slice(0, LINE_CHARS));
-    var rest = first.replace(/^panic\(cpu \d+ caller 0x[0-9a-fA-F]+\):\s*/, '');
+    return first.replace(/^panic\(cpu \d+ caller 0x[0-9a-fA-F]+\):\s*/, '');
+  }
+
+  function macPanic(body, time) {
+    var panicText = ipsPanicText(body);
+    if (panicText === null) return { error: 'not_mac_report' };
+    var rest = panicFirstLine(panicText);
     return {
-      kind: 'panic', time: time, cause: panicCause(rest),
+      kind: 'panic', time: time, cause: panicCauseFrom(rest, PANIC_CAUSES),
       // Kept whole (at most LINE_CHARS): evaluateMac cuts it to 120 only after masking the .spx names, so a name
       // straddling the cut can never leave a fragment behind.
       causeLine: anonymise(rest).trim(),
@@ -819,11 +846,13 @@
     };
   }
 
-  function macCrash(header, body, time) {
+  // An app crash (bug_type 309 with a JSON body, or 109 with a legacy text body)
+  function ipsCrash(header, body, time) {
     var head = body.slice(0, 65536);
     var app = pstr(header.app_name) || pstr(header.name);
     if (!app) { var p = /"procName"\s*:\s*"([^"\\]*)"/.exec(head); app = p ? p[1] : ''; }
-    var ex = /"exception"\s*:\s*\{[^}]{0,4096}"type"\s*:\s*"([A-Z_]+)"/.exec(head);
+    var ex = isJsonBody(head) ? /"exception"\s*:\s*\{[^}]{0,4096}"type"\s*:\s*"([A-Z_]+)"/.exec(head)
+      : /^Exception Type:[ \t]+([A-Z_]{1,64})/m.exec(head);
     return { kind: 'crash', time: time, app: app.slice(0, 256), exception: ex ? ex[1] : null };
   }
 
@@ -847,19 +876,111 @@
   // One diagnostic report (.ips, .panic, .crash). Only the first MAC_REPORT_HEAD characters are read; the file name
   // is never passed in (older ones carry the computer name).
   function parseMacReport(text) {
-    var s = String(text === null || text === undefined ? '' : text).slice(0, MAC_REPORT_HEAD);
-    var nl = s.indexOf('\n');
-    var first = nl === -1 ? s : s.slice(0, nl);
-    var header = null;
-    if (first.length <= 8192) { try { header = JSON.parse(first); } catch (e) { header = null; } }
-    if (isObj(header) && typeof header.bug_type === 'string') {
-      var body = nl === -1 ? '' : s.slice(nl + 1);
-      var time = macReportTime(header.timestamp);
-      if (header.bug_type === '210') return macPanic(body, time);
-      if (header.bug_type === '309' || header.bug_type === '109') return macCrash(header, body, time);
+    var ips = readIps(text);
+    if (ips) {
+      var bug = ips.header.bug_type;
+      if (bug === '210') return macPanic(ips.body, ips.time);
+      if (bug === '309' || bug === '109') return ipsCrash(ips.header, ips.body, ips.time);
       return { kind: 'other' };
     }
-    return macLegacyCrash(s);
+    return macLegacyCrash(String(text === null || text === undefined ? '' : text).slice(0, MAC_REPORT_HEAD));
+  }
+
+  // ---------------------------------------------------------------------------
+  // iPhone: diagnostic logs saved from Settings > Privacy & Security > Analytics & Improvements > Analytics Data
+  // ---------------------------------------------------------------------------
+  var IOS_REPORT_HEAD = 1048576; // the same head as the Mac reader (readIps), exported on its own
+  // iOS majors in release order (numbering jumped from 18 to 26); the last two are the supported ones.
+  var IOS_MAJORS = [15, 16, 17, 18, 26, 27];
+  var IOS_MODEL = /^(?:iPhone|iPad|iPod)[0-9]{1,2},[0-9]{1,2}$/;
+  var IOS_KEY = /^[0-9A-Fa-f-]{8,64}$/;
+
+  // Tested in this order on the first line of the panic string (a thermalmonitord watchdog is thermal, not watchdog)
+  var IOS_PANIC_CAUSES = [
+    { name: 'sensor', re: /Missing sensor|AOP PANIC|SMC PANIC|\bi2c\d*\b/i },
+    { name: 'thermal', re: /thermalmonitord|\bthermal\b/i },
+    { name: 'sep', re: /\bSEP\b|AppleSEP|sep_panic/ },
+    { name: 'storage', re: /ANS2|\bNAND\b|AppleNVMe|\bnvme\b|AppleANS/i },
+    { name: 'gpu', re: /\bGPU\b|AGX|IOAccelerator/i },
+    { name: 'watchdog', re: /watchdog/i },
+    { name: 'data_abort', re: /data abort|instruction fetch abort|page fault/i }
+  ];
+
+  function iosModel(m) { return m && IOS_MODEL.test(m[1]) ? m[1] : null; }
+
+  function iosJetsam(body, time) {
+    var largest = null;
+    var overLimit = [];
+    var doc = null;
+    try { doc = JSON.parse(body); } catch (e) { doc = null; }
+    if (isObj(doc)) {
+      if (typeof doc.largestProcess === 'string' && doc.largestProcess) largest = doc.largestProcess.slice(0, 256);
+      var procs = Array.isArray(doc.processes) ? doc.processes : [];
+      for (var i = 0; i < procs.length && overLimit.length < 3; i++) {
+        var p = procs[i];
+        if (!isObj(p) || p.reason !== 'per-process-limit' || typeof p.name !== 'string' || !p.name) continue;
+        var name = p.name.slice(0, 256);
+        if (overLimit.indexOf(name) === -1) overLimit.push(name);
+      }
+    } else {
+      // Cut short (only the head was read): the largest process still comes early in the body
+      var m = /"largestProcess"\s*:\s*"([^"\\]{1,256})"/.exec(body.slice(0, 65536));
+      if (m) largest = m[1];
+    }
+    return { kind: 'jetsam', time: time, largest: largest, overLimit: overLimit };
+  }
+
+  // One iPhone log. Only the first IOS_REPORT_HEAD characters are read; the file name is never passed in.
+  function parseIosReport(text) {
+    var ips = readIps(text);
+    if (!ips) {
+      var legacy = macLegacyCrash(String(text === null || text === undefined ? '' : text).slice(0, IOS_REPORT_HEAD));
+      return legacy.error ? { error: 'not_ios_report' } : { error: 'mac_report' };
+    }
+    var header = ips.header;
+    var body = ips.body;
+    var os = typeof header.os_version === 'string' ? header.os_version : '';
+    if (/^(?:macOS|Mac OS X|OS X)/.test(os)) return { error: 'mac_report' };
+    if (/^(?:Watch OS|watchOS)/.test(os)) return { kind: 'other' };
+    var head = body.slice(0, 65536);
+    var out;
+    var model = null;
+    if (header.bug_type === '210') {
+      var panicText = ipsPanicText(body);
+      if (panicText === null) return { error: 'not_ios_report' };
+      var rest = panicFirstLine(panicText);
+      // causeLine is kept whole (at most LINE_CHARS); evaluateIos cuts it to 120 after masking, as on the Mac
+      out = { kind: 'panic', time: ips.time, cause: panicCauseFrom(rest, IOS_PANIC_CAUSES), causeLine: anonymise(rest).trim() };
+      model = iosModel(/"product"\s*:\s*"([^"\\]{1,32})"/.exec(head));
+    } else if (header.bug_type === '309' || header.bug_type === '109') {
+      out = ipsCrash(header, body, ips.time);
+      model = iosModel(isJsonBody(head) ? /"modelCode"\s*:\s*"([^"\\]{1,32})"/.exec(head) : /^Hardware Model:[ \t]+(\S{1,32})/m.exec(head));
+    } else if (header.bug_type === '298') {
+      out = iosJetsam(body, ips.time);
+      model = iosModel(/"product"\s*:\s*"([^"\\]{1,32})"/.exec(head));
+    } else {
+      return { kind: 'other' };
+    }
+    var id = header.incident_id;
+    out.key = typeof id === 'string' && IOS_KEY.test(id) ? id :
+      out.kind + ' ' + (out.time ? out.time.toISOString() : '') + ' ' + (out.app || '');
+    out.ios = os && os.length <= 64 ? os : null;
+    out.model = model;
+    return out;
+  }
+
+  // The first report per key (a panic-base and a panic-full copy of one panic, or a log saved twice, share their
+  // incident_id). Errors and skipped logs are dropped. Returns a new array.
+  function uniqueIosReports(list) {
+    var seen = {};
+    var out = [];
+    (Array.isArray(list) ? list : []).forEach(function (x) {
+      if (!x || x.error || (x.kind !== 'panic' && x.kind !== 'crash' && x.kind !== 'jetsam') || typeof x.key !== 'string') return;
+      if (Object.prototype.hasOwnProperty.call(seen, x.key)) return;
+      seen[x.key] = true;
+      out.push(x);
+    });
+    return out;
   }
 
   // ---------------------------------------------------------------------------
@@ -1653,6 +1774,7 @@
     parseLinuxSystem: parseLinuxSystem, parseJournal: parseJournal, parseBoots: parseBoots,
     parseUpower: parseUpower, parseDisks: parseDisks,
     MAC_REPORT_HEAD: MAC_REPORT_HEAD, MACOS_MAJORS: MACOS_MAJORS, parseSpx: parseSpx, parseMacReport: parseMacReport,
-    evaluateMac: evaluateMac
+    evaluateMac: evaluateMac,
+    IOS_REPORT_HEAD: IOS_REPORT_HEAD, IOS_MAJORS: IOS_MAJORS, parseIosReport: parseIosReport, uniqueIosReports: uniqueIosReports
   };
 })();
