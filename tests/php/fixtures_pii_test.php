@@ -63,8 +63,7 @@ foreach ($groups as $label => $g) {
     $planted[$label] = array();
     if (!is_dir($g['dir']) || !is_file($g['dir'] . 'PLANTED.json')) {
         $failures++;
-        fwrite(STDERR, 'FAIL: tests/fixtures/sys/' . $label . "/ or its PLANTED.json is missing
-");
+        fwrite(STDERR, 'FAIL: tests/fixtures/sys/' . $label . "/ or its PLANTED.json is missing\n");
         continue;
     }
     foreach (glob($g['dir'] . $g['glob']) as $f) {
@@ -75,8 +74,7 @@ foreach ($groups as $label => $g) {
     $decoded = json_decode(file_get_contents($g['dir'] . 'PLANTED.json'), true);
     if (!is_array($decoded)) {
         $failures++;
-        fwrite(STDERR, 'FAIL: ' . $label . "/PLANTED.json is not valid JSON
-");
+        fwrite(STDERR, 'FAIL: ' . $label . "/PLANTED.json is not valid JSON\n");
         continue;
     }
     foreach (array('emails', 'macs', 'ips') as $k) {
@@ -97,20 +95,18 @@ foreach ($allFiles as $file) {
         }
     }
     $raw = file_get_contents($file);
-    $text = (substr($raw, 0, 2) === "ÿþ") ? mb_convert_encoding(substr($raw, 2), 'UTF-8', 'UTF-16LE') : $raw;
+    $text = (substr($raw, 0, 2) === "\xFF\xFE") ? mb_convert_encoding(substr($raw, 2), 'UTF-8', 'UTF-16LE') : $raw;
     foreach ($forbidden as $word) {
         if (stripos($text, $word) !== false) {
             $failures++;
-            fwrite(STDERR, 'FAIL: ' . basename($file) . " contains a personal name
-");
+            fwrite(STDERR, 'FAIL: ' . basename($file) . " contains a personal name\n");
         }
     }
     if ($label !== null) {
         $failures += planted_check($file, $text, $planted[$label]);
         if ($label === 'mac' && strpos(str_replace($plantedIpv6, '', $text), '::') !== false) {
             $failures++;
-            fwrite(STDERR, 'FAIL: ' . basename($file) . " contains '::' outside a planted IPv6 value
-");
+            fwrite(STDERR, 'FAIL: ' . basename($file) . " contains '::' outside a planted IPv6 value\n");
         }
         continue;
     }
