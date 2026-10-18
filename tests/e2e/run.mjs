@@ -1417,9 +1417,9 @@ try {
       check('ios good news: 84 % and 80 % -> healthy row; 58 % or no number -> none', JSON.stringify(r.goodA) === JSON.stringify([{ title: 'Battery is healthy \u2014 it holds 84 % of its original capacity.' }]) &&
         r.good80.length === 1 && r.goodB.length === 0 && r.goodNone.length === 0 && !/healthy/.test(A.summary), [r.goodA, r.good80, r.goodB, r.goodNone]);
 
-      // The server's iOS checks (Task 5: bsc_validate_ios_summary), mirrored here; once api/_lib.php has them the real
-      // PHP whitelist judges the same summaries.
-      const IOS_RE = /^(?:iPhone OS|iOS|iPadOS) [0-9]{1,2}(?:\.[0-9]{1,3}){0,2}(?: \([a-z]\))?(?: \([0-9A-Za-z]{4,12}\))?$/;
+      // The server's iOS checks (bsc_validate_ios_summary in api/_lib.php), mirrored here; then the real PHP whitelist
+      // judges the same summaries.
+      const IOS_RE = /^(?:iPhone OS|iOS|iPadOS) [0-9]{1,2}(?:\.[0-9]{1,3}){0,2}(?: \([a-z]\))?(?: \([0-9]{2}[A-Z][0-9]{1,6}[a-z]?\))?$/;
       const MODEL_RE = /^(?:iPhone|iPad|iPod)[0-9]{1,2},[0-9]{1,2}$/;
       const IDS = ['panics', 'crashes', 'jetsam', 'battery', 'old_ios', 'old_report'];
       const CAUSES = ['sensor', 'thermal', 'sep', 'storage', 'gpu', 'watchdog', 'data_abort', 'other'];
@@ -1435,17 +1435,13 @@ try {
         (s.batteryHealthPct === null || int(s.batteryHealthPct, 1, 100));
       const summaries = allEdge.map((e) => e.summaryObj).concat([h], r.badBattery.map((b) => JSON.parse(b[2])), r.scores);
       check('parity ios: every summary passes the server\'s iOS checks (mirrored)', summaries.every(serverOk), summaries.filter((s) => !serverOk(s)));
-      const lib = fs.readFileSync(path.join(here, '..', '..', 'api', '_lib.php'), 'utf8');
-      if (/function bsc_validate_ios_summary\b/.test(lib)) {
-        let verdicts = null;
-        try {
-          verdicts = JSON.parse(execFileSync('php', [path.join(here, '..', 'tools', 'validate-summaries.php')], { input: JSON.stringify(summaries), encoding: 'utf8' }));
-        } catch (e) { verdicts = String(e); }
-        check('parity ios: the server accepts every iPhone summary the browser builds', Array.isArray(verdicts) && verdicts.length === summaries.length && verdicts.every(Boolean),
-          Array.isArray(verdicts) ? summaries.filter((s, i) => !verdicts[i]) : verdicts);
-      } else {
-        console.log('  (parity ios through PHP: waits for bsc_validate_ios_summary in api/_lib.php)');
-      }
+      // Unconditional: the real PHP whitelist must accept every one of them.
+      let verdicts = null;
+      try {
+        verdicts = JSON.parse(execFileSync('php', [path.join(here, '..', 'tools', 'validate-summaries.php')], { input: JSON.stringify(summaries), encoding: 'utf8' }));
+      } catch (e) { verdicts = String(e); }
+      check('parity ios: the server accepts every iPhone summary the browser builds (' + summaries.length + ')', Array.isArray(verdicts) && summaries.length >= 20 &&
+        verdicts.length === summaries.length && verdicts.every(Boolean), Array.isArray(verdicts) ? summaries.filter((s, i) => !verdicts[i]) : verdicts);
     }
     await context.close();
   }

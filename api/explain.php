@@ -1,7 +1,7 @@
 <?php
 /**
  * POST api/explain.php   body: {"summary": <exactly what PCSys.buildSummary() returns>}
- * Asks Claude (Anthropic) for a plain-English explanation of an anonymised Windows, Linux or Mac report summary.
+ * Asks Claude (Anthropic) for a plain-English explanation of an anonymised Windows, Linux, Mac or iPhone report summary.
  * The API key lives in grcaudit-config.php OUTSIDE public_html and is never sent to the browser.
  * Nothing is stored except the per-IP rate-limit hashes and the daily counter; bodies are never logged.
  */
