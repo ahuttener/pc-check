@@ -15,6 +15,7 @@
   var DEFAULT_TEXT_CAP = 31457280; // PCSys.ANDROID_TEXT_CAP when sysreport.js is missing
   var MIB = 1048576;
   var INFLATE_STEP = 4096;       // compressed bytes handed to the inflater at a time: bounds what one step can produce
+  var INPUT_SLACK = 16777216;    // compressed bytes the inflater may take beyond the text it gave (empty blocks give none)
   var TEXT_PROBE = 65536;        // a plain bug report says "== dumpstate:" in its first bytes
   var MAIN_NAME = /^bugreport-[A-Za-z0-9._-]{1,200}\.txt$/;
 
@@ -29,6 +30,17 @@
     throw e;
   }
   function codeOf(e) { return e && typeof e.zipCode === 'string' ? e.zipCode : 'damaged'; }
+
+  // An error thrown by the caller's onText/onProgress: carried out unchanged, never reported as a damaged file
+  function CallbackError(error) { this.error = error; }
+  function callback(fn, value) {
+    try {
+      fn(value);
+    } catch (e) {
+      throw new CallbackError(e);
+    }
+  }
+  function isSize(n) { return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER; }
 
   // Little-endian reads with an explicit bounds check before each one
   function u16(dv, p) {
@@ -147,9 +159,11 @@
   // ---------------------------------------------------------------------------
   // Streaming one range: stored or deflated, decoded as UTF-8, capped
   // ---------------------------------------------------------------------------
-  function rechunk(step) {
+  function rechunk(step, count) {
     return new TransformStream({
       transform: function (chunk, controller) {
+        count.input += chunk.length;
+        if (count.input > count.output + INPUT_SLACK) throw new Error('too much input for the text it gives');
         for (var i = 0; i < chunk.length; i += step) controller.enqueue(chunk.subarray(i, Math.min(i + step, chunk.length)));
       }
     });
@@ -173,8 +187,9 @@
   async function pump(part, inflate, declared, opts) {
     var cap = typeof opts.maxBytes === 'number' && opts.maxBytes >= 0 ? Math.floor(opts.maxBytes) : textCap();
     var limit = Math.min(declared, cap);
+    var count = { input: 0, output: 0 };
     var stream = sourceStream(part);
-    if (inflate) stream = stream.pipeThrough(rechunk(INFLATE_STEP)).pipeThrough(new DecompressionStream('deflate-raw'));
+    if (inflate) stream = stream.pipeThrough(rechunk(INFLATE_STEP, count)).pipeThrough(new DecompressionStream('deflate-raw'));
     var reader = stream.getReader();
     var decoder = new TextDecoder('utf-8'); // not fatal: a broken byte becomes U+FFFD, the scanner is defensive anyway
     var out = 0;
@@ -188,16 +203,17 @@
         if (!(chunk instanceof Uint8Array)) chunk = new Uint8Array(chunk);
         if (chunk.length > limit - out) chunk = chunk.subarray(0, limit - out);
         out += chunk.length;
+        count.output = out;
         if (chunk.length && opts.onText) {
           var s = decoder.decode(chunk, { stream: true });
-          if (s) opts.onText(s);
+          if (s) callback(opts.onText, s);
         }
         if (out >= nextYield) {
           nextYield = (Math.floor(out / MIB) + 1) * MIB;
           var t = now();
           if (opts.onProgress && t - lastProgress >= 1000) {
             lastProgress = t;
-            opts.onProgress(out);
+            callback(opts.onProgress, out);
           }
           await yieldNow();
         }
@@ -208,19 +224,22 @@
         try { await reader.cancel(); } catch (e) { /* already closed */ }
       }
       var rest = decoder.decode();
-      if (rest && opts.onText) opts.onText(rest);
+      if (rest && opts.onText) callback(opts.onText, rest);
       return { bytes: out, truncated: hit && cap < declared };
     } catch (e) {
       try { await reader.cancel(); } catch (e2) { /* already errored */ }
+      if (e instanceof CallbackError) throw e;
       return { error: 'damaged' };
     } finally {
       try { reader.releaseLock(); } catch (e) { /* nothing pending */ }
     }
   }
 
-  async function streamEntry(blob, entry, opts) {
+  // Throws CallbackError when onText/onProgress throws; streamEntry and readBugreport unwrap it
+  async function streamEntryInner(blob, entry, opts) {
     opts = opts || {};
-    if (!entry || typeof entry.offset !== 'number') return { error: 'damaged' };
+    if (!entry || !isSize(entry.offset) || !isSize(entry.compSize) || !isSize(entry.size) ||
+      entry.offset + 30 > blob.size || entry.offset + entry.compSize > blob.size) return { error: 'damaged' };
     if (entry.flags & 0x41) return { error: 'encrypted' };
     if (entry.method !== 0 && entry.method !== 8) return { error: 'unsupported_method' };
     if (entry.method === 8 && !supportsDeflate()) return { error: 'no_deflate' };
@@ -234,6 +253,16 @@
       var declared = entry.method === 0 ? Math.min(entry.size, entry.compSize) : entry.size;
       return await pump(blob.slice(start, end), entry.method === 8, declared, opts);
     } catch (e) {
+      if (e instanceof CallbackError) throw e;
+      return { error: codeOf(e) };
+    }
+  }
+
+  async function streamEntry(blob, entry, opts) {
+    try {
+      return await streamEntryInner(blob, entry, opts);
+    } catch (e) {
+      if (e instanceof CallbackError) throw e.error;
       return { error: codeOf(e) };
     }
   }
@@ -278,10 +307,10 @@
       var head = await readRange(file, 0, Math.min(file.size, 4));
       if (isZipStart(head)) {
         var list = await listEntries(file);
-        if (list.error) return { error: list.error };
+        if (list.error) return { error: list.error === 'not_zip' ? 'damaged' : list.error }; // it does start like a zip
         var main = await findMainEntry(file, list.entries);
         if (main.error) return { error: main.error };
-        var r = await streamEntry(file, main.entry, o);
+        var r = await streamEntryInner(file, main.entry, o);
         if (r.error) return { error: r.error };
         return { source: 'zip', bytes: r.bytes, truncated: r.truncated, opened: main.opened.concat([main.entry.name]) };
       }
@@ -292,6 +321,7 @@
       if (t.error) return { error: t.error };
       return { source: 'text', bytes: t.bytes, truncated: t.truncated, opened: [] };
     } catch (e) {
+      if (e instanceof CallbackError) throw e.error;
       return { error: codeOf(e) };
     }
   }

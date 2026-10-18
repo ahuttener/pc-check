@@ -1107,9 +1107,10 @@
       if (!isNaN(t.getTime())) boots.push({ reason: m[1], time: t });
     }
 
-    function propLine(line) {
+    // A line cut at LINE_CHARS is treated as closed: it cannot swallow the next property
+    function propLine(line, cut) {
       if (contKey !== null) {
-        var closes = line.charCodeAt(line.length - 1) === 93; // ]
+        var closes = cut || line.charCodeAt(line.length - 1) === 93; // ]
         if (contKey === BOOT_HISTORY_KEY) bootEntry(closes ? line.slice(0, -1) : line);
         if (closes) contKey = null;
         return;
@@ -1119,8 +1120,9 @@
       if (!m) return;
       var key = m[1];
       var rest = m[2];
-      var single = rest.charCodeAt(rest.length - 1) === 93;
-      var value = single ? rest.slice(0, -1) : rest;
+      var closed = rest.charCodeAt(rest.length - 1) === 93;
+      var single = cut || closed;
+      var value = closed ? rest.slice(0, -1) : rest;
       if (key === BOOT_HISTORY_KEY) {
         if (!(key in props)) {
           props[key] = true;
@@ -1213,7 +1215,7 @@
       else if (section === 'SYSTEM LOG') { if (fatal === null) fatal = logList(); }
     }
 
-    function handle(line) {
+    function handle(line, cut) {
       lines++;
       var n = line.length;
       if (n && line.charCodeAt(n - 1) === 13) line = line.slice(0, --n);
@@ -1235,7 +1237,7 @@
         }
         return;
       }
-      if (section === 'SYSTEM PROPERTIES') { propLine(line); return; }
+      if (section === 'SYSTEM PROPERTIES') { propLine(line, cut); return; }
       if (section === 'EVENT LOG') { eventLine(line); return; }
       if (section === 'SYSTEM LOG') { systemLine(line); return; }
       if (section === 'LAST KMSG') {
@@ -1267,9 +1269,10 @@
         }
         if (nl < 0) break;
         var line = pending;
+        var cut = over;
         pending = '';
         over = false;
-        handle(line);
+        handle(line, cut);
         pos = nl + 1;
       }
     }
@@ -1277,9 +1280,10 @@
     function finish() {
       if (pending.length || over) {
         var line = pending;
+        var cut = over;
         pending = '';
         over = false;
-        handle(line);
+        handle(line, cut);
       }
       if (!seenDumpstate && !seenProps) return { error: 'not_bugreport' };
       var sdk = props['ro.build.version.sdk'];

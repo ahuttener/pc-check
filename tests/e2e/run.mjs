@@ -5,7 +5,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
-import { androidZips } from '../tools/make-android-zips.mjs';
+import { androidZips, buildZip } from '../tools/make-android-zips.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
@@ -1131,6 +1131,15 @@ try {
     const zips = androidZips(adir);
     const z64 = {};
     Object.keys(zips).forEach((k) => { z64[k] = zips[k].toString('base64'); });
+    // 17 MiB of empty stored deflate blocks (00 00 00 FF FF each, then a final one): no text at all, so the reader must
+    // stop on the compressed input it has read, not run through the whole entry
+    const emptyBlocks = Buffer.alloc(5 * 3565158 + 5);
+    for (let i = 0; i < emptyBlocks.length; i += 5) { emptyBlocks[i + 3] = 0xFF; emptyBlocks[i + 4] = 0xFF; }
+    emptyBlocks[emptyBlocks.length - 5] = 1;
+    const eb = Buffer.from(buildZip([{ name: 'bugreport-x-1-2026-10-17-21-14-05.txt', data: emptyBlocks, method: 0, declaredSize: 31457280 }]));
+    eb.writeUInt16LE(8, 8); // local header: method 8, the data already being raw deflate
+    eb.writeUInt16LE(8, eb.readUInt32LE(eb.length - 6) + 10); // central header
+    z64['empty-blocks.zip'] = eb.toString('base64');
     const MAIN = { a: 'bugreport-shiba-BP3A.250905.014-2026-10-17-21-14-05.txt', b: 'bugreport-a51nsxx-TP1A.220624.014-2026-10-16-19-40-12.txt' };
     const planted = JSON.parse(ard('PLANTED.json'));
     const plantedValues = [].concat(...Object.keys(planted).map((k) => planted[k])).map((v) => String(v).toLowerCase())
@@ -1235,6 +1244,22 @@ try {
           const mainOf = async (b) => { const l = await Z.listEntries(b); return l.entries.filter((e) => /^bugreport-/.test(e.name))[0].compSize; };
           mains = [await mainOf(aBlob), await mainOf(bombBlob)];
           out.sizes = { sizes, mains, bombSize: bombBlob.size };
+          // Fix round 1: "PK" junk, a cut property line, callback errors, empty deflate blocks, bad entry fields
+          const eocdJunk = new Uint8Array(40); eocdJunk.set([0x50, 0x4b, 0x05, 0x06]); for (let i = 4; i < 40; i++) eocdJunk[i] = 0x41;
+          out.eocdJunk = (await readZ(new Blob([eocdJunk]))).r;
+          out.longProp = P('== dumpstate: 2026-10-17 21:14:05\\n------ SYSTEM PROPERTIES (getprop) ------\\n[vendor.x.blob]: [' + 'y'.repeat(5000) +
+            ']\\n[ro.product.model]: [Pixel 8]\\n[ro.build.version.release]: [16]\\n').model;
+          const boom = async (opts) => { try { await Z.readBugreport(blobOf(t.z64['set-a.zip']), opts); return 'resolved'; } catch (e) { return String(e && e.message); } };
+          out.cbText = await boom({ onText: () => { throw new Error('boom-text'); } });
+          out.cbProg = await boom({ onText: () => {}, onProgress: () => { throw new Error('boom-progress'); } });
+          out.cbBomb = await (async () => { try { await Z.readBugreport(blobOf(t.z64['bomb.zip']), { onText: () => {}, onProgress: () => { throw new Error('boom-progress'); } }); return 'resolved'; } catch (e) { return String(e && e.message); } })();
+          const eb0 = performance.now();
+          out.emptyBlocks = (await readZ(blobOf(t.z64['empty-blocks.zip']))).r;
+          out.emptyBlocksMs = performance.now() - eb0;
+          const sb = blobOf(t.z64['set-b.zip']);
+          const bad = (f) => Z.streamEntry(sb, Object.assign({ name: 'x', method: 0, flags: 0, compSize: 10, size: 10, offset: 0 }, f)).then((x) => x.error);
+          out.badFields = [await bad({ compSize: -1 }), await bad({ offset: -5 }), await bad({ offset: 1.5 }), await bad({ offset: 1e12 }), await bad({ compSize: 1e12 }),
+            await bad({ size: NaN }), await bad({ offset: '0' })];
           return out;
         })();`), input);
         check('android reader: PCZip and PCSys.androidScanner exist' + tag, r !== null);
@@ -1293,6 +1318,12 @@ try {
           check('zip reader: bomb never blocks the page for 500 ms' + tag, bm.maxGap < 500, Math.round(bm.maxGap));
           check('zip reader: progress rises, at most once per second' + tag, progOk, bm.prog.map((p) => [p[0], Math.round(p[1])]));
           const sz = r.sizes;
+          check('zip reader: PK\x05\x06 junk -> damaged, never not_zip' + tag, r.eocdJunk && r.eocdJunk.error === 'damaged', r.eocdJunk);
+          check('android scanner: a cut 5,000-character property does not swallow the next one' + tag, r.longProp === 'Pixel 8', r.longProp);
+          check('zip reader: an onText error propagates, not "damaged"' + tag, r.cbText === 'boom-text', r.cbText);
+          check('zip reader: an onProgress error propagates (small and bomb)' + tag, r.cbProg === 'resolved' && r.cbBomb === 'boom-progress', [r.cbProg, r.cbBomb]);
+          check('zip reader: 17 MiB of empty deflate blocks -> damaged, quickly' + tag, r.emptyBlocks && r.emptyBlocks.error === 'damaged' && r.emptyBlocksMs < 5000, [r.emptyBlocks, Math.round(r.emptyBlocksMs)]);
+          check('zip reader: negative, fractional, huge or non-number entry fields -> damaged' + tag, r.badFields.every((x) => x === 'damaged'), r.badFields);
           check('zip reader: never loads the whole file or the main entry' + tag, sz.sizes.length > 0 && sz.sizes.every((n) => n <= 8454165 && sz.mains.indexOf(n) < 0) &&
             (sz.bombSize <= 65557 || sz.sizes.indexOf(sz.bombSize) < 0), sz);
         }
