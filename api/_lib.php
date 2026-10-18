@@ -40,6 +40,14 @@ function bsc_require_get()
     }
 }
 
+function bsc_require_post()
+{
+    $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+    if ($method !== 'POST') {
+        bsc_json(405, array('error' => 'method_not_allowed'), 'no-store', array('Allow' => 'POST'));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Outbound HTTP: HTTPS only, certificate checked, no redirects, timeout, size cap
 // ---------------------------------------------------------------------------
@@ -128,6 +136,86 @@ function bsc_http_get($url)
 function bsc_http_post_form($url, $fields)
 {
     return bsc_http_request($url, $fields);
+}
+
+/**
+ * POST a JSON body (array or already-encoded string) with extra headers ('Name: value' lines).
+ * Same rules as bsc_http_request (HTTPS only, certificate checked, no redirects, size cap) but a
+ * longer timeout, because a language model answer takes several seconds.
+ * Returns the response body on HTTP 200, otherwise null. Nothing is logged.
+ */
+function bsc_http_post_json($url, $headers, $body, $timeout = 40)
+{
+    if (!bsc_is_https_url($url)) {
+        return null;
+    }
+    $payload = is_string($body) ? $body : json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if (!is_string($payload)) {
+        return null;
+    }
+    $headers = array_values((array) $headers);
+    $given = strtolower(implode("\n", $headers));
+    foreach (array('Accept: application/json', 'Content-Type: application/json') as $default) {
+        if (strpos($given, strtolower(strtok($default, ':')) . ':') === false) {
+            $headers[] = $default;
+        }
+    }
+
+    if (function_exists('curl_init')) {
+        $buffer = '';
+        $tooBig = false;
+        $ch = curl_init($url);
+        curl_setopt_array($ch, array(
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => (int) $timeout,
+            CURLOPT_USERAGENT => BSC_USER_AGENT,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_WRITEFUNCTION => function ($handle, $chunk) use (&$buffer, &$tooBig) {
+                if (strlen($buffer) + strlen($chunk) > BSC_MAX_BYTES) {
+                    $tooBig = true;
+                    return -1;
+                }
+                $buffer .= $chunk;
+                return strlen($chunk);
+            },
+        ));
+        $ok = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        if ($ok === false || $tooBig || $code !== 200) {
+            return null;
+        }
+        return $buffer;
+    }
+
+    $context = stream_context_create(array(
+        'http' => array(
+            'method' => 'POST',
+            'timeout' => (int) $timeout,
+            'follow_location' => 0,
+            'max_redirects' => 0,
+            'ignore_errors' => true,
+            'header' => 'User-Agent: ' . BSC_USER_AGENT . "\r\n" . implode("\r\n", $headers) . "\r\n",
+            'content' => $payload,
+        ),
+        'ssl' => array('verify_peer' => true, 'verify_peer_name' => true),
+    ));
+    $data = @file_get_contents($url, false, $context, 0, BSC_MAX_BYTES + 1);
+    if ($data === false || strlen($data) > BSC_MAX_BYTES) {
+        return null;
+    }
+    $statusLine = isset($http_response_header[0]) ? $http_response_header[0] : '';
+    if (!preg_match('#^HTTP/\S+\s+200\b#', $statusLine)) {
+        return null;
+    }
+    return $data;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +316,145 @@ function bsc_rate_limit($bucket, $max, $windowSeconds)
     flock($fh, LOCK_UN);
     fclose($fh);
     return $wait;
+}
+
+/**
+ * Global counter per UTC day (cache/daily/<name>-YYYYMMDD), shared by every visitor.
+ * Returns true and counts the call when under $max, false once $max calls were counted today.
+ * Fails closed: if the counter cannot be opened, the call is refused (it protects a paid API).
+ */
+function bsc_daily_cap($name, $max)
+{
+    $name = preg_replace('/[^a-z0-9_]/i', '', (string) $name);
+    $dir = bsc_cache_dir() . DIRECTORY_SEPARATOR . 'daily';
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0750, true);
+    }
+    $today = gmdate('Ymd');
+    $file = $dir . DIRECTORY_SEPARATOR . $name . '-' . $today;
+    if (mt_rand(1, 50) === 1) {
+        foreach ((array) glob($dir . DIRECTORY_SEPARATOR . $name . '-*') as $old) {
+            if ($old !== $file && is_file($old) && filemtime($old) < time() - 3 * 86400) {
+                @unlink($old);
+            }
+        }
+    }
+    $fh = @fopen($file, 'c+');
+    if (!$fh) {
+        return false;
+    }
+    flock($fh, LOCK_EX);
+    $count = (int) trim((string) stream_get_contents($fh));
+    $allowed = $count < (int) $max;
+    if ($allowed) {
+        ftruncate($fh, 0);
+        rewind($fh);
+        fwrite($fh, (string) ($count + 1));
+        fflush($fh);
+    }
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    return $allowed;
+}
+
+// ---------------------------------------------------------------------------
+// AI summary whitelist: exactly the shape of PCSys.buildSummary() in assets/sysreport.js
+// ---------------------------------------------------------------------------
+
+define('BSC_SUMMARY_FINDING_IDS', 'shutdowns,hardware,crashes,stability,updates,old_report,battery,windows10,devices');
+define('BSC_SUMMARY_SEVERITIES', 'risk,warn,info');
+
+function bsc_is_list($value)
+{
+    return is_array($value) && ($value === array() || array_keys($value) === range(0, count($value) - 1));
+}
+
+function bsc_has_exact_keys($value, $keys)
+{
+    if (!is_array($value) || bsc_is_list($value) && $value !== array()) {
+        return false;
+    }
+    $got = array_keys($value);
+    sort($got);
+    sort($keys);
+    return $got === $keys;
+}
+
+/** Short printable string: at most 80 characters, valid UTF-8, no control characters. */
+function bsc_summary_string($value)
+{
+    if (!is_string($value) || !preg_match('//u', $value) || preg_match('/[\x00-\x1F\x7F]/', $value)) {
+        return false;
+    }
+    $len = function_exists('mb_strlen') ? mb_strlen($value, 'UTF-8') : preg_match_all('/./us', $value);
+    return $len <= 80;
+}
+
+function bsc_summary_number($value, $min, $max)
+{
+    return (is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= $min && $value <= $max;
+}
+
+function bsc_summary_count($value, $max)
+{
+    return is_int($value) && $value >= 0 && $value <= $max;
+}
+
+/**
+ * Validates the summary the browser wants explained. Every key must be present, no other key is
+ * allowed, and every value must have the type and range buildSummary() produces.
+ * Returns the summary (unchanged) or null.
+ */
+function bsc_validate_summary($s)
+{
+    $keys = array('os', 'model', 'ramGb', 'score', 'findings', 'topCrashApps',
+        'batteryHealthPct', 'shutdowns30d', 'hardwareErrors30d', 'stabilityNow');
+    if (!bsc_has_exact_keys($s, $keys)) {
+        return null;
+    }
+    foreach (array('os', 'model') as $k) {
+        if ($s[$k] !== null && !bsc_summary_string($s[$k])) {
+            return null;
+        }
+    }
+    if ($s['ramGb'] !== null && !bsc_summary_number($s['ramGb'], 0, 65536)) {
+        return null;
+    }
+    if (!bsc_summary_count($s['score'], 100)) {
+        return null;
+    }
+    if ($s['batteryHealthPct'] !== null && !bsc_summary_number($s['batteryHealthPct'], 0, 200)) {
+        return null;
+    }
+    if ($s['stabilityNow'] !== null && !bsc_summary_number($s['stabilityNow'], 0, 10)) {
+        return null;
+    }
+    foreach (array('shutdowns30d', 'hardwareErrors30d') as $k) {
+        if ($s[$k] !== null && !bsc_summary_count($s[$k], 100000)) {
+            return null;
+        }
+    }
+    if (!bsc_is_list($s['findings']) || count($s['findings']) > 20) {
+        return null;
+    }
+    $ids = explode(',', BSC_SUMMARY_FINDING_IDS);
+    $severities = explode(',', BSC_SUMMARY_SEVERITIES);
+    foreach ($s['findings'] as $f) {
+        if (!bsc_has_exact_keys($f, array('id', 'severity'))
+            || !in_array($f['id'], $ids, true) || !in_array($f['severity'], $severities, true)) {
+            return null;
+        }
+    }
+    if (!bsc_is_list($s['topCrashApps']) || count($s['topCrashApps']) > 3) {
+        return null;
+    }
+    foreach ($s['topCrashApps'] as $a) {
+        if (!bsc_has_exact_keys($a, array('name', 'count')) || !bsc_summary_string($a['name'])
+            || !bsc_summary_count($a['count'], 1000000)) {
+            return null;
+        }
+    }
+    return $s;
 }
 
 // ---------------------------------------------------------------------------

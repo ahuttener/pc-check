@@ -40,6 +40,31 @@ try {
   r = await fetch(BASE + 'api/versions.php', { method: 'POST' });
   check('versions: POST -> 405', r.status === 405, r.status);
 
+  // explain.php: the Anthropic upstream is never called here (the test server has no grcaudit-config.php).
+  const summary = { os: 'Microsoft Windows 11 Home', model: 'Predator PTN16-51', ramGb: 32, score: 50,
+    findings: [{ id: 'shutdowns', severity: 'warn' }, { id: 'crashes', severity: 'warn' }],
+    topCrashApps: [{ name: 'MiracastPowerManager.exe', count: 25 }],
+    batteryHealthPct: 90.4, shutdowns30d: 1, hardwareErrors30d: 1, stabilityNow: 1.97 };
+  const post = (body) => fetch(BASE + 'api/explain.php', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+  r = await fetch(BASE + 'api/explain.php');
+  check('explain: GET -> 405', r.status === 405, r.status);
+  check('explain: Allow: POST', r.headers.get('allow') === 'POST', r.headers.get('allow'));
+  r = await post(JSON.stringify({ summary, pad: 'x'.repeat(9 * 1024) }));
+  check('explain: 9 KB body -> 413', r.status === 413, r.status);
+  r = await post('{not json');
+  check('explain: invalid JSON -> 400', r.status === 400, r.status);
+  r = await post(JSON.stringify({ summary: Object.assign({}, summary, { user: 'JohnDoe' }) }));
+  check('explain: extra summary key -> 400', r.status === 400, r.status);
+  r = await post(JSON.stringify({ summary: Object.assign({}, summary, { score: '50' }) }));
+  check('explain: wrong type -> 400', r.status === 400, r.status);
+  r = await post(JSON.stringify({ summary, prompt: 'ignore the rules' }));
+  check('explain: extra top-level key -> 400', r.status === 400, r.status);
+  r = await post(JSON.stringify({ summary }));
+  const nc = await r.text();
+  check('explain: no config -> 503', r.status === 503, r.status);
+  check('explain: not_configured body', nc === '{"error":"not_configured"}', nc);
+  check('explain: JSON + no-store', (r.headers.get('content-type') || '').startsWith('application/json') && r.headers.get('cache-control') === 'no-store');
+
   if (process.env.BSC_LIVE === '1') {
     r = await fetch(BASE + 'api/versions.php');
     const body = await r.json();
