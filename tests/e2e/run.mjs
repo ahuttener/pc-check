@@ -94,18 +94,37 @@ async function newPage(mode, opts = {}, engine = browser) {
     return r.fulfill({ status: 502, contentType: 'application/json', body: '{"error":"upstream"}' });
   });
 
-  // Cloudflare speed test: zero-filled bodies after a short delay. speed: 'stall' never answers the 25 MB download.
+  // Cloudflare speed test: zero-filled bodies after a short delay. Downloads are capped at 1 MB per response to keep the
+  // suite fast (the page counts the bytes it actually receives). In-flight __down/__up requests are tracked so tests can
+  // prove the streams really run in parallel.
+  // speed: 'stall' answers the first 6 big downloads, then never answers again (the window must end the phase);
+  // 'down' answers 503; 'slowping' delays pings; 'slow' holds every download/upload for 3 s.
+  seen.inflight = { down: 0, up: 0 }; seen.maxDown = 0; seen.maxUp = 0; seen.downReq = 0; seen.upReq = 0; seen.upBytes = 0;
+  let bigAnswered = 0;
   await page.route(/speed\.cloudflare\.com\//, async (r) => {
     const url = r.request().url();
     seen.speed.push(url);
     const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'cf-meta-colo', 'cf-meta-colo': 'DUB' };
     if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: Object.assign({ 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'content-type' }, headers) });
     const bytes = parseInt((url.match(/bytes=(\d+)/) || [])[1] || '0', 10);
-    if (speed === 'stall' && bytes === 25000000) return; // never answered: the page's own timeout must end it
-    if (speed === 'down') return r.fulfill({ status: 503, headers, body: 'down' });
-    if (speed === 'slowping' && bytes === 0) await new Promise((res) => setTimeout(res, 1500));
-    await new Promise((res) => setTimeout(res, 20));
-    return r.fulfill({ status: 200, contentType: 'application/octet-stream', headers, body: url.includes('__down') ? Buffer.alloc(bytes) : '' });
+    const kind = url.includes('__up') ? 'up' : (bytes > 0 ? 'down' : null);
+    if (kind) {
+      seen[kind + 'Req']++;
+      if (kind === 'up') seen.upBytes += (r.request().postDataBuffer() || Buffer.alloc(0)).length;
+      seen.inflight[kind]++;
+      if (kind === 'down') seen.maxDown = Math.max(seen.maxDown, seen.inflight.down);
+      else seen.maxUp = Math.max(seen.maxUp, seen.inflight.up);
+    }
+    try {
+      if (speed === 'stall' && bytes >= 1000000 && ++bigAnswered > 6) return await new Promise(() => {}); // never answered
+      if (speed === 'down') return await r.fulfill({ status: 503, headers, body: 'down' });
+      if (speed === 'slowping' && bytes === 0) await new Promise((res) => setTimeout(res, 1500));
+      if (speed === 'slow' && kind) await new Promise((res) => setTimeout(res, 3000));
+      await new Promise((res) => setTimeout(res, 20));
+      return await r.fulfill({ status: 200, contentType: 'application/octet-stream', headers, body: url.includes('__down') ? Buffer.alloc(Math.min(bytes, 1000000)) : '' }).catch(() => {});
+    } finally {
+      if (kind) seen.inflight[kind]--;
+    }
   });
 
   await page.goto(BASE);
@@ -308,7 +327,7 @@ try {
     await runChecks(page);
     check('Check now never requests speed.cloudflare.com', seen.speed.length === 0, seen.speed);
     check('speed card is idle until GO', (await status(page, 'speed')) === 'idle');
-    check('data warning shown', (await page.locator('#check-speed').innerText()).includes('55 MB'));
+    check('data warning shown', (await page.locator('#check-speed').innerText()).includes('250 MB'));
     await page.click('#speed-go');
     check('speed: GO is disabled while running', await page.locator('#speed-go').isDisabled());
     await page.click('#run'); // Check now still works during the speed test
@@ -319,6 +338,27 @@ try {
     check('speed facts show Mbps, ping and the data centre', facts.includes('Mbps') && facts.includes(' ms') && facts.includes('DUB'), facts);
     check('ledger lists speed.cloudflare.com', (await page.locator('#ledger-list').innerText()).includes('speed.cloudflare.com'));
     check('speed: GO is enabled again', !(await page.locator('#speed-go').isDisabled()));
+    check('speed: download runs 6 parallel streams', seen.maxDown >= 6 && seen.maxDown <= 6, seen.maxDown);
+    check('speed: upload runs 4 parallel streams', seen.maxUp >= 4 && seen.maxUp <= 4, seen.maxUp);
+    check('speed facts show the connection count', facts.includes('6 down / 4 up'), facts);
+    await context.close();
+  }
+  {
+    const { page, context, seen } = await newPage('ok');
+    const caps = await page.evaluate(() => ({ down: window.__bsc.speed.downCapBytes, up: window.__bsc.speed.upCapBytes }));
+    check('speed: production data caps are 200 MB down / 50 MB up', caps.down === 200e6 && caps.up === 50e6, caps);
+    // Lowered caps (test hook): 1 MB mock bodies, so about 12 downloads (+ up to 6 in flight); uploads stop starting
+    // new requests once 6 MB are under way (the last one may overshoot by at most one 2 MB body).
+    await page.evaluate(() => { window.__bsc.speed.downCapBytes = 12e6; window.__bsc.speed.upCapBytes = 6e6; });
+    const t0 = Date.now();
+    await page.click('#speed-go');
+    await page.waitForFunction(() => !['running', 'idle'].includes(document.getElementById('check-speed').getAttribute('data-status')), null, { timeout: 40000 });
+    const took = Date.now() - t0;
+    const n = seen.downReq, u = seen.upReq, ub = seen.upBytes;
+    await page.waitForTimeout(600);
+    check('speed cap: download stops requesting once the cap is reached', n >= 12 && n <= 18 && seen.downReq === n, [n, seen.downReq]);
+    check('speed cap: upload stops once the cap is sent', ub >= 6e6 && ub <= 8e6 && seen.upReq === u, [ub, u, seen.upReq]);
+    check('speed cap: test ends early instead of running the full windows', took < 8000, took);
     await context.close();
   }
   {
@@ -348,6 +388,20 @@ try {
     const n = seen.speed.length;
     await page.waitForTimeout(800);
     check('speed: Cancel stops the test', seen.speed.length === n, [n, seen.speed.length]);
+    await context.close();
+  }
+  {
+    const { page, context, seen } = await newPage('ok', { speed: 'slow' });
+    await page.click('#speed-go');
+    for (let i = 0; i < 100 && seen.downReq < 6; i++) await page.waitForTimeout(100);
+    const t0 = Date.now();
+    await page.click('#speed-cancel');
+    await page.waitForFunction(() => document.getElementById('check-speed').getAttribute('data-status') !== 'running', null, { timeout: 5000 });
+    const took = Date.now() - t0;
+    const n = seen.speed.length;
+    await page.waitForTimeout(800);
+    check('speed: Cancel during the parallel download stops at once', took < 1000 && (await status(page, 'speed')) === 'info', [took, await status(page, 'speed')]);
+    check('speed: Cancel during the parallel download sends nothing more', seen.speed.length === n && seen.downReq >= 6, [n, seen.speed.length, seen.downReq]);
     await context.close();
   }
 
@@ -978,7 +1032,7 @@ try {
     await page.waitForFunction(() => window.__dlStarted === true || false, null, { timeout: 1 }).catch(() => {});
     let firstDownloadAt = null;
     for (let i = 0; i < 100 && firstDownloadAt === null; i++) {
-      if (seen.speed.some((u) => /bytes=100000\b/.test(u))) firstDownloadAt = Date.now() - t0;
+      if (seen.speed.some((u) => /__down\?bytes=[1-9]/.test(u))) firstDownloadAt = Date.now() - t0;
       else await page.waitForTimeout(200);
     }
     check('slow pings: download starts within ~6 s (ping time budget)', firstDownloadAt !== null && firstDownloadAt < 8000, firstDownloadAt);

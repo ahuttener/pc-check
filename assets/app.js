@@ -339,7 +339,7 @@
       speedGo: 'GO',
       speedAgain: 'Test again',
       speedCancel: 'Cancel',
-      speedWarn: 'Runs only when you press GO. Uses up to about 55 MB of data.',
+      speedWarn: 'Runs only when you press GO. Uses up to about 250 MB of data on very fast connections, much less on slower ones.',
       speedFast: function (d) { return 'Fast connection: ' + d + ' Mbps download.'; },
       speedOk: function (d) { return 'Good for browsing and video: ' + d + ' Mbps download.'; },
       speedSlow: function (d) { return 'Slow connection: ' + d + ' Mbps download. HD video and large downloads will struggle.'; },
@@ -355,6 +355,7 @@
       fPing: 'Ping',
       fJitter: 'Jitter',
       fColo: 'Cloudflare data centre',
+      fConn: 'Connections',
       lpSpeed: function (phase) { return 'Speed test, ' + phase + ' (Cloudflare)'; },
       pdfBtn: 'Download PDF report',
       pdfHint: 'Choose “Save as PDF” in the print window.',
@@ -1233,47 +1234,225 @@
   // ---------------------------------------------------------------------------
   var SPEED = {
     base: 'https://speed.cloudflare.com/',
-    downSizes: [100000, 1000000, 10000000, 25000000],
-    upSizes: [1000000, 5000000, 10000000],
-    downBudgetMs: 8000,
-    upBudgetMs: 6000,
     pingBudgetMs: 4000,
+    pings: 10,
+    // Pings and uploads: each request gives up after 10 s. Downloads: after 10 s without a single byte arriving.
     requestTimeoutMs: 10000,
-    pings: 10
+    // Download: 6 parallel streams for 8 s, each looping 25 MB requests that are counted as the bytes arrive.
+    downStreams: 6,
+    downWindowMs: 8000,
+    downBytes: 25000000,
+    downFallbackBytes: 1000000, // browsers that cannot read a body as it arrives only count finished requests
+    downCapBytes: 200e6,
+    // Upload: 4 parallel streams for 6 s. Bodies grow 250 kB -> 1 MB -> 2 MB while requests finish quickly,
+    // so a slow uplink still completes requests inside the window.
+    upStreams: 4,
+    upWindowMs: 6000,
+    upSizes: [250000, 1000000, 2000000],
+    upGrowMs: 1500,
+    upCapBytes: 50e6,
+    warmupMs: 1500, // TCP ramp-up, left out of the result
+    sampleMs: 200,
+    liveMs: 1000, // the needle shows the rate over the last second
+    maxErrors: 3, // a stream stops after this many failures in a row
+    retryMs: 250
   };
 
   function now() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
 
-  // One request with its own 10 s timeout, also aborted by the outer Cancel signal.
-  function speedFetch(url, opts, outer) {
-    var controller = new AbortController();
-    var timer = setTimeout(function () { controller.abort(); }, SPEED.requestTimeoutMs);
-    function onOuter() { controller.abort(); }
-    if (outer) outer.addEventListener('abort', onOuter);
+  // An AbortController that also aborts when the outer (Cancel) signal does.
+  function linkedController(outer) {
+    var c = new AbortController();
+    function onOuter() { c.abort(); }
+    if (outer) { if (outer.aborted) c.abort(); else outer.addEventListener('abort', onOuter); }
+    c.unlink = function () { if (outer) outer.removeEventListener('abort', onOuter); };
+    return c;
+  }
+
+  // One request with its own timeout, also aborted by the outer signal. With onChunk the body is read as it arrives
+  // (onChunk(bytes) per chunk) and the timeout restarts on every chunk, so a slow but moving download is not cut off.
+  function speedFetch(url, opts, outer, onChunk) {
+    var controller = linkedController(outer);
+    var timer = null;
+    function arm() { clearTimeout(timer); timer = setTimeout(function () { controller.abort(); }, SPEED.requestTimeoutMs); }
+    arm();
     var t0 = now();
-    return fetch(url, Object.assign({ cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error', signal: controller.signal }, opts))
+    var bytes = 0;
+    var base = { cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error' };
+    return fetch(url, Object.assign(base, opts, { signal: controller.signal }))
       .then(function (res) {
         if (!res.ok) throw new Error('http_' + res.status);
-        return res.arrayBuffer().then(function (buf) { return { ms: Math.max(now() - t0, 1), bytes: buf.byteLength, res: res }; });
+        if (onChunk && res.body && typeof res.body.getReader === 'function') {
+          var reader = res.body.getReader();
+          var pump = function () {
+            return reader.read().then(function (r) {
+              if (r.done) return res;
+              var n = r.value ? r.value.byteLength : 0;
+              bytes += n;
+              arm();
+              onChunk(n);
+              return pump();
+            });
+          };
+          return pump();
+        }
+        return res.arrayBuffer().then(function (buf) { bytes = buf.byteLength; if (onChunk) onChunk(bytes); return res; });
       })
-      .then(function (out) { clearTimeout(timer); if (outer) outer.removeEventListener('abort', onOuter); return out; },
-        function (err) { clearTimeout(timer); if (outer) outer.removeEventListener('abort', onOuter); throw err; });
+      .then(function (res) { clearTimeout(timer); controller.unlink(); return { ms: Math.max(now() - t0, 1), bytes: bytes, res: res }; },
+        function (err) { clearTimeout(timer); controller.unlink(); throw err; });
   }
 
   function median(xs) {
     var s = xs.slice().sort(function (a, b) { return a - b; });
     return s.length ? s[Math.floor((s.length - 1) / 2)] : null;
   }
-  function p90(xs) {
-    var s = xs.slice().sort(function (a, b) { return a - b; });
-    return s.length ? s[Math.max(Math.ceil(0.9 * s.length) - 1, 0)] : null;
-  }
   function round1(n) { return n === null ? null : Math.round(n * 10) / 10; }
+  function toMbps(bytes, ms) { return ms > 0 ? (bytes * 8) / (ms / 1000) / 1e6 : null; }
+
+  // Download result from the byte counter samples ({t: ms since start, b: bytes so far}): the rate after the warm-up.
+  // A phase that ended early (data cap) skips its first 30 % instead; one with nothing after the warm-up uses everything.
+  function downRate(samples) {
+    var last = samples[samples.length - 1];
+    if (!last || last.b === 0 || last.t <= 0) return { mbps: null, fallback: false };
+    var from = Math.min(SPEED.warmupMs, last.t * 0.3);
+    for (var i = 0; i < samples.length; i++) {
+      var s = samples[i];
+      if (s.t >= from) {
+        if (last.t - s.t >= SPEED.sampleMs / 2 && last.b > s.b) return { mbps: toMbps(last.b - s.b, last.t - s.t), fallback: false };
+        break;
+      }
+    }
+    return { mbps: toMbps(last.b, last.t), fallback: true };
+  }
+
+  // The rate over the last liveMs, for the needle.
+  function liveRate(samples) {
+    var last = samples[samples.length - 1];
+    for (var i = 0; i < samples.length; i++) {
+      if (samples[i].t >= last.t - SPEED.liveMs) return last.t > samples[i].t ? toMbps(last.b - samples[i].b, last.t - samples[i].t) : null;
+    }
+    return null;
+  }
+
+  // Upload result from finished requests ({t, b}). fetch has no upload progress, so bytes count when a request ends:
+  // bytes finished between the first and the last completion after the warm-up; with fewer than 2, all completions.
+  function upRate(done) {
+    if (!done.length) return null;
+    var after = done.filter(function (d) { return d.t >= SPEED.warmupMs; });
+    if (after.length >= 2 && after[after.length - 1].t > after[0].t) {
+      var b = 0;
+      for (var i = 1; i < after.length; i++) b += after[i].b;
+      return toMbps(b, after[after.length - 1].t - after[0].t);
+    }
+    var all = 0;
+    done.forEach(function (d) { all += d.b; });
+    return toMbps(all, done[done.length - 1].t);
+  }
+
+  // Parallel download: every stream loops big requests and adds bytes to one counter as they arrive.
+  function downloadPhase(signal, onRate) {
+    var ctl = linkedController(signal);
+    var streaming = !!(window.ReadableStream && window.ReadableStream.prototype && window.ReadableStream.prototype.getReader);
+    var size = streaming ? SPEED.downBytes : SPEED.downFallbackBytes;
+    var start = now();
+    var total = 0;
+    var samples = [{ t: 0, b: 0 }];
+    var live = SPEED.downStreams;
+    var gaveUp = false;
+    var finished = false;
+    var ticker = null;
+    var windowTimer = null;
+    return new Promise(function (resolve) {
+      function sample() { samples.push({ t: now() - start, b: total }); }
+      function finish() {
+        if (finished) return;
+        finished = true;
+        clearInterval(ticker);
+        clearTimeout(windowTimer);
+        sample();
+        ctl.abort(); // every request still running stops here
+        ctl.unlink();
+        var r = downRate(samples);
+        resolve({ mbps: r.mbps, bytes: total, partial: gaveUp || (r.fallback && total > 0) });
+      }
+      function stream(fails) {
+        if (finished) return;
+        speedFetch(SPEED.base + '__down?bytes=' + size, {}, ctl.signal, function (n) {
+          if (finished) return;
+          total += n;
+          if (total >= SPEED.downCapBytes) finish();
+        }).then(function () { stream(0); }, function () {
+          if (finished) return;
+          if (fails + 1 >= SPEED.maxErrors) { gaveUp = true; if (--live === 0) finish(); return; }
+          setTimeout(function () { stream(fails + 1); }, SPEED.retryMs);
+        });
+      }
+      ctl.signal.addEventListener('abort', finish);
+      ticker = setInterval(function () { sample(); var m = liveRate(samples); if (m !== null) onRate(m); }, SPEED.sampleMs);
+      windowTimer = setTimeout(finish, SPEED.downWindowMs);
+      for (var i = 0; i < SPEED.downStreams; i++) stream(0);
+    });
+  }
+
+  // Parallel upload: every stream loops POSTs of zero bytes (one shared buffer); bytes count when a request ends.
+  // If nothing has finished when the window closes, the requests already running may still finish (each has its
+  // own 10 s timeout) so a slow uplink still gets a number.
+  function uploadPhase(signal, onRate) {
+    var ctl = linkedController(signal);
+    var buf = new Uint8Array(SPEED.upSizes[SPEED.upSizes.length - 1]);
+    var top = SPEED.upSizes.length - 1;
+    var start = now();
+    var started = 0;
+    var sent = 0;
+    var done = [];
+    var live = SPEED.upStreams;
+    var gaveUp = false;
+    var closing = false;
+    var finished = false;
+    var windowTimer = null;
+    return new Promise(function (resolve) {
+      function finish() {
+        if (finished) return;
+        finished = true;
+        clearTimeout(windowTimer);
+        ctl.abort();
+        ctl.unlink();
+        resolve({ mbps: upRate(done), bytes: sent, partial: gaveUp || closing });
+      }
+      function ended() { if (--live === 0) finish(); }
+      function stream(level, fails) {
+        if (finished) return;
+        if (closing || started >= SPEED.upCapBytes) { ended(); return; }
+        var size = SPEED.upSizes[level];
+        started += size;
+        speedFetch(SPEED.base + '__up', { method: 'POST', body: buf.subarray(0, size) }, ctl.signal).then(function (r) {
+          if (finished) return;
+          sent += size;
+          done.push({ t: now() - start, b: size });
+          var m = upRate(done);
+          if (m !== null) onRate(m);
+          if (closing) { finish(); return; }
+          stream(r.ms < SPEED.upGrowMs ? Math.min(level + 1, top) : level, 0);
+        }, function () {
+          started -= size;
+          if (finished) return;
+          if (closing) { ended(); return; }
+          if (fails + 1 >= SPEED.maxErrors) { gaveUp = true; ended(); return; }
+          setTimeout(function () { stream(0, fails + 1); }, SPEED.retryMs);
+        });
+      }
+      ctl.signal.addEventListener('abort', finish);
+      windowTimer = setTimeout(function () { if (done.length) finish(); else closing = true; }, SPEED.upWindowMs);
+      for (var i = 0; i < SPEED.upStreams; i++) stream(0, 0);
+    });
+  }
 
   function measureSpeed(onProgress, signal) {
-    var out = { pingMs: null, jitterMs: null, downMbps: null, upMbps: null, colo: null, partial: false };
+    var out = { pingMs: null, jitterMs: null, downMbps: null, upMbps: null, colo: null, partial: false,
+      streams: SPEED.downStreams + ' down / ' + SPEED.upStreams + ' up', downBytes: 0, upBytes: 0 };
     function aborted() { return signal && signal.aborted; }
     function stop(err) { if (aborted()) throw err; out.partial = true; }
+    function checkAbort() { if (aborted()) throw new Error('aborted'); }
 
     var pings = [];
     var pingStart = now();
@@ -1288,38 +1467,33 @@
       });
     }
 
-    function phase(sizes, budget, send) {
-      var samples = [];
-      var start = now();
-      onProgress(send.phaseName, null);
-      function step(i) {
-        if (i >= sizes.length || now() - start > budget || aborted()) return Promise.resolve(samples);
-        return send(sizes[i]).then(function (r) {
-          var mbps = (sizes[i] * 8) / (r.ms / 1000) / 1e6;
-          samples.push(mbps);
-          onProgress(send.phaseName, mbps);
-          return step(i + 1);
-        }, function (err) { stop(err); return samples; });
-      }
-      return step(0);
-    }
-    function down(size) { return speedFetch(SPEED.base + '__down?bytes=' + size, {}, signal); }
-    down.phaseName = 'download';
-    function up(size) { return speedFetch(SPEED.base + '__up', { method: 'POST', body: new Uint8Array(size) }, signal); }
-    up.phaseName = 'upload';
-
     return ping(0).catch(function (err) { stop(err); })
       .then(function () {
+        checkAbort();
         out.pingMs = round1(median(pings));
         if (pings.length > 1) {
           var diffs = 0;
           for (var i = 1; i < pings.length; i++) diffs += Math.abs(pings[i] - pings[i - 1]);
           out.jitterMs = round1(diffs / (pings.length - 1));
         }
-        return phase(SPEED.downSizes, SPEED.downBudgetMs, down);
+        onProgress('download', null);
+        return downloadPhase(signal, function (m) { onProgress('download', m); });
       })
-      .then(function (s) { out.downMbps = round1(p90(s)); return phase(SPEED.upSizes, SPEED.upBudgetMs, up); })
-      .then(function (s) { out.upMbps = round1(p90(s)); return out; });
+      .then(function (d) {
+        checkAbort();
+        out.downMbps = round1(d.mbps);
+        out.downBytes = d.bytes;
+        if (d.partial || d.mbps === null) out.partial = true;
+        onProgress('upload', null);
+        return uploadPhase(signal, function (m) { onProgress('upload', m); });
+      })
+      .then(function (u) {
+        checkAbort();
+        out.upMbps = round1(u.mbps);
+        out.upBytes = u.bytes;
+        if (u.partial || u.mbps === null) out.partial = true;
+        return out;
+      });
   }
 
   function evaluateSpeed(r) {
@@ -1329,6 +1503,7 @@
     if (r.pingMs !== null) facts.push({ label: ['fPing'], value: r.pingMs + ' ms', data: true });
     if (r.jitterMs !== null) facts.push({ label: ['fJitter'], value: r.jitterMs + ' ms', data: true });
     if (r.colo) facts.push({ label: ['fColo'], value: r.colo, data: true });
+    if (r.streams) facts.push({ label: ['fConn'], value: r.streams, data: true });
     var note = r.partial ? ['speedPartial'] : (r.pingMs > 100 ? ['speedPingHigh'] : ['speedNote']);
     if (r.downMbps >= 25) return { status: 'ok', verdict: ['speedFast', r.downMbps], facts: facts, note: note };
     if (r.downMbps >= 10) return { status: 'info', verdict: ['speedOk', r.downMbps], facts: facts, note: note, fix: ['fixSpeed'] };
@@ -2093,6 +2268,7 @@
     evaluateWebRtc: evaluateWebRtc,
     evaluateTracking: evaluateTracking,
     evaluateSpeed: evaluateSpeed,
+    speed: SPEED,
     sha1Hex: sha1Hex,
     shortVersion: shortVersion,
     detectOs: detectOs
