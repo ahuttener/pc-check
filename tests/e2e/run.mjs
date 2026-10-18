@@ -202,7 +202,7 @@ try {
     }
     check('ledger in English', (await page.locator('#ledger').innerText()).includes('Sent'));
     const text = await page.locator('body').innerText();
-    check('no Portuguese text on screen', !/[ãõçâêô]|Não |Verificar|senha|aparelho/i.test(text), (text.match(/.{0,30}(?:[ãõçâêô]|Não |Verificar|senha|aparelho).{0,30}/i) || [])[0]);
+    check('no Portuguese text on screen', !/[\u00e3\u00f5\u00e7\u00e2\u00ea\u00f4]|N\u00e3o |Verificar|senha|aparelho/i.test(text), (text.match(/.{0,30}(?:[\u00e3\u00f5\u00e7\u00e2\u00ea\u00f4]|N\u00e3o |Verificar|senha|aparelho).{0,30}/i) || [])[0]);
     await context.close();
   }
 
@@ -662,13 +662,13 @@ try {
         relNoEvents: S.parseReliability('<?xml version="1.0"?><RelMonReport TimeGenerated="2026-10-17T10:00:00"><Events/></RelMonReport>'),
         relDeEval: (() => { const e = S.evaluateWindows({ reliability: S.parseReliability(text.relDe) }, new Date('2026-10-18T09:00:00Z')); return { findings: e.findings.length, reportDate: e.reportDate, shutdowns: e.shutdowns30d }; })(),
         bat, msi, de: S.parseMsinfo(text.de),
-        // Portuguese reports (small synthetic snippets): English is the only language PC Check reads.
-        pt: S.parseMsinfo(text.msi.replace('[System Summary]', '[Resumo do Sistema]').replace('Item\tValue', 'Item\tValor')
-          .replace('OS Name', 'Nome do SO').replace('Installed Physical Memory (RAM)', 'Mem\u00f3ria F\u00edsica (RAM) Instalada')),
-        ptBat: S.parseBattery('<html><head><title>Relat\u00f3rio da bateria</title></head><body><!-- schemas.microsoft.com/battery -->' +
-          '<table><tr><td><span class="label">CAPACIDADE PROJETADA</span></td><td>76.316 mWh</td></tr>' +
-          '<tr><td><span class="label">CAPACIDADE DE CARGA TOTAL</span></td><td>68.979 mWh</td></tr>' +
-          '<tr><td><span class="label">CONTAGEM DE CICLOS</span></td><td>96</td></tr></table></body></html>'),
+        // Spanish reports (small synthetic snippets): English is the only language PC Check reads.
+        es: S.parseMsinfo(text.msi.replace('[System Summary]', '[Resumen del sistema]').replace('Item\tValue', 'Elemento\tValor')
+          .replace('OS Name', 'Nombre del SO').replace('Installed Physical Memory (RAM)', 'Memoria f\u00edsica instalada (RAM)')),
+        esBat: S.parseBattery('<html><head><title>Informe de la bater\u00eda</title></head><body><!-- schemas.microsoft.com/battery -->' +
+          '<table><tr><td><span class="label">CAPACIDAD DE DISE\u00d1O</span></td><td>76.316 mWh</td></tr>' +
+          '<tr><td><span class="label">CAPACIDAD DE CARGA COMPLETA</span></td><td>68.979 mWh</td></tr>' +
+          '<tr><td><span class="label">RECUENTO DE CICLOS</span></td><td>96</td></tr></table></body></html>'),
         wrong: S.parseReliability(text.bat), wrongBat: S.parseBattery(text.rel), wrongMsi: S.parseMsinfo('hello'),
         bigMs: performance.now() - t0, bigOs: bigParsed.os
       };
@@ -687,8 +687,8 @@ try {
       check('battery: design and full capacity in mWh', r.bat.designMWh === 76316 && r.bat.fullMWh === 68979, r.bat);
       check('msinfo: OS, model, CPU, RAM', /Windows 11/.test(r.msi.os) && /Predator/.test(r.msi.model) && /Ultra 7/.test(r.msi.cpu) && r.msi.ramGb === 32, r.msi);
       check('msinfo: no problem devices on this PC', Array.isArray(r.msi.problemDevices) && r.msi.problemDevices.length === 0, r.msi.problemDevices);
-      check('msinfo: Portuguese report -> unsupported language (English only)', r.pt.unsupportedLanguage === true && !r.pt.os, r.pt);
-      check('battery: Portuguese report -> unsupported language (English only)', r.ptBat.unsupportedLanguage === true && r.ptBat.healthPct === undefined, r.ptBat);
+      check('msinfo: Spanish report -> unsupported language (English only)', r.es.unsupportedLanguage === true && !r.es.os, r.es);
+      check('battery: Spanish report -> unsupported language (English only)', r.esBat.unsupportedLanguage === true && r.esBat.healthPct === undefined, r.esBat);
       check('msinfo: German reports unsupported language', r.de.unsupportedLanguage === true, r.de);
       check('wrong file: battery report is not a reliability file', r.wrong.error === 'not_reliability', r.wrong);
       check('wrong file: reliability is not a battery report', r.wrongBat.error === 'not_battery', r.wrongBat);
@@ -704,7 +704,7 @@ try {
     const lx = (f) => fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', 'linux', f), 'utf8');
     const t = {};
     ['ubuntu-system', 'fedora-system', 'ubuntu-journal-boot', 'fedora-journal-disk', 'journal-no-entries', 'journal-hint', 'journal-de',
-      'boots-ubuntu', 'boots-old-format', 'upower-laptop', 'upower-empty', 'df-ubuntu', 'df-fedora-full', 'df-pt'].forEach((k) => { t[k] = lx(k + '.txt'); });
+      'boots-ubuntu', 'boots-old-format', 'upower-laptop', 'upower-empty', 'df-ubuntu', 'df-fedora-full', 'df-de'].forEach((k) => { t[k] = lx(k + '.txt'); });
     const { page, context } = await newPage('ok');
     const r = await page.evaluate((t) => {
       const S = window.PCSys;
@@ -746,7 +746,7 @@ try {
         upUsage: S.parseUpower('Usage:\n  upower [OPTION…]\n\nUPower tool\n'), upWrong: S.parseUpower('hello'),
         dU: { worst: dU.worstPct, devices: dU.filesystems.map((f) => f.device), disks: dU.disks.map((d) => d.name), backup: (dU.filesystems.filter((f) => f.device === '/dev/sdb1')[0] || {}).mount },
         dF: { worst: dF.worstPct, sda3: dF.filesystems.filter((f) => f.device === '/dev/sda3').map((f) => f.mounts), disks: dF.disks.map((d) => d.name) },
-        dPt: S.parseDisks(t['df-pt']), notDisks: S.parseDisks('hello'),
+        dDe: S.parseDisks(t['df-de']), notDisks: S.parseDisks('hello'),
         bigMs, bigJ: { cut: bigJ.cut, truncated: bigJ.truncated, total: bigJ.total },
         manyJ: (() => { const m = S.parseJournal('Oct 18 09:00:00 host kernel: x\n'.repeat(30000), 2026); return { truncated: m.truncated, total: m.total }; })(),
         // Exactly 20,000 journal lines followed only by a hint: the cap was reached but nothing was left unread
@@ -805,7 +805,7 @@ try {
       check('linux disks: Ubuntu worst 93 %, no loop device, 2 disks', r.dU.worst === 93 && !r.dU.devices.some((d) => /loop/.test(d)) && r.dU.disks.join(',') === 'sdb,nvme0n1', r.dU);
       check('linux disks: mount point with a space is kept whole', r.dU.backup === '/media/jdoe/Backup Disk', r.dU.backup);
       check('linux disks: Fedora worst 96 %, /dev/sda3 once with / and /home, 1 disk', r.dF.worst === 96 && r.dF.sda3.length === 1 && r.dF.sda3[0].join(',') === '/,/home' && r.dF.disks.join(',') === 'sda', r.dF);
-      check('linux disks: Portuguese df header -> unsupported language', r.dPt.unsupportedLanguage === true, r.dPt);
+      check('linux disks: German df header -> unsupported language', r.dDe.unsupportedLanguage === true, r.dDe);
       check('linux disks: random text -> not_disks', r.notDisks.error === 'not_disks', r.notDisks);
       check('journal: 2 MB parses in < 1 s and reads <= 20,000 lines', r.bigJ.cut === true && r.bigJ.total > 0 && r.bigJ.total <= 20000 && r.bigMs < 1000, [Math.round(r.bigMs), r.bigJ]);
       check('linux journal: 30,000 short lines -> exactly 20,000 read, truncated', r.manyJ.truncated === true && r.manyJ.total === 20000, r.manyJ);
@@ -953,7 +953,7 @@ try {
       const acpi = [];
       for (let i = 0; i < 20; i++) acpi.push(line('kernel', i % 2 ? 'ACPI Error: AE_NOT_FOUND, During name lookup/catalog (20230628/psobject-220)' : 'ACPI BIOS Error (bug): Could not resolve symbol [\\_SB.PC00], AE_NOT_FOUND'));
       const planted = [].concat(t.planted.hostnames, t.planted.users, t.planted.emails, t.planted.macs, t.planted.ips, t.planted.serials,
-        t.planted.uuids, t.planted.ssids, t.planted.bootIds);
+        t.planted.uuids, t.planted.ssids, t.planted.labels, t.planted.bootIds);
       const leaks = (s) => planted.filter((p) => s.toLowerCase().indexOf(String(p).toLowerCase()) !== -1).concat(/\/home\//.test(s) ? ['/home/'] : []);
       const buf = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
       const win = S.evaluateWindows({ reliability: S.parseReliability(S.decode(buf(t.win.rel))), battery: S.parseBattery(S.decode(buf(t.win.bat))),
@@ -997,6 +997,42 @@ try {
             win: S.anonymise('C:\\Users\\JohnDoe\\app.exe at 10.0.0.1 fe80::1ff:fe23:4567:890a', ['JohnDoe'])
           };
         })(),
+        fix2: (() => {
+          const sysAl = S.parseLinuxSystem('Linux al 6.8.0-45-generic #45-Ubuntu SMP x86_64 GNU/Linux\nPRETTY_NAME="Ubuntu 24.04.1 LTS"\nID=ubuntu\nVERSION_ID="24.04"\n');
+          const df = 'Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme0n1p2  468G  200G  268G  43% /\n' +
+            '/dev/sdb1       1.9T  1.8T   50G  97% /media/al/Maria Garcia Backup\n/dev/sdc1       932G  890G   42G  96% /mnt/JSMITH-PASSPORT-SN8123456\n' +
+            '/dev/sdd1        58G   55G    3G  95% /run/media/al/USB STICK\n/dev/nvme0n1p3  400G  380G   20G  95% /home\n';
+          const e = S.evaluateLinux({ system: sysAl, disks: S.parseDisks(df) }, now);
+          const sysOnly = S.evaluateLinux({ disks: S.parseDisks('Filesystem      Size  Used Avail Use% Mounted on\n/dev/sda3 237G 226G 9.6G 96% /\n/dev/sda3 237G 226G 9.6G 96% /home\n/dev/sda2 974M 950M 24M 98% /boot\n') }, now);
+          const jl = [];
+          for (let i = 0; i < 6; i++) jl.push('Oct 18 09:00:0' + i + ' al al: backup failed');
+          for (let i = 0; i < 6; i++) jl.push('Oct 18 09:01:0' + i + ' al mjones: sync failed');
+          for (let i = 0; i < 6; i++) jl.push('Oct 18 09:02:0' + i + ' al kpat: cannot open /home/kpat/notes.txt');
+          for (let i = 0; i < 6; i++) jl.push('Oct 18 09:03:0' + i + ' al NetworkManager[812]: <error> device wlp2s0 failed');
+          jl.push('Oct 18 09:04:00 al login[900]: pam_unix(login:auth): authentication failure; logname= uid=0 euid=0 tty=tty1 ruser= rhost=  user=mjones');
+          const ej = S.evaluateLinux({ system: sysAl, journal: S.parseJournal(jl.join('\n'), now) }, now);
+          return {
+            diskDetail: (e.findings.filter((f) => f.id === 'disk_full')[0] || {}).detail,
+            fullest: (e.facts.filter((f) => f.label === 'Fullest disk')[0] || {}).value,
+            shown: text(e) + '\n' + JSON.stringify(Object.assign({}, e, { names: [] })),
+            sysDetail: (sysOnly.findings.filter((f) => f.id === 'disk_full')[0] || {}).detail,
+            sysFullest: (sysOnly.facts.filter((f) => f.label === 'Fullest disk')[0] || {}).value,
+            media: S.anonymise('cannot open /media/jdoe/Photos'), runMedia: S.anonymise('cannot open /run/media/jdoe/USB STICK'),
+            sources: ej.topErrorSources.map((a) => a.name),
+            summarySources: S.buildSummary(ej).topErrorSources.map((a) => a.name),
+            repeated: (ej.findings.filter((f) => f.id === 'repeated_errors')[0] || {}).detail || ''
+          };
+        })(),
+        perf: (() => {
+          // 60,000 unique hostnames (each with two parts of 4+ characters) in a journal cut at 2 MB
+          const lines = [];
+          for (let i = 0; i < 60000; i++) lines.push('Oct 18 09:00:00 h' + i + '-k' + i + ' app' + (i % 7) + ': x');
+          const journal = S.parseJournal(lines.join('\n'), now);
+          const t0 = performance.now();
+          const e = S.evaluateLinux({ journal: journal }, now);
+          const sum = S.buildSummary(e);
+          return { ms: performance.now() - t0, names: e.names.length, chars: lines.join('\n').length, sources: sum.topErrorSources.length };
+        })(),
         winPlatform: win.platform,
         winSummary: JSON.stringify(S.buildSummary(win))
       };
@@ -1039,6 +1075,17 @@ try {
       check('linux fix: journal-only paste -> no user name (hostname part, e-mail local part) in summary, facts, findings or evaluation fields',
         !/jdoe|asmith/i.test(x.journalOnly), (x.journalOnly.match(/.{0,40}(?:jdoe|asmith).{0,20}/i) || [])[0]);
       check('linux fix: inode usage -> diskInodes true and an inode-worded disk_full', x.inodeSummary === true && x.inodeIds.join(',') === 'disk_full:risk' && /inodes/.test(x.inodeTitle), [x.inodeSummary, x.inodeIds, x.inodeTitle]);
+      const y = r.fix2;
+      check('linux mounts: removable and extra drives are not named (no label, no user, no path)',
+        y.diskDetail === 'Space used: a removable or extra drive (97 %); another removable or extra drive (96 %); another removable or extra drive (95 %); /home (95 %). A full disk can stop updates and apps from saving.', y.diskDetail);
+      check('linux mounts: fullest disk on an extra drive -> "a removable or extra drive"', y.fullest === '97 % (a removable or extra drive)', y.fullest);
+      check('linux mounts: no volume label, user or mount path in summary, facts, findings or evaluation fields',
+        !/Maria|Garcia|JSMITH|8123456|USB STICK|\/media\/|\/mnt\/|\bal\b/i.test(y.shown), (y.shown.match(/.{0,40}(?:Maria|Garcia|JSMITH|8123456|USB STICK|\/media\/|\/mnt\/|\bal\b).{0,20}/i) || [])[0]);
+      check('linux mounts: system mounts are still shown (/, /home, /boot)', y.sysDetail === 'Space used: /boot (98 %); / and /home (96 %). A full disk can stop updates and apps from saving.' && y.sysFullest === '98 % (/boot)', [y.sysDetail, y.sysFullest]);
+      check('linux anonymiser: /media/<user> and /run/media/<user> -> [user]', y.media === 'cannot open /media/[user]/Photos' && y.runMedia === 'cannot open /run/media/[user]/USB STICK', [y.media, y.runMedia]);
+      check('linux sources: user-named log sources never reach the top sources or the summary', !y.sources.some((n) => /^(al|mjones|kpat)$/i.test(n)) && !y.summarySources.some((n) => /^(al|mjones|kpat)$/i.test(n)) && y.sources.includes('NetworkManager'), [y.sources, y.summarySources]);
+      check('linux sources: repeated_errors names only the program, not the users', /NetworkManager \(6 errors\)/.test(y.repeated) && !/\b(al|mjones|kpat)\b/i.test(y.repeated), y.repeated);
+      check('linux anonymiser: 60,000 unique hostnames in 2 MB -> evaluate + summary < 500 ms', r.perf.chars >= 2000000 && r.perf.names >= 50000 && r.perf.sources > 0 && r.perf.ms < 500, [Math.round(r.perf.ms), r.perf.names, r.perf.chars]);
       check('windows evaluation is marked platform windows', r.winPlatform === 'windows', r.winPlatform);
       check('windows summary unchanged after anonymiser additions', r.winSummary === '{"os":"Microsoft Windows 11 Home","model":"Predator PTN16-51","ramGb":32,"score":50,'
         + '"findings":[{"id":"shutdowns","severity":"warn"},{"id":"hardware","severity":"warn"},{"id":"crashes","severity":"warn"},'
@@ -1281,15 +1328,15 @@ try {
       // Wrong box, other language, empty battery box
       const { page, context, seen } = await newPage('ok', { userAgent: LINUX_UA });
       await waitBanner(page);
-      await fill(page, { system: LX('ubuntu-system'), journal: LX('df-ubuntu'), boots: '', battery: '', disks: LX('df-pt') });
+      await fill(page, { system: LX('ubuntu-system'), journal: LX('df-ubuntu'), boots: '', battery: '', disks: LX('df-de') });
       await page.click('#sys-linux-analyze', { timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(300);
       const wrong = await msg(page, 'journal');
       check('linux ui: df output in the journal box -> wrong box, step 5', /This doesn.t look like the output of this command\. It looks like the output for step 5\./.test(wrong), wrong);
       const bat = await msg(page, 'battery');
       check('linux ui: empty battery box -> no battery reported', /No battery reported \(fine for a desktop\)\./.test(bat), bat);
-      const pt = await msg(page, 'disks');
-      check('linux ui: df in another language -> not in English', /This output isn.t in English\. Run the command exactly as shown: it starts with LC_ALL=C, which makes it print in English\./.test(pt), pt);
+      const foreign = await msg(page, 'disks');
+      check('linux ui: df in another language -> not in English', /This output isn.t in English\. Run the command exactly as shown: it starts with LC_ALL=C, which makes it print in English\./.test(foreign), foreign);
       await fill(page, { journal: LX('journal-de'), disks: '' });
       await page.click('#sys-linux-analyze', { timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(300);
@@ -1382,6 +1429,7 @@ try {
     const FX = (f) => path.join(here, '..', 'fixtures', 'sys', f);
     const WIN_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + fullVersion + ' Safari/537.36';
     const DISCLOSURE = 'Optional: send this anonymised summary to Claude (Anthropic) through cybersecinfo.com to get a plain-English explanation. Only the summary below is sent — not your files. Nothing is stored.';
+    const DISCLOSURE_LINUX = 'Optional: send this anonymised summary to Claude (Anthropic) through cybersecinfo.com to get a plain-English explanation. Only the summary below is sent — not your files or pasted text. Nothing is stored.';
     // Planted personal data: computer and user name, plus a model name whose emoji straddles the 80-character cut.
     const LONG_MODEL = 'Predator PTN16-51 ' + 'z'.repeat(61) + '\u{1F600} edition';
     const msiPlanted = {
@@ -1548,7 +1596,7 @@ try {
         const before = await page.locator('#ledger-list li').count();
         await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
         const disc = await page.locator('#sys-ai-disclosure').innerText({ timeout: 2000 }).catch(() => '');
-        check('ai linux: exact disclosure shown before sending', disc.trim() === DISCLOSURE, disc);
+        check('ai linux: exact Linux disclosure shown before sending (files or pasted text)', disc.trim() === DISCLOSURE_LINUX, disc);
         const shownText = await page.locator('#sys-ai-summary').innerText({ timeout: 2000 }).catch(() => '');
         let shown = null;
         try { shown = JSON.parse(shownText); } catch (e) { /* stays null */ }

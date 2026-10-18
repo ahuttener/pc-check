@@ -279,7 +279,10 @@
       // Explain with AI (optional; sends only the anonymised summary, after the disclosure)
       sysAiTitle: 'Explain with AI',
       sysAiOpen: 'Explain with AI',
-      sysAiDisclosure: 'Optional: send this anonymised summary to Claude (Anthropic) through cybersecinfo.com to get a plain-English explanation. Only the summary below is sent — not your files. Nothing is stored.',
+      sysAiDisclosure: function (platform) {
+        return 'Optional: send this anonymised summary to Claude (Anthropic) through cybersecinfo.com to get a plain-English explanation. Only the summary below is sent — not your files' +
+          (platform === 'linux' ? ' or pasted text' : '') + '. Nothing is stored.';
+      },
       sysAiSummaryLabel: 'This is everything that would be sent:',
       sysAiSend: 'Send',
       sysAiSending: 'Sending…',
@@ -1939,7 +1942,7 @@
       return;
     }
 
-    var disc = el('p', 'sys-ai-disclosure', t('sysAiDisclosure'));
+    var disc = el('p', 'sys-ai-disclosure', t('sysAiDisclosure', ai.summary && ai.summary.platform));
     disc.id = 'sys-ai-disclosure';
     box.appendChild(disc);
     box.appendChild(el('p', 'sys-ai-label', t('sysAiSummaryLabel')));

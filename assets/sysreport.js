@@ -218,8 +218,9 @@
     return n === s.length ? s : s.slice(0, n);
   }
 
-  // Names collected for the anonymiser: a list in first-seen order plus a set for O(1) lookups.
-  function nameSet() { return { list: [], seen: Object.create(null) }; }
+  // Names collected for the anonymiser: a list in first-seen order plus a set for O(1) lookups. users holds the subset
+  // that are account names (user=, /home/<x>, e-mail local parts), which must never be shown as a log source.
+  function nameSet() { return { list: [], seen: Object.create(null), users: [], userSeen: Object.create(null) }; }
 
   function addName(set, n) {
     if (n && !set.seen[n]) { set.seen[n] = true; set.list.push(n); }
@@ -252,6 +253,7 @@
     if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,31}$/.test(u)) return;
     if (SYSTEM_USER_SET[u.toLowerCase()] || /^systemd-/.test(u)) return;
     addName(set, u);
+    if (!set.userSeen[u]) { set.userSeen[u] = true; set.users.push(u); }
   }
 
   // uname -a; cat /etc/os-release
@@ -304,7 +306,7 @@
     re = /([A-Za-z0-9._%+-]{1,64})@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
     while (message.indexOf('@') !== -1 && (m = re.exec(message)) !== null) {
       var local = m[1];
-      if (local.length >= 3 && !SYSTEM_USER_SET[local.toLowerCase()]) addName(names, local);
+      if (local.length >= 3 && !SYSTEM_USER_SET[local.toLowerCase()]) { addName(names, local); addUser(names, local); }
     }
     if (source === 'pkexec' || source === 'sudo') {
       m = /^([A-Za-z_][A-Za-z0-9_.-]{0,31}) ?: /.exec(message);
@@ -384,7 +386,7 @@
       if (/^No journal files were found/.test(trimmed)) { noEntries = true; recognised = true; continue; }
     }
     if (nonEmpty && !out.length && !recognised) return { error: 'not_journal' };
-    return { lines: out, total: out.length, truncated: truncated, cut: src.cut, noEntries: noEntries && !out.length, partial: partial, names: names.list };
+    return { lines: out, total: out.length, truncated: truncated, cut: src.cut, noEntries: noEntries && !out.length, partial: partial, names: names.list, users: names.users };
   }
 
   // journalctl --list-boots | tail -5; journalctl -b -1 -p 3 -o short
@@ -422,7 +424,7 @@
     if (previous.unsupportedLanguage) return { unsupportedLanguage: true };
     if (previous.error) {
       if (!boots.length) return { error: 'not_boots' };
-      previous = { lines: [], total: 0, truncated: false, cut: false, noEntries: false, partial: false, names: [] };
+      previous = { lines: [], total: 0, truncated: false, cut: false, noEntries: false, partial: false, names: [], users: [] };
     }
     if (!boots.length && !previous.total) return { error: 'not_boots' };
     return { boots: boots, previous: previous, reportDate: reportDate };
@@ -509,7 +511,7 @@
     if (!sawDf && !sawLsblk) return { error: 'not_disks' };
     var worst = null;
     filesystems.forEach(function (f) { if (worst === null || f.usedPct > worst) worst = f.usedPct; });
-    return { filesystems: filesystems, disks: disks, worstPct: worst, inodes: inodes, names: names.list };
+    return { filesystems: filesystems, disks: disks, worstPct: worst, inodes: inodes, names: names.list, users: names.users };
   }
 
   // ---------------------------------------------------------------------------
@@ -523,6 +525,29 @@
   // ("_" counts as a separator, so unit_<id> is caught too)
   var HEX_RUN = /(^|[^0-9A-Za-z])([0-9a-f]{16,}|[0-9A-F]{16,}|[0-9a-fA-F]{32,})(?![0-9A-Za-z])/g;
 
+  // At most 300 names (first seen, 3+ characters) go into one alternation, longest first, built once per list:
+  // a huge paste with tens of thousands of hostnames must not cost one regex per name per string.
+  var ANON_NAME_CAP = 300;
+  var nameReCache = { list: null, length: -1, re: null };
+
+  function namesRegex(names) {
+    if (!names || !names.length) return null;
+    if (nameReCache.list === names && nameReCache.length === names.length) return nameReCache.re;
+    var picked = [];
+    var seen = Object.create(null);
+    for (var i = 0; i < names.length && picked.length < ANON_NAME_CAP; i++) {
+      var n = names[i] === null || names[i] === undefined ? '' : String(names[i]);
+      var key = n.toLowerCase();
+      if (n.length < 3 || seen[key]) continue;
+      seen[key] = true;
+      picked.push(n);
+    }
+    picked.sort(function (a, b) { return b.length - a.length; });
+    var re = picked.length ? new RegExp(picked.map(escapeRe).join('|'), 'gi') : null;
+    nameReCache = { list: names, length: names.length, re: re };
+    return re;
+  }
+
   function anonymise(value, names) {
     var s = String(value === null || value === undefined ? '' : value)
       .replace(/\\x2d/gi, '-') // systemd unit names escape "-" as \x2d (dev-disk-by\x2duuid-…)
@@ -531,12 +556,11 @@
       .replace(/\bssid=(?!["'])[^\s,;]{1,128}/gi, 'ssid="[wifi]"')
       .replace(IPV6_COMPRESSED, function (all, before, ip) { return /\d/.test(ip) ? before + '[ip]' : all; })
       .replace(HEX_RUN, '$1[id]');
-    (names || []).filter(function (n) { return n && n.length >= 3; }).forEach(function (n) {
-      s = s.replace(new RegExp(escapeRe(n), 'gi'), '[name]');
-    });
+    var nameRe = namesRegex(names);
+    if (nameRe) s = s.replace(nameRe, '[name]');
     return s
       .replace(/([A-Za-z]:\\Users\\)[^\\\s]+/gi, '$1[user]')
-      .replace(/(\/(?:home|Users)\/)[^\/\s]+/g, '$1[user]')
+      .replace(/(\/(?:home|Users|run\/media|media)\/)[^\/\s]+/g, '$1[user]')
       .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
       .replace(/\b([0-9A-F]{2}[:-]){5}[0-9A-F]{2}\b/gi, '[mac]')
       .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '[id]')
@@ -719,6 +743,9 @@
     journal_partial: 'Copy the output from an administrator’s account, which can read the system’s messages, then analyse again.'
   };
 
+  // Program-like identifiers: known services, daemons ("...d"), and dotted, hyphenated or underscored names.
+  var DAEMON_LIKE = /^(?:kernel|systemd|sudo|pkexec|login|cron|anacron|dbus|NetworkManager|ModemManager|pipewire|wireplumber|pulseaudio|gnome|kde|plasma|xdg|snap|flatpak|polkit|udisks|bluetooth|cups|avahi|rtkit|colord|gdm|lightdm|sddm|Xorg|kwin)|[._-]|[a-z]{2,}d$/i;
+
   function usable(x) { return x && !x.error && !x.unsupportedLanguage ? x : null; }
 
   function byCountThenName(a, b) {
@@ -736,6 +763,15 @@
     if (!m) return 0;
     return parseFloat(m[1].replace(',', '.')) * Math.pow(1024, 'BKMGTPE'.indexOf((m[2] || 'B').toUpperCase()));
   }
+
+  // Mount points shown on screen and in the PDF: standard system folders as they are, anything else (/media, /run/media,
+  // /mnt, custom folders) as "a removable or extra drive", because the path holds the user name and the volume label.
+  var SYSTEM_MOUNTS = toSet(['/', '/home', '/boot', '/boot/efi', '/efi', '/var', '/var/log', '/var/lib', '/var/tmp', '/tmp', '/srv',
+    '/opt', '/usr', '/usr/local', '/root', '/nix']);
+  var EXTRA_DRIVE = 'a removable or extra drive';
+  var ANOTHER_EXTRA_DRIVE = 'another removable or extra drive';
+
+  function shownMount(m) { return SYSTEM_MOUNTS[m] ? m : EXTRA_DRIVE; }
 
   function diskOf(name) {
     var n = name.toLowerCase();
@@ -759,6 +795,17 @@
     [r.names, sys && sys.names, journal && journal.names, prev && prev.names, disks && disks.names].forEach(function (list) {
       (list || []).forEach(function (n) { if (n && !DEFAULT_HOST_SET[String(n).toLowerCase()]) addName(names, n); });
     });
+    // A log source named after a person (logger tags its lines with the login name) is never listed: any account name,
+    // or a hostname (or part of one) that does not look like a program.
+    var personal = Object.create(null);
+    [r.users, journal && journal.users, prev && prev.users, disks && disks.users].forEach(function (list) {
+      (list || []).forEach(function (u) { personal[String(u).toLowerCase()] = 'user'; });
+    });
+    names.list.forEach(function (n) { var k = String(n).toLowerCase(); if (!personal[k]) personal[k] = 'host'; });
+    function isPersonalSource(src) {
+      var kind = personal[String(src).toLowerCase()];
+      return kind === 'user' || (kind === 'host' && !DAEMON_LIKE.test(src));
+    }
 
     var out = { platform: 'linux', score: 100, findings: findings, facts: facts,
       reportDate: boots && boots.reportDate ? boots.reportDate : at,
@@ -812,7 +859,7 @@
       if (o) { oomKilled++; addName(oomApps, o[1]); }
       else if (OOM_ANY.test(msg)) oomAny++;
     });
-    var sources = countList(bySource);
+    var sources = countList(bySource).filter(function (s) { return !isPersonalSource(s.name); });
     out.topErrorSources = sources.slice(0, 3);
     var crashList = countList(crashes);
     out.topCrashApps = crashList.slice(0, 3);
@@ -873,7 +920,17 @@
     }
     if (disks && disks.worstPct !== null && disks.worstPct >= 90) {
       var full = disks.filesystems.filter(function (f) { return f.usedPct >= 90; }).sort(function (a, b) { return b.usedPct - a.usedPct; });
-      var where = full.slice(0, 5).map(function (f) { return (f.mounts || [f.mount]).join(' and ') + ' (' + f.usedPct + ' %)'; }).join('; ');
+      var extraShown = false;
+      var where = full.slice(0, 5).map(function (f) {
+        var shown = nameSet();
+        (f.mounts || [f.mount]).forEach(function (m) { addName(shown, shownMount(m)); });
+        return shown.list.map(function (m) {
+          if (m !== EXTRA_DRIVE) return m;
+          var label = extraShown ? ANOTHER_EXTRA_DRIVE : EXTRA_DRIVE;
+          extraShown = true;
+          return label;
+        }).join(' and ') + ' (' + f.usedPct + ' %)';
+      }).join('; ');
       var sev = disks.worstPct >= 95 ? 'risk' : 'warn';
       if (disks.inodes) {
         add('disk_full', sev, 'A disk is running out of file entries (inodes)',
@@ -915,7 +972,8 @@
     }
     if (disks && disks.worstPct !== null) {
       var worst = disks.filesystems.filter(function (f) { return f.usedPct === disks.worstPct; })[0];
-      facts.push({ label: 'Fullest disk', value: disks.worstPct + ' %' + (disks.inodes ? ' of file entries' : '') + (worst ? ' (' + worst.mount + ')' : '') });
+      var worstMount = worst ? ((worst.mounts || [worst.mount]).filter(function (m) { return SYSTEM_MOUNTS[m]; })[0] || EXTRA_DRIVE) : null;
+      facts.push({ label: 'Fullest disk', value: disks.worstPct + ' %' + (disks.inodes ? ' of file entries' : '') + (worstMount ? ' (' + worstMount + ')' : '') });
     }
     if (bat && !bat.present) facts.push({ label: 'Battery health', value: 'No battery reported' });
     else if (out.batteryHealthPct !== null) {

@@ -18,8 +18,9 @@ USER = os.environ.get('USERNAME', '')
 
 
 # Installed software that says too much about the owner (banking security modules): replaced by a
-# neutral name. The reports are read as UTF-16, so accented names arrive intact ("Diagnóstico BB").
-PRIVATE_SOURCES = re.compile(r'<Source>(?:Diagn\S*stico BB|Topaz OFD[^<]*|Warsaw[^<]*|GbPlugin[^<]*)</Source>', re.I)
+# neutral name. The reports are read as UTF-16, so accented names arrive intact; any one-word source ending in " BB"
+# (the bank's diagnostics module) is matched without spelling its name.
+PRIVATE_SOURCES = re.compile(r'<Source>(?:[^<\s]+ BB|Topaz OFD[^<]*|Warsaw[^<]*|GbPlugin[^<]*)</Source>', re.I)
 
 
 def scrub(text):

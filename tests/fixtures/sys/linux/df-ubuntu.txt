@@ -9,14 +9,16 @@ efivarfs        192K   88K  100K  47% /sys/firmware/efi/efivars
 /dev/loop2      506M  506M     0 100% /snap/gnome-42-2204/176
 /dev/nvme0n1p1  1.1G  6.2M  1.1G   1% /boot/efi
 tmpfs           1.6G  152K  1.6G   1% /run/user/1000
-/dev/sdb1       1.9T  1.2T  640G  66% /media/jdoe/Backup Disk
+/dev/sdb1       916G  590G  280G  68% /media/jdoe/Backup Disk
+/dev/sdb2       916G  790G   80G  91% /media/jdoe/Maria Garcia Backup
 NAME          SIZE TYPE MOUNTPOINT
 loop0           4K loop /snap/bare/5
 loop1        74.3M loop /snap/core22/1621
 loop2       505.1M loop /snap/gnome-42-2204/176
 sda            0B disk 
 sdb           1.8T disk 
-`-sdb1        1.8T part /media/jdoe/Backup Disk
+|-sdb1      931.5G part /media/jdoe/Backup Disk
+`-sdb2      931.5G part /media/jdoe/Maria Garcia Backup
 nvme0n1     476.9G disk 
 |-nvme0n1p1     1G part /boot/efi
 `-nvme0n1p2 475.9G part /

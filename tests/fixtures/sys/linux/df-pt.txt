@@ -1,2 +1,0 @@
-Sist. Arq.      Tam. Usado Disp. Uso% Montado em
-/dev/nvme0n1p2  468G  410G   35G  93% /

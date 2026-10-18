@@ -1,0 +1,2 @@
+Dateisystem    Größe Benutzt Verf. Verw% Eingehängt auf
+/dev/nvme0n1p2  468G  410G   35G  93% /

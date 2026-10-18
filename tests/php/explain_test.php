@@ -62,7 +62,7 @@ t('C1 control character -> null', $bad(function (&$s) { $s['model'] = "a\u{0085}
 t('bidi override (U+202E) -> null', $bad(function (&$s) { $s['os'] = "Windows \u{202E}exe.txt"; }) === null);
 t('zero-width space (U+200B) in a crash app -> null', $bad(function (&$s) { $s['topCrashApps'][0]['name'] = "Java\u{200B}Update"; }) === null);
 t('zero-width joiner (U+200D) -> null', $bad(function (&$s) { $s['model'] = "a\u{200D}b"; }) === null);
-t('accented letters still pass', $bad(function (&$s) { $s['model'] = 'Positivo Motion Café ç ñ'; }) !== null);
+t('accented letters still pass', $bad(function (&$s) { $s['model'] = 'Müller Motion Señal ß ñ'; }) !== null);
 $twenty = array_fill(0, 20, array('id' => 'battery', 'severity' => 'warn'));
 t('20 findings pass', $bad(function (&$s) use ($twenty) { $s['findings'] = $twenty; }) !== null);
 t('21 findings -> null', $bad(function (&$s) use ($twenty) { $s['findings'] = array_merge($twenty, array(array('id' => 'battery', 'severity' => 'warn'))); }) === null);
