@@ -18,6 +18,25 @@ define('BSC_EXPLAIN_DAILY_CAP', 200);
 // 1. Method
 bsc_require_post();
 
+// 1b. Only our own page may spend the key. A cross-site page can still make a visitor's browser send a
+// "simple" request (text/plain, form) without a CORS preflight, which would drain the global daily cap.
+// Requiring application/json forces a preflight that we never answer; Origin and Sec-Fetch-Site catch the rest.
+$contentType = isset($_SERVER['CONTENT_TYPE']) ? strtolower(trim((string) $_SERVER['CONTENT_TYPE'])) : '';
+if (!preg_match('#^application/json\s*(;|$)#', $contentType)) {
+    bsc_json(415, array('error' => 'unsupported_media_type'));
+}
+if (isset($_SERVER['HTTP_SEC_FETCH_SITE']) && strtolower((string) $_SERVER['HTTP_SEC_FETCH_SITE']) !== 'same-origin') {
+    bsc_json(403, array('error' => 'forbidden_origin'));
+}
+if (isset($_SERVER['HTTP_ORIGIN'])) {
+    $origin = parse_url((string) $_SERVER['HTTP_ORIGIN']);
+    $originHost = is_array($origin) && isset($origin['host']) ? strtolower($origin['host']) . (isset($origin['port']) ? ':' . $origin['port'] : '') : '';
+    $host = isset($_SERVER['HTTP_HOST']) ? strtolower((string) $_SERVER['HTTP_HOST']) : '';
+    if ($originHost === '' || $originHost !== $host) {
+        bsc_json(403, array('error' => 'forbidden_origin'));
+    }
+}
+
 // 2. Size (declared length first, then what actually arrives)
 $declared = isset($_SERVER['CONTENT_LENGTH']) ? (int) $_SERVER['CONTENT_LENGTH'] : 0;
 if ($declared > BSC_EXPLAIN_MAX_BODY) {
@@ -45,6 +64,11 @@ if ($summary === null) {
 // 4. Configuration: ~/domains/cybersecinfo.com/grcaudit-config.php (page is in public_html/pccheck/api/)
 $config = array();
 $configFile = dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'grcaudit-config.php';
+// Tests only: PHP's built-in server (never used in production) may point elsewhere, so the test
+// suite can guarantee there is no key and the paid upstream is never reached.
+if (PHP_SAPI === 'cli-server' && is_string(getenv('BSC_EXPLAIN_CONFIG')) && getenv('BSC_EXPLAIN_CONFIG') !== '') {
+    $configFile = getenv('BSC_EXPLAIN_CONFIG');
+}
 if (is_file($configFile)) {
     $loaded = include $configFile;
     if (is_array($loaded)) {
@@ -59,7 +83,7 @@ $model = isset($config['LLM_MODEL']) && is_string($config['LLM_MODEL']) && preg_
     ? $config['LLM_MODEL'] : BSC_EXPLAIN_DEFAULT_MODEL;
 
 // 5. Per-IP limit, then 6. the global daily cap (counted only for requests that reach this point)
-$wait = bsc_rate_limit('explain', BSC_EXPLAIN_PER_IP_HOUR, 3600);
+$wait = bsc_rate_limit('explain', BSC_EXPLAIN_PER_IP_HOUR, 3600, true);
 if ($wait > 0) {
     bsc_json(429, array('error' => 'rate_limited'), 'no-store', array('Retry-After' => (string) $wait));
 }

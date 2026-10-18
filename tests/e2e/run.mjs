@@ -20,7 +20,10 @@ function check(name, cond, extra) {
   else { failed++; console.log('  FAIL ' + name + (extra !== undefined ? '  -> ' + JSON.stringify(extra) : '')); }
 }
 
-const php = spawn('php', ['-S', '127.0.0.1:' + PORT + '', '-t', root], { stdio: 'ignore' });
+// explain.php must never reach the paid upstream from tests (BSC_EXPLAIN_CONFIG is honoured by php -S only).
+const NO_CONFIG = path.join(root, 'tests', 'no-such-grcaudit-config.php');
+if (fs.existsSync(NO_CONFIG)) throw new Error('Refusing to run: ' + NO_CONFIG + ' exists');
+const php = spawn('php', ['-S', '127.0.0.1:' + PORT + '', '-t', root], { stdio: 'ignore', env: Object.assign({}, process.env, { BSC_EXPLAIN_CONFIG: NO_CONFIG }) });
 await new Promise((r) => setTimeout(r, 800));
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');

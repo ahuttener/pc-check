@@ -273,7 +273,34 @@ function bsc_client_ip()
  * Sliding window per IP. The IP is stored only as a salted SHA-256 hash.
  * Returns 0 when allowed, or the number of seconds to wait.
  */
-function bsc_rate_limit($bucket, $max, $windowSeconds)
+/**
+ * The client key used by the per-IP limit. In strict mode an IPv6 address counts by its /64 prefix,
+ * because one connection usually gets a whole /64 and could rotate addresses inside it.
+ */
+function bsc_rate_limit_ip($strict)
+{
+    $ip = bsc_client_ip();
+    if ($strict && strpos($ip, ':') !== false) {
+        $bin = @inet_pton($ip);
+        if ($bin !== false && strlen($bin) === 16) {
+            return inet_ntop(substr($bin, 0, 8) . str_repeat(chr(0), 8)) . '/64';
+        }
+    }
+    return $ip;
+}
+
+/** Window file for this client and bucket (only a salted hash of the IP is used in the name). */
+function bsc_rate_limit_file($bucket, $strict = false)
+{
+    $hash = hash('sha256', $bucket . '|' . bsc_rate_limit_ip($strict) . '|' . __DIR__);
+    return bsc_cache_dir() . DIRECTORY_SEPARATOR . 'rl' . DIRECTORY_SEPARATOR . $bucket . '-' . substr($hash, 0, 40);
+}
+
+/**
+ * $strict = true is for endpoints that spend a paid API key: IPv6 is limited per /64 and,
+ * if the window file cannot be opened, the call is refused (fail closed) instead of allowed.
+ */
+function bsc_rate_limit($bucket, $max, $windowSeconds, $strict = false)
 {
     $dir = bsc_cache_dir() . DIRECTORY_SEPARATOR . 'rl';
     if (!is_dir($dir)) {
@@ -287,11 +314,11 @@ function bsc_rate_limit($bucket, $max, $windowSeconds)
             }
         }
     }
-    $hash = hash('sha256', $bucket . '|' . bsc_client_ip() . '|' . __DIR__);
-    $file = $dir . DIRECTORY_SEPARATOR . $bucket . '-' . substr($hash, 0, 40);
-    $fh = @fopen($file, 'c+');
+    $file = bsc_rate_limit_file($bucket, $strict);
+    $fh = is_dir($file) ? false : @fopen($file, 'c+');
     if (!$fh) {
-        return 0; // fail open: the limit protects the free upstream, not the visitor
+        // Free upstreams: fail open, the limit protects them, not the visitor. Paid key: fail closed.
+        return $strict ? (int) $windowSeconds : 0;
     }
     flock($fh, LOCK_EX);
     $now = time();
@@ -380,10 +407,10 @@ function bsc_has_exact_keys($value, $keys)
     return $got === $keys;
 }
 
-/** Short printable string: at most 80 characters, valid UTF-8, no control characters. */
+/** Short printable string: at most 80 characters, valid UTF-8, no control or format characters (bidi, zero-width). */
 function bsc_summary_string($value)
 {
-    if (!is_string($value) || !preg_match('//u', $value) || preg_match('/[\x00-\x1F\x7F]/', $value)) {
+    if (!is_string($value) || !preg_match('//u', $value) || preg_match('/\p{Cc}|\p{Cf}/u', $value)) {
         return false;
     }
     $len = function_exists('mb_strlen') ? mb_strlen($value, 'UTF-8') : preg_match_all('/./us', $value);

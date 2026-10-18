@@ -41,5 +41,42 @@ if (count($files) !== 2) {
     fwrite(STDERR, "FAIL: expected 2 window files, got " . count($files) . "\n");
 }
 
+// Strict mode (paid key): IPv6 counts by /64, and an unusable window file refuses the call.
+$strictBucket = 'tests' . mt_rand(100000, 999999);
+$_SERVER['REMOTE_ADDR'] = '2001:db8:1:2::1';
+bsc_rate_limit($strictBucket, 2, 60, true);
+$_SERVER['REMOTE_ADDR'] = '2001:db8:1:2:aaaa:bbbb:cccc:dddd';
+bsc_rate_limit($strictBucket, 2, 60, true);
+if (bsc_rate_limit($strictBucket, 2, 60, true) < 1) {
+    $failures++;
+    fwrite(STDERR, "FAIL: strict: addresses in the same IPv6 /64 share one window\n");
+}
+$_SERVER['REMOTE_ADDR'] = '2001:db8:1:3::1';
+if (bsc_rate_limit($strictBucket, 2, 60, true) !== 0) {
+    $failures++;
+    fwrite(STDERR, "FAIL: strict: another /64 has its own window\n");
+}
+$_SERVER['REMOTE_ADDR'] = '2001:db8:1:2::1';
+if (bsc_rate_limit_file($strictBucket, false) === bsc_rate_limit_file($strictBucket, true)) {
+    $failures++;
+    fwrite(STDERR, "FAIL: non-strict mode keeps the full IPv6 address\n");
+}
+foreach ((array) glob(bsc_cache_dir() . '/rl/' . $strictBucket . '-*') as $f) {
+    unlink($f);
+}
+// Make the window file unusable (a directory in its place).
+$_SERVER['REMOTE_ADDR'] = '198.51.100.99';
+$blocked = bsc_rate_limit_file($strictBucket, true);
+mkdir($blocked);
+if (bsc_rate_limit($strictBucket, 2, 60, true) < 1) {
+    $failures++;
+    fwrite(STDERR, "FAIL: strict: unusable window file must fail closed\n");
+}
+if (bsc_rate_limit($strictBucket, 2, 60, false) !== 0) {
+    $failures++;
+    fwrite(STDERR, "FAIL: non-strict: unusable window file must fail open\n");
+}
+rmdir($blocked);
+
 echo 'ratelimit: ' . ($failures ? "$failures failed" : 'all passed') . "\n";
 exit($failures ? 1 : 0);

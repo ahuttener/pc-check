@@ -3,6 +3,8 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import fs from 'node:fs';
+import { chromium } from 'playwright';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const PORT = process.env.BSC_PORT || '8766';
@@ -14,7 +16,11 @@ function check(name, cond, extra) {
   else { failed++; console.log('  FAIL ' + name + (extra !== undefined ? '  -> ' + JSON.stringify(extra) : '')); }
 }
 
-const php = spawn('php', ['-S', '127.0.0.1:' + PORT, '-t', root], { stdio: 'ignore' });
+// explain.php must never reach the paid upstream from tests: point it (cli-server only) at a config
+// file that does not exist, and refuse to run if it somehow does.
+const NO_CONFIG = path.join(root, 'tests', 'no-such-grcaudit-config.php');
+if (fs.existsSync(NO_CONFIG)) throw new Error('Refusing to run: ' + NO_CONFIG + ' exists');
+const php = spawn('php', ['-S', '127.0.0.1:' + PORT, '-t', root], { stdio: 'ignore', env: Object.assign({}, process.env, { BSC_EXPLAIN_CONFIG: NO_CONFIG }) });
 await new Promise((r) => setTimeout(r, 800));
 
 try {
@@ -45,7 +51,39 @@ try {
     findings: [{ id: 'shutdowns', severity: 'warn' }, { id: 'crashes', severity: 'warn' }],
     topCrashApps: [{ name: 'MiracastPowerManager.exe', count: 25 }],
     batteryHealthPct: 90.4, shutdowns30d: 1, hardwareErrors30d: 1, stabilityNow: 1.97 };
-  const post = (body) => fetch(BASE + 'api/explain.php', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+  const post = (body, headers) => fetch(BASE + 'api/explain.php', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, headers || {}), body });
+  const valid = JSON.stringify({ summary });
+  r = await post(valid, { 'Content-Type': 'text/plain' });
+  check('explain: text/plain POST (no-cors simple request) -> 415', r.status === 415, r.status);
+  check('explain: 415 body', (await r.text()) === '{"error":"unsupported_media_type"}');
+  r = await post(valid, { 'Content-Type': 'application/x-www-form-urlencoded' });
+  check('explain: form POST -> 415', r.status === 415, r.status);
+  r = await post(valid, { Origin: 'https://evil.example' });
+  check('explain: foreign Origin -> 403', r.status === 403, r.status);
+  check('explain: 403 body', (await r.text()) === '{"error":"forbidden_origin"}');
+  r = await post(valid, { Origin: 'http://127.0.0.1:1' + PORT });
+  check('explain: same host, other port -> 403', r.status === 403, r.status);
+  r = await post(valid, { 'Sec-Fetch-Site': 'cross-site' });
+  check('explain: Sec-Fetch-Site cross-site -> 403', r.status === 403, r.status);
+  r = await post(valid, { 'Sec-Fetch-Site': 'same-site' });
+  check('explain: Sec-Fetch-Site same-site -> 403', r.status === 403, r.status);
+  r = await post(valid, { Origin: 'http://127.0.0.1:' + PORT, 'Sec-Fetch-Site': 'same-origin', 'Content-Type': 'application/json; charset=utf-8' });
+  check('explain: same-origin JSON request reaches the 503 path', r.status === 503, r.status);
+  {
+    // The real browser call Task 6 makes: same-origin fetch with a JSON body.
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(BASE);
+      const status = await page.evaluate(async (body) => {
+        const res = await fetch('api/explain.php', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+        return res.status;
+      }, valid);
+      check('explain: same-origin browser fetch reaches the 503 path', status === 503, status);
+    } finally {
+      await browser.close();
+    }
+  }
   r = await fetch(BASE + 'api/explain.php');
   check('explain: GET -> 405', r.status === 405, r.status);
   check('explain: Allow: POST', r.headers.get('allow') === 'POST', r.headers.get('allow'));
