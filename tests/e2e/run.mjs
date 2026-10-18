@@ -1388,7 +1388,12 @@ try {
       const longPkg = 'com.' + 'a'.repeat(86);
       const probe = rep(eventAdd([crashLine('10-17', 'john.doe@gmail.com')]), [['[ro.product.model]: [Pixel 8]', '[ro.product.model]: [John Smith phone 353871234567]'],
         ['kernel_panic,1791633900', 'kernel_panic,imei=356938035643809,1791633900']]);
-      const anon = (v) => S.anonymise(v);
+      const anon = (v) => S.anonymiseAndroid(v);
+      // Other systems' text that the Android-only rules would over-mask: the shared anonymise() leaves it alone
+      const OTHER_TEXT = ["Microsoft's Phone Link", 'Microsoft\u2019s Phone Link', 'Report Id 123456789012345', 'Your-Phone app', 'Opened the Your-Phone app from Phone Link',
+        '/sdcard/ is not a Windows path', 'Account {name=Updates, type=service}', 'serialno=ABCD1234', 'phoneNumber=0851234567'];
+      const winHand = S.buildSummary({ os: 'Windows 11 Home', model: "Microsoft's Phone Link", ramGb: 16, score: 90, names: [], findings: [],
+        topCrashApps: [{ name: 'Your-Phone app', count: 2 }, { name: 'Report Id 123456789012345', count: 1 }], batteryHealthPct: null, shutdowns30d: 0, hardwareErrors30d: 0, stabilityNow: 9 });
       const crafted = ['a'.repeat(8192), "a'".repeat(4096), 'Jane '.repeat(1638), 'a-'.repeat(4096), '-'.repeat(8192), '1'.repeat(8192), "x's ".repeat(2048),
         'Account {name=' + 'a'.repeat(8178), 'serialno='.repeat(910), 'mLine1Number=' + '1 '.repeat(4089), '/sdcard/'.repeat(1024), "Jane's Pixel 8 ".repeat(546),
         'a-Pixel'.repeat(1170), "Jane's ".repeat(1170) + 'x', 'a.'.repeat(4096), ('1'.repeat(15) + '.').repeat(512), "Jane Doe's Galaxy A51 Pro Plus Ultra ".repeat(221)];
@@ -1430,7 +1435,9 @@ try {
           lines: ['a', 'b', 'c'].map((k) => t[k].split('\n').map(anon).join('\n'))
         },
         timed,
-        exported: ['evaluateAndroid', 'androidScanner', 'parseAndroidBugreport', 'androidBootCause'].every((k) => typeof S[k] === 'function') && S.ANDROID_TEXT_CAP === 31457280
+        shared: OTHER_TEXT.map((v) => S.anonymise(v)), sharedNames: OTHER_TEXT.map((v) => S.anonymise(v, ['Somebody Else'])), otherText: OTHER_TEXT,
+        androidPass: ["Microsoft's Phone Link", 'Report Id 123456789012345', 'Your-Phone app'].map(anon), winHand,
+        exported: typeof S.anonymiseAndroid === 'function' && ['evaluateAndroid', 'androidScanner', 'parseAndroidBugreport', 'androidBootCause'].every((k) => typeof S[k] === 'function') && S.ANDROID_TEXT_CAP === 31457280
       };
     }, { a: ard('bugreport-a.txt'), b: ard('bugreport-b.txt'), c: ard('bugreport-c.txt'), now: SYS_NOW.toISOString() });
     check('android rules: evaluateAndroid is loaded', r !== null);
@@ -1534,6 +1541,11 @@ try {
         "the phone maker's support", '33554448', '1791633900', 'Pixel 8 Pro']), x.unchanged);
       const lineLeaks = x.lines.map((s) => notCarriers.filter((v) => s.toLowerCase().indexOf(v) !== -1));
       check('android anonymiser: every fixture line, anonymised, holds no planted value (carriers aside)', lineLeaks.every((l) => !l.length), lineLeaks);
+      check('android anonymiser: the Android rules do not run in the shared anonymise() (Windows, Linux, Mac, iPhone text unchanged)', same(r.shared, r.otherText) && same(r.sharedNames, r.otherText),
+        r.shared.filter((v, i) => v !== r.otherText[i]).concat(r.sharedNames.filter((v, i) => v !== r.otherText[i])));
+      check('android anonymiser: the Android pass still masks them', same(r.androidPass, ['[device] Link', 'Report Id [id]', '[device] app']), r.androidPass);
+      check('android anonymiser: a Windows summary keeps "Phone Link", "Your-Phone app" and a 15-digit report id', r.winHand.model === "Microsoft's Phone Link" &&
+        same(r.winHand.topCrashApps, [{ name: 'Your-Phone app', count: 2 }, { name: 'Report Id 123456789012345', count: 1 }]), r.winHand);
       check('android anonymiser: crafted 8,192-character inputs take under 50 ms each', r.timed.every((ms) => ms < 50), r.timed);
       const leaks = (s) => allPlanted.concat(['/storage/emulated', 'bugreport-', 'anr_']).filter((v) => s.toLowerCase().indexOf(v) !== -1);
       check('android anonymiser: no planted identifier in summary, facts, findings or PDF text', all.every((e) => !leaks(e.shown).length), all.map((e) => leaks(e.shown)).filter((l) => l.length));
@@ -1543,7 +1555,7 @@ try {
         (texts.match(new RegExp('.{0,40}(?:' + FORBIDDEN.source + ').{0,20}', 'i')) || [])[0]);
       check('android rules: no possessive right before a device word', !/[A-Za-z]['`‘’ʼ]s?\s+(?:Pixel|Galaxy|OnePlus|Xperia|Redmi|Xiaomi|Moto|Nokia|Phone|phone|Tablet|tablet|Tab)\b/.test(texts));
       check('android rules: score is 100 - 25 x risks - 10 x warns', all.every((e) => e.score === Math.max(0, 100 - 25 * e.ids.filter((i) => /:risk$/.test(i)).length - 10 * e.ids.filter((i) => /:warn$/.test(i)).length)));
-      check('android: evaluateAndroid, androidScanner, parseAndroidBugreport, androidBootCause and ANDROID_TEXT_CAP are exported', r.exported);
+      check('android: anonymiseAndroid, evaluateAndroid, androidScanner, parseAndroidBugreport, androidBootCause and ANDROID_TEXT_CAP are exported', r.exported);
 
       // The real PHP whitelist judges every Android summary built above: the browser never sends one the server refuses
       const summaries = all.map((e) => e.summaryObj).concat([hd]);
@@ -3318,7 +3330,9 @@ try {
       check('android ui: date line says bug report, read on this device', dateA === 'Bug report from 2026-10-17 · read on this device, nothing uploaded', dateA);
       const reminders = await page.locator('#sys-results').evaluate((r, want) => r.innerText.split(want).length - 1, REMINDER).catch(() => -1);
       check('android ui: the Developer options reminder shows once with the results', reminders === 1 && await visible(page, '#sys-android-reminder'), reminders);
-      check('android ui: no Explain with AI for Android yet', (await page.locator('#sys-ai, #sys-ai-open').count()) === 0);
+      check('android ui: Explain with AI offered for Android (one button, nothing opened)', (await page.locator('#sys-ai-open').count()) === 1 &&
+        await visible(page, '#sys-ai-open') && (await page.locator('#sys-ai-disclosure').count()) === 0);
+      check('android ui: the file input is emptied after a read', (await page.evaluate(() => document.getElementById('sys-file-android').files.length)) === 0);
       const shownA = await shownText(page);
 
       await choose(page, zipOf(NAME_B, 'set-b.zip'));
@@ -3416,6 +3430,27 @@ try {
       try { await analyzed(page); } catch (e) { ok = false; }
       check('android ui: a new choice during a read -> the new file\'s results', ok && (await score(page)) === '15', await score(page));
       check('android ui: cancelled read -> no page errors', seen.errors.length === 0, seen.errors);
+
+      // Analyze pressed while a big read runs, then a new choice: Analyze waits for the new file, never "Choose a bug report first"
+      await page.click('#sys-android-clear', { timeout: 3000 });
+      await page.setInputFiles('#sys-file-android', zipOf('bomb.zip', 'bomb.zip'), { timeout: 10000 });
+      await page.waitForTimeout(150);
+      await analyze(page);
+      await page.waitForTimeout(100);
+      await page.setInputFiles('#sys-file-android', zipOf(NAME_B, 'set-b.zip'), { timeout: 10000 });
+      const waited = await page.waitForSelector('#sys-results:not([hidden])', { timeout: 20000 }).then(() => true).catch(() => false);
+      check('android ui: Analyze during a read, then a new choice -> the new file\'s results', waited && (await score(page)) === '15' && (await status(page)) !== NEED, [await score(page), await status(page)]);
+
+      // Analyze pressed while a big read runs, then Clear: no stale status, no results
+      await page.click('#sys-android-clear', { timeout: 3000 });
+      await page.setInputFiles('#sys-file-android', zipOf('bomb.zip', 'bomb.zip'), { timeout: 10000 });
+      await page.waitForTimeout(150);
+      await analyze(page);
+      await page.click('#sys-android-clear', { timeout: 3000 });
+      await page.waitForTimeout(1500);
+      check('android ui: Analyze during a read, then Clear -> empty status, no results', (await status(page)) === '' && (await msg(page)) === '' && !(await visible(page, '#sys-results')),
+        [await status(page), await msg(page)]);
+      check('android ui: Analyze during a read -> no page errors', seen.errors.length === 0, seen.errors);
       await context.close();
     }
     {
@@ -3605,6 +3640,7 @@ try {
         check('pdf: no planted personal data', !PERSONAL.test(report), report.match(/.{0,20}(PC-NAME|DESKTOP-JD123|JohnDoe).{0,20}/));
         check('pdf: footer no longer says nothing was sent', !/nothing was sent/i.test(report), report.slice(-300));
         check('pdf: heading says "System report (Windows)"', report.includes('System report (Windows)') && !report.includes('System report (Linux)'), report.slice(0, 300));
+        check('pdf: facts under "This PC", never "This phone"', report.includes('This PC') && !report.includes('This phone') && !report.includes('System report (Android)'), report.slice(-900));
         await page.click('#sys-os-linux', { timeout: 2000 }).catch(() => {});
         check('pdf: Windows report not offered while Linux is selected', !(await page.locator('#pdf').isVisible().catch(() => true)));
         await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
@@ -3692,6 +3728,7 @@ try {
         await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
         const report = await page.locator('#report').innerText();
         check('pdf linux: heading says "System report (Linux)"', report.includes('System report (Linux)') && !report.includes('System report (Windows)'), report.slice(0, 300));
+        check('pdf linux: facts under "This PC", never "This phone"', report.includes('This PC') && !report.includes('This phone'), report.slice(-900));
         check('pdf linux: score 25 / 100 and Ubuntu 24.04.1 LTS', /\b25 \/ 100/.test(report) && report.includes('Ubuntu 24.04.1 LTS'), report.slice(0, 600));
         check('pdf linux: "Logs from" date line', /Logs from 2026-10-18/.test(report), report.slice(0, 400));
         check('pdf linux: includes the AI explanation as text', report.includes('Second paragraph: update the drivers.') && (await page.locator('#report b, #report img:not([src*="emblem.png"])').count()) === 0);
@@ -3800,6 +3837,7 @@ try {
         await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
         const report = await page.locator('#report').innerText();
         check('pdf mac: heading says "System report (Mac)"', report.includes('System report (Mac)') && !report.includes('System report (Windows)') && !report.includes('System report (Linux)'), report.slice(0, 300));
+        check('pdf mac: facts under "This PC", never "This phone"', report.includes('This PC') && !report.includes('This phone'), report.slice(-900));
         check('pdf mac: score 55 / 100 and macOS 26.0.1', /\b55 \/ 100/.test(report) && report.includes('macOS 26.0.1'), report.slice(0, 600));
         check('pdf mac: "System Information from" date line', /System Information from 2026-10-18/.test(report), report.slice(0, 400));
         check('pdf mac: findings and facts', /kernel panic/i.test(report) && /91\.9 %/.test(report) && /Battery health/.test(report), report.slice(0, 600));
@@ -3912,7 +3950,7 @@ try {
           check('pdf ios: PDF button available', await page.locator('#pdf').isVisible().catch(() => false));
           await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
           const report = await page.locator('#report').innerText();
-          check('pdf ios: heading says "System report (iPhone)"', report.includes('System report (iPhone)') && !/System report \((Windows|Linux|Mac)\)/.test(report), report.slice(0, 300));
+          check('pdf ios: heading says "System report (iPhone)"', report.includes('System report (iPhone)') && !/System report \((Windows|Linux|Mac|Android)\)/.test(report), report.slice(0, 300));
           check('pdf ios: score 65 / 100 and iPhone OS 26.0.1', /\b65 \/ 100/.test(report) && report.includes('iPhone OS 26.0.1'), report.slice(0, 600));
           check('pdf ios: "Newest log from" date line', /Newest log from 2026-10-17 · read on this device, nothing uploaded/.test(report), report.slice(0, 400));
           check('pdf ios: facts under "This iPhone", never "This PC"', report.includes('This iPhone') && !report.includes('This PC') && /84 %/.test(report), report.slice(-900));
@@ -3968,14 +4006,131 @@ try {
       }
     }
 
+    // Android: the same flow with the Android summary (Set A), in Chromium on a Pixel 7 and at 360 px
+    const AFX7 = path.join(here, '..', 'fixtures', 'sys', 'android');
+    const AZIPS7 = androidZips(AFX7);
+    const NAME_A7 = 'bugreport-shiba-BP3A.250905.014-2026-10-17-21-14-05.zip';
+    const plantedA7 = JSON.parse(fs.readFileSync(path.join(AFX7, 'PLANTED.json'), 'utf8'));
+    const PLANTED_A7 = [].concat(...Object.values(plantedA7)).map((p) => String(p).toLowerCase());
+    // File and entry names and raw bug-report text must never appear
+    const ANDROID_BITS = ['bugreport-', 'shiba', 'main_entry', 'anr_', '.zip', '/storage/emulated', 'mimei', 'account {', 'ssid', 'exampletel'];
+    const leaksA = (s) => { const l = String(s).toLowerCase(); return PLANTED_A7.concat(ANDROID_BITS).filter((p) => l.includes(p)); };
+    const ANDROID_360 = { userAgent: devices['Pixel 7'].userAgent, viewport: { width: 360, height: 740 } };
+    const A_REMINDER = 'When you are done, turn Developer options off again (the switch at the top of the Developer options screen) and delete the bug report from Downloads: it holds personal data.';
+    async function androidAnalyzed(engine = browser, opts = devices['Pixel 7']) {
+      const made = await newPage('ok', opts, engine);
+      const { page } = made;
+      await page.waitForFunction(() => (document.getElementById('sys-banner') || {}).textContent, null, { timeout: 5000 }).catch(() => {});
+      if ((await page.getAttribute('#sys-os-android', 'aria-pressed', { timeout: 2000 }).catch(() => null)) !== 'true') await page.click('#sys-os-android', { timeout: 2000 }).catch(() => {});
+      await page.setInputFiles('#sys-file-android', { name: NAME_A7, mimeType: 'application/zip', buffer: AZIPS7['set-a.zip'] }, { timeout: 10000 });
+      await page.waitForFunction(() => /^(ok|error)$/.test((document.getElementById('sys-step-android-file') || { getAttribute: () => '' }).getAttribute('data-state') || ''), null, { timeout: 20000 }).catch(() => {});
+      await page.click('#sys-android-analyze', { timeout: 3000 });
+      await page.waitForSelector('#sys-results:not([hidden])', { timeout: 10000 });
+      return made;
+    }
+    {
+      let made;
+      try { made = await androidAnalyzed(); } catch (e) { made = null; }
+      check('ai android: setup (Set A analyzed in Chromium, Pixel 7)', !!made);
+      if (made) {
+        const { page, context, seen } = made;
+        const mock = { mode: 'ok', delay: 200 };
+        await mockExplain(page, mock);
+        check('ai android: "Explain with AI" button appears after Analyze', await page.locator('#sys-ai-open').isVisible().catch(() => false));
+        check('ai android: disclosure not shown before the click', !(await page.locator('#sys-ai-disclosure').isVisible().catch(() => false)));
+        const before = await page.locator('#ledger-list li').count();
+        await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
+        const disc = await page.locator('#sys-ai-disclosure').innerText({ timeout: 2000 }).catch(() => '');
+        check('ai android: exact disclosure shown before sending ("not your files")', disc.trim() === DISCLOSURE, disc);
+        const shownText = await page.locator('#sys-ai-summary').innerText({ timeout: 2000 }).catch(() => '');
+        let shown = null;
+        try { shown = JSON.parse(shownText); } catch (e) { /* stays null */ }
+        check('ai android: the summary shown is the Android shape', shown !== null && shown.platform === 'android' && shown.score === 80 &&
+          shown.android === '16' && shown.securityPatch === '2026-09-05' && shown.model === 'Google Pixel 8', shownText.slice(0, 300));
+        check('ai android: nothing sent and nothing logged before Send', mock.bodies.length === 0 && (await page.locator('#ledger-list li').count()) === before);
+        await page.click('#sys-ai-send', { timeout: 2000 }).catch(() => {});
+        await page.waitForSelector('#sys-ai-text p', { timeout: 5000 }).catch(() => {});
+        check('ai android: exactly one request', mock.bodies.length === 1, mock.bodies.length);
+        let body = null;
+        try { body = JSON.parse(mock.bodies[0]); } catch (e) { /* stays null */ }
+        check('ai android: request body is exactly {summary} with platform "android"', body !== null && JSON.stringify(Object.keys(body)) === '["summary"]' && body.summary.platform === 'android', mock.bodies[0]);
+        check('ai android: request body equals the summary shown', body !== null && JSON.stringify(body.summary) === JSON.stringify(shown), [mock.bodies[0], shownText]);
+        check('ai android: request carries "storageFreePct":31', /"storageFreePct":31[,}]/.test(String(mock.bodies[0])), mock.bodies[0]);
+        check('ai android: no planted identifier and no file name in the request or the summary shown', !!mock.bodies[0] && leaksA(mock.bodies[0]).length === 0 && leaksA(shownText).length === 0,
+          [leaksA(String(mock.bodies[0])), leaksA(shownText)]);
+        const ledger = await page.locator('#ledger-list').innerText();
+        check('ai android: outbound log gains one entry', (await page.locator('#ledger-list li').count()) === before + 1 && /anonymised summary/.test(ledger), ledger.slice(-300));
+        const paras = await page.locator('#sys-ai-text p').allInnerTexts();
+        check('ai android: explanation renders as text paragraphs', paras.length === 2 && paras[0].includes('Your PC is mostly fine') && paras[1].includes('Second paragraph'), paras);
+        check('ai android: model output never parsed as HTML', paras.join(' ').includes('<b>bold</b>') && (await page.locator('#sys-ai-text b, #sys-ai-text img').count()) === 0 && !(await page.evaluate(() => window.__xss)));
+
+        check('pdf android: PDF button available', await page.locator('#pdf').isVisible().catch(() => false));
+        await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+        const report = await page.locator('#report').innerText();
+        check('pdf android: heading says "System report (Android)"', report.includes('System report (Android)') && !/System report \((Windows|Linux|Mac|iPhone|iPad)\)/.test(report), report.slice(0, 300));
+        check('pdf android: score 80 / 100, Android 16 and patch 2026-09-05', /\b80 \/ 100/.test(report) && report.includes('Android 16') && report.includes('2026-09-05'), report.slice(0, 600));
+        check('pdf android: "Bug report from" date line', /Bug report from 2026-10-17 · read on this device, nothing uploaded/.test(report), report.slice(0, 400));
+        check('pdf android: facts under "This phone", never "This PC"', report.includes('This phone') && !report.includes('This PC') && /31 %/.test(report) && /85 %/.test(report), report.slice(-900));
+        check('pdf android: findings and the battery good news', /restarted by itself/.test(report) && report.includes('com.example.snapnotes') && /Good news: [^\n]*85 %/.test(report), report.slice(0, 1200));
+        check('pdf android: the Developer options reminder, once', report.split(A_REMINDER).length - 1 === 1, report.split(A_REMINDER).length - 1);
+        check('pdf android: includes the AI explanation as text', report.includes('Second paragraph: update the drivers.') && (await page.locator('#report b, #report img:not([src*="emblem.png"])').count()) === 0);
+        check('pdf android: no planted identifier, no file or entry name, no raw bug-report text', leaksA(report).length === 0, leaksA(report));
+        check('pdf android: footer says a summary was sent', !/nothing was sent/i.test(report), report.slice(-300));
+
+        await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
+        check('pdf android: Android report not offered while Windows is selected', !(await page.locator('#pdf').isVisible().catch(() => true)));
+        await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+        check('pdf android: no Android system section while Windows is selected', !(await page.locator('#report').innerText()).includes('System report'));
+        await page.click('#sys-os-android', { timeout: 2000 }).catch(() => {});
+        check('pdf android: Android report offered again with Android selected', await page.locator('#pdf').isVisible().catch(() => false));
+        check('ai android: no page errors', seen.errors.length === 0, seen.errors);
+        check('ai android: no outside requests', seen.external.length === 0, seen.external);
+        await context.close();
+      }
+
+      // 360 px: the friendly error messages, then an explanation that fits without horizontal scroll
+      let small;
+      try { small = await androidAnalyzed(browser, ANDROID_360); } catch (e) { small = null; }
+      if (small) {
+        const { page, context, seen } = small;
+        const mock = { mode: 429 };
+        await mockExplain(page, mock);
+        await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
+        const results = {};
+        for (const mode of [429, 503, 502]) {
+          mock.mode = mode;
+          await page.click('#sys-ai-send', { timeout: 3000 }).catch(() => {});
+          await waitErr(page);
+          results[mode] = await errText(page);
+          await page.waitForFunction(() => { const b = document.getElementById('sys-ai-send'); return b && !b.disabled; }, null, { timeout: 3000 }).catch(() => {});
+        }
+        check('ai android: 429 says "limit"', /limit/i.test(results[429]), results[429]);
+        check('ai android: 503 says not available', /not available/i.test(results[503]) && results[503] !== results[429], results[503]);
+        check('ai android: 502 has its own friendly message', !!results[502] && results[502] !== results[503] && results[502] !== results[429], results[502]);
+        check('ai android: every attempt sent with platform android, no explanation shown', mock.bodies.length === 3 && mock.bodies.every((b) => JSON.parse(b).summary.platform === 'android') &&
+          (await page.locator('#sys-ai-text p').count()) === 0, mock.bodies.length);
+        mock.mode = 'ok';
+        await page.click('#sys-ai-send', { timeout: 3000 }).catch(() => {});
+        await page.waitForSelector('#sys-ai-text p', { timeout: 5000 }).catch(() => {});
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        check('ai android: explanation shown at 360 px with no horizontal scroll', (await page.locator('#sys-ai-text p').count()) === 2 && overflow <= 0, overflow);
+        check('ai android: errors and explanation at 360 px cause no page error', seen.errors.length === 0, seen.errors);
+        await context.close();
+      } else {
+        check('ai android: 360 px setup', false);
+      }
+    }
+
     // Not mocked: the real local endpoint (php -S, no key) must get past Content-Type, Origin and the summary
     // whitelist and stop at "not configured" (503). The paid upstream is never reached.
     for (const [label, engineName] of [['Chromium', 'chromium'], ['WebKit', 'webkit'], ['Chromium, Linux', 'chromium'], ['WebKit, Linux', 'webkit'],
-      ['Chromium, Mac', 'chromium'], ['WebKit, Mac', 'webkit'], ['Chromium, iPhone', 'chromium'], ['WebKit, iPhone', 'webkit']]) {
+      ['Chromium, Mac', 'chromium'], ['WebKit, Mac', 'webkit'], ['Chromium, iPhone', 'chromium'], ['WebKit, iPhone', 'webkit'],
+      ['Chromium, Android (Pixel 7)', 'chromium'], ['WebKit, Android', 'webkit']]) {
       const eng = engineName === 'webkit' ? await webkit.launch() : browser;
       try {
-        const { page, context, seen } = /Linux/.test(label) ? await linuxAnalyzed(eng) : (/Mac/.test(label) ? await macAnalyzed(eng) :
-          (/iPhone/.test(label) ? await iosAnalyzed(eng) : await analyzed({}, eng)));
+        const { page, context, seen } = /Android/.test(label) ? await androidAnalyzed(eng, engineName === 'webkit' ? ANDROID_360 : devices['Pixel 7']) :
+          (/Linux/.test(label) ? await linuxAnalyzed(eng) : (/Mac/.test(label) ? await macAnalyzed(eng) :
+          (/iPhone/.test(label) ? await iosAnalyzed(eng) : await analyzed({}, eng))));
         await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
         const res = page.waitForResponse(/\/api\/explain\.php/, { timeout: 8000 }).catch(() => null);
         await page.click('#sys-ai-send', { timeout: 2000 }).catch(() => {});

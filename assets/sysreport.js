@@ -1413,7 +1413,13 @@
     return m.replace(/[^0-9]/g, '').length >= 8 ? '[phone]' : m;
   }
 
-  function anonymise(value, names) {
+  // The Android rules (shared-storage paths, accounts, labelled serials and phone numbers, Android device and host names,
+  // IMEI-like numbers) run only in the Android pass: on other systems' text they would mask ordinary words
+  // ("Microsoft's Phone Link", "Report Id 123456789012345"). Windows, Linux, Mac and iPhone text uses anonymise().
+  function anonymise(value, names) { return anonymiseText(value, names, false); }
+  function anonymiseAndroid(value, names) { return anonymiseText(value, names, true); }
+
+  function anonymiseText(value, names, android) {
     var raw = String(value === null || value === undefined ? '' : value);
     // Some rules backtrack on long runs (60,000 hyphens took seconds): a longer string is cut first, and the token
     // the cut ran through is dropped, so a half identifier cannot slip past the rules.
@@ -1440,14 +1446,17 @@
       .replace(DEVICE_POSSESSIVE, '$1[device]')
       .replace(DEVICE_OF_NAME, '$1[device]')
       .replace(DEVICE_HOST, '$1[device]')
-      .replace(PHONE_INTL, maskPhone)
-      .replace(ANDROID_STORAGE_PATH, '$1[path]')
-      .replace(ANDROID_ACCOUNT, '$1[account]')
-      .replace(ANDROID_SERIAL, '$1[serial]')
-      .replace(ANDROID_PHONE_KEY, '$1[phone]')
-      .replace(ANDROID_DEVICE_POSSESSIVE, '$1[device]')
-      .replace(ANDROID_DEVICE_HOST, '$1[device]');
-    return s
+      .replace(PHONE_INTL, maskPhone);
+    if (android) {
+      s = s
+        .replace(ANDROID_STORAGE_PATH, '$1[path]')
+        .replace(ANDROID_ACCOUNT, '$1[account]')
+        .replace(ANDROID_SERIAL, '$1[serial]')
+        .replace(ANDROID_PHONE_KEY, '$1[phone]')
+        .replace(ANDROID_DEVICE_POSSESSIVE, '$1[device]')
+        .replace(ANDROID_DEVICE_HOST, '$1[device]');
+    }
+    s = s
       .replace(/([A-Za-z]:\\Users\\)[^\\\s]+/gi, '$1[user]')
       .replace(/(\/(?:home|Users|run\/media|media)\/)[^\/\s]+/g, '$1[user]')
       .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
@@ -1455,9 +1464,9 @@
       .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '[id]')
       .replace(/\b\d{1,3}(\.\d{1,3}){3}\b/g, '[ip]')
       .replace(/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b/gi, '[ip]')
-      .replace(/\b(DESKTOP|LAPTOP|PC)-[A-Z0-9]{4,}\b/g, '[pc]')
-      .replace(ANDROID_IMEI, '$1[id]')
-      .replace(/\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{10,}\b/g, '[id]');
+      .replace(/\b(DESKTOP|LAPTOP|PC)-[A-Z0-9]{4,}\b/g, '[pc]');
+    if (android) s = s.replace(ANDROID_IMEI, '$1[id]');
+    return s.replace(/\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{10,}\b/g, '[id]');
   }
 
   // ---------------------------------------------------------------------------
@@ -2336,7 +2345,7 @@
     if (mo === null) return null;
     var ma = part(manufacturer);
     var joined = ma !== null && mo.toLowerCase().indexOf(ma.toLowerCase()) !== 0 ? ma + ' ' + mo : mo;
-    return anonymise(joined) === joined && androidModelOk(joined) ? joined : null;
+    return anonymiseAndroid(joined) === joined && androidModelOk(joined) ? joined : null;
   }
 
   // An app as shown and summarised: only an Android package or process name ("com.example.snapnotes",
@@ -2344,7 +2353,7 @@
   // spaces, 80+ characters, an empty name) is "An unnamed app".
   function androidAppName(raw) {
     var s = typeof raw === 'string' ? raw : '';
-    return s.length <= 80 && SUMMARY_PACKAGE.test(s) && !LONG_DIGITS.test(s) && anonymise(s) === s ? s : UNNAMED_APP;
+    return s.length <= 80 && SUMMARY_PACKAGE.test(s) && !LONG_DIGITS.test(s) && anonymiseAndroid(s) === s ? s : UNNAMED_APP;
   }
 
   function validTime(d) { return d instanceof Date && !isNaN(d.getTime()); }
@@ -2508,8 +2517,8 @@
     if (anrList !== null) facts.push({ label: 'Apps not responding' + logLabel, value: String(anrList.length) });
     if (reportDate) facts.push({ label: 'Bug report from', value: localDate(reportDate) });
 
-    facts.forEach(function (f) { f.value = anonymise(f.value); });
-    findings.forEach(function (f) { f.title = anonymise(f.title); f.detail = anonymise(f.detail); });
+    facts.forEach(function (f) { f.value = anonymiseAndroid(f.value); });
+    findings.forEach(function (f) { f.title = anonymiseAndroid(f.title); f.detail = anonymiseAndroid(f.detail); });
     out.goodNews = estimate !== null && estimate >= 80 && !findings.some(function (f) { return f.id === 'battery'; }) ?
       [{ title: 'Battery looks healthy — Android estimates it holds ' + estimate + ' % of its original capacity.' }] : [];
     return out;
@@ -2648,7 +2657,7 @@
   var SUMMARY_ANDROID_FINDING_IDS = toSet(['reboots', 'crashes', 'anrs', 'battery', 'storage', 'old_patch', 'old_report']);
 
   function buildAndroidSummary(e) {
-    var model = typeof e.model === 'string' ? cap(anonymise(e.model)) : null;
+    var model = typeof e.model === 'string' ? cap(anonymiseAndroid(e.model)) : null;
     var score = summaryCount(e.score);
     // Counts of the same name are added up, so a list never names an entry twice
     var list = function (items, nameOf) {
@@ -2706,7 +2715,7 @@
 
   window.PCSys = {
     decode: decode, parseReliability: parseReliability, parseBattery: parseBattery, parseMsinfo: parseMsinfo,
-    evaluateWindows: evaluateWindows, evaluateLinux: evaluateLinux, anonymise: anonymise, buildSummary: buildSummary,
+    evaluateWindows: evaluateWindows, evaluateLinux: evaluateLinux, anonymise: anonymise, anonymiseAndroid: anonymiseAndroid, buildSummary: buildSummary,
     LINUX_PASTE_CAP: LINUX_PASTE_CAP, LINUX_MAX_LINES: LINUX_MAX_LINES,
     parseLinuxSystem: parseLinuxSystem, parseJournal: parseJournal, parseBoots: parseBoots,
     parseUpower: parseUpower, parseDisks: parseDisks,

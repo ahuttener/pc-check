@@ -2254,6 +2254,7 @@
   // ---------------------------------------------------------------------------
   var androidRead = null;
   var androidToken = 0;
+  var androidClears = 0;
   var ANDROID_ERRORS = {
     not_bugreport: 'sysAndroidNotReport', not_zip: 'sysAndroidNotReport', no_main: 'sysAndroidNoMain', encrypted: 'sysAndroidEncrypted',
     zip64: 'sysAndroidZipKind', multi_disk: 'sysAndroidZipKind', unsupported_method: 'sysAndroidZipKind', damaged: 'sysAndroidDamaged',
@@ -2321,8 +2322,19 @@
     renderAndroidSteps();
   }
 
+  // Waits for the read in progress; a new choice made meanwhile replaces androidRead, so that one is awaited too
+  function androidReadDone() {
+    var job = androidRead;
+    return (job || Promise.resolve()).then(function () {
+      return androidRead && androidRead !== job ? androidReadDone() : null;
+    });
+  }
+
   function analyzeAndroid() {
-    return (androidRead || Promise.resolve()).then(function () {
+    var clears = androidClears;
+    return androidReadDone().then(function () {
+      // Clear was pressed while the read finished: nothing to analyze and no stale status to write
+      if (clears !== androidClears) return;
       var a = state.sys.android;
       var S = window.PCSys;
       dropAndroidEvaluation();
@@ -2343,6 +2355,7 @@
 
   function clearAndroid() {
     androidToken++;
+    androidClears++;
     androidRead = null;
     var input = document.getElementById('sys-file-android');
     if (input) input.value = '';
@@ -2512,8 +2525,6 @@
       root.appendChild(tiles);
     }
 
-    // No AI explanation for Android yet: nothing builds or sends an Android summary
-    if (e.platform === 'android') return;
     var ai = el('div', 'sys-ai');
     ai.id = 'sys-ai';
     root.appendChild(ai);
@@ -2749,7 +2760,8 @@
     var androidZone = $('#sys-step-android-file .sys-drop');
     if (androidInput && androidZone) {
       androidInput.addEventListener('change', function () {
-        loadAndroidFile(androidInput.files && androidInput.files[0]);
+        // The input is emptied after the read, as on the iPhone panel, so the same file can be chosen again
+        loadAndroidFile(androidInput.files && androidInput.files[0]).then(function () { androidInput.value = ''; });
       });
       androidZone.addEventListener('dragover', function (ev) { ev.preventDefault(); androidZone.classList.add('is-over'); });
       androidZone.addEventListener('dragleave', function () { androidZone.classList.remove('is-over'); });
@@ -2858,6 +2870,8 @@
         sysGood.forEach(function (g) { var li = el('li'); li.appendChild(el('strong', null, t('sev_ok') + ': ' + g.title)); ul.appendChild(li); });
         sb.appendChild(ul);
       }
+      // Android: the reminder to switch Developer options off and delete the bug report, once
+      if (sysEval.platform === 'android' && typeof sysEval.reminder === 'string' && sysEval.reminder) sb.appendChild(el('p', 'report-fix', sysEval.reminder));
       if (sysEval.facts.length) {
         sb.appendChild(el('h3', null, t('sysFactsTitle', sysDevice(sysEval))));
         var sdl = el('dl');
