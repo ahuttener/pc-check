@@ -1,0 +1,282 @@
+/* PC Check | CyberSecInfo | MIT License */
+
+/* ==========================================================================
+   Banner: the dashboard on the laptop screen comes alive.
+
+   Only elements of the screen move. The laptop, the bezel and the rest of
+   the banner stay exactly as they are.
+   - The Security Check ring and the progress bars run a check cycle: each one
+     starts red with the bars short, turns yellow while the bars grow, and ends
+     green at its full length, one after another; then it starts again.
+   - The check inside the ring only shows while the ring is green.
+   - A light runs around the ring and inside the bars; the check icons pulse and
+     the equalizer next to TLS 1.3 bounces.
+
+   Everything is drawn from banner.jpg itself: small crops of it, recoloured
+   copies of the ring and bars (banner-fx-red.webp, banner-fx-yellow.webp, same
+   pixels with only the hue changed) and the same screen with the bars empty
+   and no check (banner-fx-empty.webp).
+
+   Pure CSS (no JS), compatible with the page CSP (style-src 'self').
+   Positions are fractions of the 1600x800 banner, measured from its pixels:
+   if banner.jpg changes, they must be measured again.
+   Turned off for visitors who prefer reduced motion.
+   ========================================================================== */
+
+@property --fx-a {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@property --fill {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+.screen-fx-wrap {
+  position: relative;
+  display: block;
+  line-height: 0;
+}
+
+.screen-fx-wrap > img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.screen-fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.screen-fx > span {
+  position: absolute;
+  display: block;
+}
+
+/* --- Crops of the banner: --l, --t = top-left corner, --w, --h = size ----- */
+.fx-crop {
+  left: calc(var(--l) * 100%);
+  top: calc(var(--t) * 100%);
+  width: calc(var(--w) * 100%);
+  height: calc(var(--h) * 100%);
+  background-image: url("banner.jpg?v=2");
+  background-repeat: no-repeat;
+  background-size: calc(100% / var(--w)) calc(100% / var(--h));
+  background-position:
+    calc(var(--l) / (1 - var(--w)) * 100%)
+    calc(var(--t) / (1 - var(--h)) * 100%);
+}
+
+/* Boxes; --cd = when each element starts its cycle */
+.t-ring  { --l: 0.560625; --t: 0.30125; --w: 0.095;    --h: 0.215;   --cd: 0s; }
+.t-check { --l: 0.5825;   --t: 0.34625; --w: 0.05125;  --h: 0.0975;  }
+.k-b1    { --l: 0.6875;   --t: 0.3375;  --w: 0.059375; --h: 0.03375; }
+.k-b2    { --l: 0.79125;  --t: 0.32625; --w: 0.05875;  --h: 0.0325;  }
+.k-b3    { --l: 0.7125;   --t: 0.465;   --w: 0.0575;   --h: 0.02875; }
+.k-b4    { --l: 0.819375; --t: 0.45875; --w: 0.048125; --h: 0.03125; }
+.k-b5    { --l: 0.778125; --t: 0.56625; --w: 0.108125; --h: 0.02875; }
+
+/* Bar fills: box, start delay (--cd), bar angle, fill start/end along the bar (--fs, --fe), soft edge */
+.f-b1 { --l: 0.685625; --t: 0.33625; --w: 0.06;     --h: 0.0375;  --cd: 0.3s; --ang: 86.65deg; --fs: 0.0796; --fe: 0.9316; --ff: 1.64%; }
+.f-b2 { --l: 0.789375; --t: 0.325;   --w: 0.059375; --h: 0.03625; --cd: 0.6s; --ang: 86.86deg; --fs: 0.0797; --fe: 0.9312; --ff: 1.66%; }
+.f-b3 { --l: 0.710625; --t: 0.4625;  --w: 0.06125;  --h: 0.035;   --cd: 0.9s; --ang: 88.63deg; --fs: 0.0743; --fe: 0.9363; --ff: 1.62%; }
+.f-b4 { --l: 0.8175;   --t: 0.4575;  --w: 0.04875;  --h: 0.035;   --cd: 1.2s; --ang: 88.29deg; --fs: 0.094;  --fe: 0.9192; --ff: 2.03%; }
+.f-b5 { --l: 0.77625;  --t: 0.56375; --w: 0.111875; --h: 0.03375; --cd: 1.5s; --ang: 89.94deg; --fs: 0.0392; --fe: 0.9664; --ff: 0.89%; }
+
+/* --- 1. The screen with the bars empty and no check, under the moving parts */
+.fx-empty {
+  background-image: url("banner-fx-empty.webp");
+}
+
+/* Over the check it is only shown while the ring is not green */
+.fx-empty.t-check {
+  animation: fx-nocheck 7s linear infinite both;
+}
+
+/* --- 2. Bars: the fill is revealed up to --fill, along the bar's own angle ---- */
+.fx-fill {
+  left: calc(var(--l) * 100%);
+  top: calc(var(--t) * 100%);
+  width: calc(var(--w) * 100%);
+  height: calc(var(--h) * 100%);
+  --head: calc((var(--fs) + (var(--fe) - var(--fs)) * var(--fill)) * 100%);
+  -webkit-mask-image: linear-gradient(var(--ang), #000 calc(var(--head) - var(--ff)), transparent calc(var(--head) + var(--ff)));
+  mask-image: linear-gradient(var(--ang), #000 calc(var(--head) - var(--ff)), transparent calc(var(--head) + var(--ff)));
+  animation: fx-grow 7s linear infinite both;
+  animation-delay: var(--cd, 0s);
+}
+
+.fx-fill > span {
+  position: absolute;
+  display: block;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* --- 3. Colour: yellow sits under red; red fades out, then yellow, leaving the green */
+.fx-tint.yellow {
+  background-image: url("banner-fx-yellow.webp");
+  animation: fx-yellow 7s ease-in-out infinite both;
+  animation-delay: var(--cd, 0s);
+}
+
+.fx-tint.red {
+  background-image: url("banner-fx-red.webp");
+  animation: fx-red 7s ease-in-out infinite both;
+  animation-delay: var(--cd, 0s);
+}
+
+/* --- 4. A light travelling around the ring (white, so it suits every colour)
+   Ring centre 972.5,326.5 px; outer radii 56 x 64 px; inner radii 46 x 51.5 px */
+.fx-ring {
+  left: 57.28%;
+  top: 32.8125%;
+  width: 7%;
+  height: 16%;
+  border-radius: 50%;
+  background: conic-gradient(
+    from var(--fx-a),
+    rgba(255, 255, 255, 0) 0deg,
+    rgba(255, 255, 255, 0) 245deg,
+    rgba(255, 255, 255, 0.28) 315deg,
+    rgba(255, 255, 255, 0.85) 352deg,
+    rgba(255, 255, 255, 0) 360deg
+  );
+  -webkit-mask: radial-gradient(closest-side, transparent 78%, #000 81%, #000 97%, transparent 100%);
+  mask: radial-gradient(closest-side, transparent 78%, #000 81%, #000 97%, transparent 100%);
+  mix-blend-mode: screen;
+  animation: fx-spin 2.8s linear infinite;
+}
+
+/* --- 5. A light running inside each bar, kept inside the visible fill ------- */
+.fx-bar {
+  border-radius: 999px;
+  overflow: hidden;
+  transform-origin: 0 50%;
+  transform: rotate(var(--r, 0deg));
+  mix-blend-mode: screen;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(var(--fill) * 103% - 8%), transparent calc(var(--fill) * 103%));
+  mask-image: linear-gradient(90deg, #000 calc(var(--fill) * 103% - 8%), transparent calc(var(--fill) * 103%));
+  animation: fx-grow 7s linear infinite both;
+  animation-delay: var(--cd, 0s);
+}
+
+.fx-bar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  animation: fx-shine 2.6s ease-in-out infinite;
+  animation-delay: var(--d, 0s);
+}
+
+.fx-bar.b1 { left: 69.0625%; top: 35.0375%; width: 4.9375%; height: 1.25%;  --r: -3.19deg; --d: 0.2s; --cd: 0.3s; }
+.fx-bar.b2 { left: 79.4375%; top: 33.9125%; width: 4.875%;  height: 1.25%;  --r: -2.99deg; --d: 0.7s; --cd: 0.6s; }
+.fx-bar.b3 { left: 71.625%;  top: 47.325%;  width: 4.5625%; height: 1.375%; --r: -1.34deg; --d: 1.2s; --cd: 0.9s; }
+.fx-bar.b4 { left: 82.25%;   top: 46.8375%; width: 3.8125%; height: 1.375%; --r: -1.65deg; --d: 1.7s; --cd: 1.2s; }
+.fx-bar.b5 { left: 78.125%;  top: 57.3625%; width: 10.0625%; height: 1.375%; --r: -0.08deg; --d: 0.4s; --cd: 1.5s; }
+
+/* --- 6. Check icons: a heartbeat pulse (edges feathered so no seam shows) ----- */
+.fx-icon {
+  -webkit-mask: radial-gradient(closest-side, #000 58%, transparent 96%);
+  mask: radial-gradient(closest-side, #000 58%, transparent 96%);
+  animation: fx-beat 2.6s ease-in-out infinite;
+  animation-delay: var(--d, 0s);
+}
+
+.fx-icon.i1 { --l: 0.587813; --t: 0.366875; --w: 0.04;    --h: 0.08;   --d: 0s;   } /* check inside the ring */
+.fx-icon.i2 { --l: 0.677813; --t: 0.53;     --w: 0.03;    --h: 0.07;   --d: 0.9s; } /* Outbound log shield */
+.fx-icon.i3 { --l: 0.536875; --t: 0.63625;  --w: 0.0225;  --h: 0.045;  --d: 1.6s; } /* bottom row: Browser OK */
+.fx-icon.i4 { --l: 0.557188; --t: 0.225625; --w: 0.01625; --h: 0.0325; --d: 0.5s; } /* "PC Check" title icon */
+
+/* The check inside the ring pops in when the ring turns green and leaves before red */
+.fx-icon.i1 {
+  animation: fx-beat 2.6s ease-in-out infinite, fx-tick 7s ease-in-out infinite both;
+  animation-delay: 0s, 0s;
+}
+
+/* --- 7. Equalizer next to TLS 1.3: each bar bounces on its own rhythm ------- */
+.fx-eq {
+  transform-origin: 50% 100%;
+  animation: fx-eq var(--s, 1.2s) ease-in-out infinite alternate;
+  animation-delay: var(--d, 0s);
+}
+
+.fx-eq.e1 { --l: 0.865938; --t: 0.33625;  --w: 0.003125; --h: 0.010625; --m: 2.4;  --s: 0.9s;  --d: 0s;    }
+.fx-eq.e2 { --l: 0.870313; --t: 0.32;     --w: 0.0025;   --h: 0.025625; --m: 1.3;  --s: 1.3s;  --d: 0.25s; }
+.fx-eq.e3 { --l: 0.873438; --t: 0.3275;   --w: 0.003125; --h: 0.018125; --m: 1.6;  --s: 1.05s; --d: 0.5s;  }
+.fx-eq.e4 { --l: 0.877188; --t: 0.33;     --w: 0.0025;   --h: 0.015625; --m: 1.75; --s: 0.8s;  --d: 0.15s; }
+.fx-eq.e5 { --l: 0.880313; --t: 0.32375;  --w: 0.0025;   --h: 0.021875; --m: 1.4;  --s: 1.15s; --d: 0.4s;  }
+.fx-eq.e6 { --l: 0.883438; --t: 0.315;    --w: 0.003125; --h: 0.029375; --m: 1.18; --s: 1.4s;  --d: 0.1s;  }
+.fx-eq.e7 { --l: 0.887188; --t: 0.33;     --w: 0.003125; --h: 0.014375; --m: 1.8;  --s: 0.95s; --d: 0.6s;  }
+
+/* --- Keyframes ------------------------------------------------------------- */
+/* 7 s cycle: red until 18 %, yellow by 26 %, green by 50 %, green until 90 %, back to red */
+@keyframes fx-red {
+  0%, 18%   { opacity: 1; }
+  26%, 90%  { opacity: 0; }
+  96%, 100% { opacity: 1; }
+}
+
+@keyframes fx-yellow {
+  0%, 40%  { opacity: 1; }
+  50%, 96% { opacity: 0; }
+  100%     { opacity: 1; }
+}
+
+@keyframes fx-grow {
+  0%        { --fill: 0.12; }
+  18%       { --fill: 0.32; }
+  26%       { --fill: 0.5; }
+  40%       { --fill: 0.74; }
+  50%, 90%  { --fill: 1; }
+  96%, 100% { --fill: 0.12; }
+}
+
+@keyframes fx-nocheck {
+  0%, 55%   { opacity: 1; }
+  56%, 88%  { opacity: 0; }
+  89%, 100% { opacity: 1; }
+}
+
+@keyframes fx-tick {
+  0%, 48%   { opacity: 0; transform: scale(0.4); }
+  52%       { opacity: 1; transform: scale(1.15); }
+  56%, 88%  { opacity: 1; transform: scale(1); }
+  92%, 100% { opacity: 0; transform: scale(0.6); }
+}
+
+@keyframes fx-spin {
+  to { --fx-a: 360deg; }
+}
+
+@keyframes fx-shine {
+  0%        { transform: translateX(0); }
+  60%, 100% { transform: translateX(350%); }
+}
+
+@keyframes fx-beat {
+  0%, 70%, 100% { scale: 1; }
+  80%           { scale: 1.1; }
+  90%           { scale: 1.03; }
+}
+
+@keyframes fx-eq {
+  from { scale: 1 1; }
+  to   { scale: 1 var(--m, 1.5); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-fx { display: none; }
+}
