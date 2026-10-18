@@ -23,10 +23,10 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/fonts/roboto-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/orbitron-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/styles.css?v=9">
+  <link rel="stylesheet" href="assets/styles.css?v=10">
   <script src="assets/gauge.js?v=3" defer></script>
-  <script src="assets/sysreport.js?v=7" defer></script>
-  <script src="assets/app.js?v=14" defer></script>
+  <script src="assets/sysreport.js?v=8" defer></script>
+  <script src="assets/app.js?v=15" defer></script>
 </head>
 <body>
   <svg class="sprite" aria-hidden="true" focusable="false">
@@ -265,13 +265,13 @@
     <section id="system" class="system" aria-labelledby="system-title" tabindex="-1">
       <div class="system-head">
         <h2 id="system-title">System report</h2>
-        <p class="system-lead">Windows already keeps a crash history, a battery report and a system summary. Save them with the steps below and PC Check reads them right here in your browser. The files never leave your device.</p>
+        <p id="sys-lead" class="system-lead">Windows already keeps a crash history, a battery report and a system summary. Save them with the steps below and PC Check reads them right here in your browser. The files never leave your device.</p>
       </div>
       <p id="sys-banner" class="sys-banner" aria-live="polite"></p>
       <div class="sys-os" role="group" aria-label="Which computer are you checking?">
         <button id="sys-os-windows" class="sys-os-btn" type="button" data-os="windows" aria-pressed="true"><svg aria-hidden="true" focusable="false"><use href="#os-windows"></use></svg><span>Windows</span></button>
         <button id="sys-os-mac" class="sys-os-btn" type="button" data-os="mac" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-mac"></use></svg><span>Mac</span><span class="sys-soon-tag">Coming soon</span></button>
-        <button id="sys-os-linux" class="sys-os-btn" type="button" data-os="linux" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-linux"></use></svg><span>Linux</span><span class="sys-soon-tag">Coming soon</span></button>
+        <button id="sys-os-linux" class="sys-os-btn" type="button" data-os="linux" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-linux"></use></svg><span>Linux</span></button>
       </div>
       <p id="sys-soon" class="sys-soon" hidden></p>
 
@@ -315,6 +315,63 @@
           <p id="sys-status" class="sys-status" role="status" aria-live="polite"></p>
         </div>
         <p class="sys-privacy">Analyze runs on this device. Nothing is uploaded, so nothing is added to the outbound log.</p>
+      </div>
+
+      <div id="sys-linux-steps" class="sys-steps sys-linux" hidden>
+        <ol class="sys-step-list sys-paste-list">
+          <li id="sys-step-linux-system" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">1</span>System</h3>
+            <p class="sys-what">Shows the kernel version and which Linux you run.</p>
+            <span class="sys-cmd"><code id="sys-cmd-linux-system">uname -a; cat /etc/os-release</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-cmd-linux-system">Copy</button></span>
+            <p class="sys-readonly">It only reads; it changes nothing.</p>
+            <label class="sys-paste-label" for="sys-paste-system">Paste what it printed</label>
+            <textarea id="sys-paste-system" class="sys-paste" spellcheck="false" autocomplete="off" autocapitalize="off" rows="6"></textarea>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+          <li id="sys-step-linux-journal" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">2</span>Errors since this start-up</h3>
+            <p class="sys-what">Lists error messages logged since the computer was switched on. LC_ALL=C makes this one command print in English.</p>
+            <span class="sys-cmd"><code id="sys-cmd-linux-journal">LC_ALL=C journalctl -b -p 3 -o short --no-pager</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-cmd-linux-journal">Copy</button></span>
+            <p class="sys-readonly">It only reads; it changes nothing.</p>
+            <p class="sys-note">If it says you are not seeing messages from the system, your account can only see part of the log; the results will say so.</p>
+            <label class="sys-paste-label" for="sys-paste-journal">Paste what it printed</label>
+            <textarea id="sys-paste-journal" class="sys-paste" spellcheck="false" autocomplete="off" autocapitalize="off" rows="6"></textarea>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+          <li id="sys-step-linux-boots" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">3</span>Previous start-ups</h3>
+            <p class="sys-what">Lists the last five start-ups and the errors from the one before this, to spot a crash or freeze.</p>
+            <span class="sys-cmd"><code id="sys-cmd-linux-boots">LC_ALL=C journalctl --list-boots --no-pager | tail -5; LC_ALL=C journalctl -b -1 -p 3 -o short --no-pager</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-cmd-linux-boots">Copy</button></span>
+            <p class="sys-readonly">It only reads; it changes nothing.</p>
+            <label class="sys-paste-label" for="sys-paste-boots">Paste what it printed</label>
+            <textarea id="sys-paste-boots" class="sys-paste" spellcheck="false" autocomplete="off" autocapitalize="off" rows="6"></textarea>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+          <li id="sys-step-linux-battery" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">4</span>Battery <span class="sys-optional">(laptops, optional)</span></h3>
+            <p class="sys-what">Shows how much charge the battery holds compared with new. On a desktop it prints nothing; leave the box empty.</p>
+            <span class="sys-cmd"><code id="sys-cmd-linux-battery">upower -i $(upower -e | grep BAT)</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-cmd-linux-battery">Copy</button></span>
+            <p class="sys-readonly">It only reads; it changes nothing.</p>
+            <label class="sys-paste-label" for="sys-paste-battery">Paste what it printed</label>
+            <textarea id="sys-paste-battery" class="sys-paste" spellcheck="false" autocomplete="off" autocapitalize="off" rows="6"></textarea>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+          <li id="sys-step-linux-disks" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">5</span>Disks</h3>
+            <p class="sys-what">Shows how full each disk is.</p>
+            <span class="sys-cmd"><code id="sys-cmd-linux-disks">LC_ALL=C df -h; LC_ALL=C lsblk -o NAME,SIZE,TYPE,MOUNTPOINT</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-cmd-linux-disks">Copy</button></span>
+            <p class="sys-readonly">It only reads; it changes nothing.</p>
+            <label class="sys-paste-label" for="sys-paste-disks">Paste what it printed</label>
+            <textarea id="sys-paste-disks" class="sys-paste" spellcheck="false" autocomplete="off" autocapitalize="off" rows="6"></textarea>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+        </ol>
+        <div class="sys-actions">
+          <button id="sys-linux-analyze" class="btn btn-primary" type="button">Analyze</button>
+          <button id="sys-linux-clear" class="btn btn-ghost" type="button">Clear pasted text</button>
+          <p id="sys-linux-status" class="sys-status" role="status" aria-live="polite"></p>
+        </div>
+        <p class="sys-privacy">Analyze runs on this device. Nothing you paste is uploaded, so nothing is added to the outbound log.</p>
       </div>
 
       <div id="sys-results" class="sys-results" aria-live="polite" hidden></div>

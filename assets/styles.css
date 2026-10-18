@@ -397,6 +397,15 @@ h1 {
 .sys-cmd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 0; }
 .sys-cmd code { display: block; flex: 1 1 12rem; min-width: 0; padding: 6px 8px; word-break: break-all; }
 .sys-copy { padding: 6px 12px; font-size: 0.875rem; min-height: 36px; }
+/* Linux: one column of paste boxes, each with its read-only command */
+.sys-paste-list { grid-template-columns: minmax(0, 1fr); }
+.sys-linux .sys-cmd code { font-family: var(--mono); font-size: 0.875rem; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 5px; overflow-wrap: anywhere; }
+.sys-what { margin: 8px 0 0; font-size: 0.9375rem; max-width: 80ch; }
+.sys-readonly { margin: 8px 0 0; font-size: 0.875rem; color: var(--ok); }
+.sys-note { margin: 6px 0 0; font-size: 0.875rem; color: var(--muted); max-width: 80ch; }
+.sys-paste-label { margin: 12px 0 6px; font-size: 0.875rem; font-weight: 700; }
+.sys-paste { display: block; width: 100%; max-width: 100%; min-height: 8rem; margin: 0; padding: 8px 10px; resize: vertical; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font: 0.8125rem/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sys-paste:focus-visible { outline: 3px solid var(--action); outline-offset: 2px; border-color: var(--action); }
 .sys-file { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
 .sys-drop {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;

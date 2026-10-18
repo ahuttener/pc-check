@@ -1171,6 +1171,211 @@ try {
     }
   }
 
+  // 8c-linux. Linux paste steps in the System report panel: read-only commands, paste, Analyze on this device
+  console.log('System report panel (Linux)');
+  {
+    const LX = (f) => fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', 'linux', f + '.txt'), 'utf8');
+    const LINUX_UA = 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0';
+    const MAC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
+    const CMDS = {
+      system: 'uname -a; cat /etc/os-release',
+      journal: 'LC_ALL=C journalctl -b -p 3 -o short --no-pager',
+      boots: 'LC_ALL=C journalctl --list-boots --no-pager | tail -5; LC_ALL=C journalctl -b -1 -p 3 -o short --no-pager',
+      battery: 'upower -i $(upower -e | grep BAT)',
+      disks: 'LC_ALL=C df -h; LC_ALL=C lsblk -o NAME,SIZE,TYPE,MOUNTPOINT'
+    };
+    const KINDS = Object.keys(CMDS);
+    const UBUNTU = { system: 'ubuntu-system', journal: 'ubuntu-journal-boot', boots: 'boots-ubuntu', battery: 'upower-laptop', disks: 'df-ubuntu' };
+    const planted = JSON.parse(fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', 'linux', 'PLANTED.json'), 'utf8'));
+    const PLANTED = [].concat(...Object.values(planted)).map((p) => String(p).toLowerCase());
+    const leaks = (s) => PLANTED.filter((p) => s.toLowerCase().includes(p)).concat(/\/home\//.test(s) ? ['/home/'] : []);
+    // About 2.5 MB of real journal lines: over the 2,000,000-character cap.
+    const HUGE = (() => { const one = LX('ubuntu-journal-boot').replace(/\r\n/g, '\n'); let s = ''; while (s.length < 2500000) s += one; return s; })();
+    const pressed = (page, os) => page.getAttribute('#sys-os-' + os, 'aria-pressed', { timeout: 2000 }).catch(() => null);
+    const waitBanner = (page) => page.waitForFunction(() => (document.getElementById('sys-banner') || {}).textContent, null, { timeout: 5000 }).catch(() => {});
+    const msg = (page, k) => page.locator('#sys-step-linux-' + k + ' [data-role="msg"]').innerText({ timeout: 2000 }).catch(() => '');
+    const fill = (page, map) => page.evaluate((map) => {
+      Object.keys(map).forEach((k) => { const ta = document.getElementById('sys-paste-' + k); if (ta) ta.value = map[k]; });
+    }, map);
+    const ubuntuTexts = () => Object.fromEntries(KINDS.map((k) => [k, LX(UBUNTU[k])]));
+    const analyze = async (page) => {
+      await page.click('#sys-linux-analyze', { timeout: 3000 });
+      await page.waitForSelector('#sys-results:not([hidden])', { timeout: 10000 });
+    };
+
+    {
+      const { page, context, seen } = await newPage('ok', { userAgent: LINUX_UA, viewport: { width: 1280, height: 900 } });
+      await waitBanner(page);
+      const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
+      check('linux ui: Linux UA -> banner says Linux (Ubuntu) and five read-only commands', /You.re on Linux \(Ubuntu\)\. Run the five read-only commands below in a terminal and paste what they print\./.test(banner), banner);
+      check('linux ui: Linux UA -> Linux button pre-selected', (await pressed(page, 'linux')) === 'true');
+      check('linux ui: Linux button has no "Coming soon"', !/Coming soon/i.test(await page.locator('#sys-os-linux').innerText().catch(() => 'Coming soon')));
+      check('linux ui: Mac button keeps "Coming soon"', /Coming soon/i.test(await page.locator('#sys-os-mac').innerText().catch(() => '')));
+      check('linux ui: Linux steps shown, Windows steps and Coming soon hidden', await page.locator('#sys-linux-steps').isVisible().catch(() => false) &&
+        !(await page.locator('#sys-steps').isVisible().catch(() => true)) && !(await page.locator('#sys-soon').isVisible().catch(() => true)));
+      const lead = await page.locator('#sys-lead').innerText().catch(() => '');
+      check('linux ui: lead explains the Linux steps', /^Linux already keeps an error journal and knows your battery and disks\. Five read-only commands print it; paste their output below and PC Check reads it right here in your browser\. Nothing you paste leaves your device\.$/.test(lead.trim()), lead);
+      const codes = await page.locator('#sys-linux-steps code').allInnerTexts();
+      const want = KINDS.map((k) => CMDS[k]);
+      check('linux ui: the five commands, exactly', codes.length === 5 && codes.every((c, i) => c === want[i]), codes);
+      check('linux ui: no command writes or needs sudo', codes.every((c) => !/sudo|>|\brm\b|apt|dnf|tee|chmod/.test(c)), codes);
+      check('linux ui: every locale-dependent command uses LC_ALL=C and every journalctl --no-pager',
+        codes.filter((c) => /journalctl|df -h|lsblk/.test(c)).every((c) => /^LC_ALL=C /.test(c)) && codes.filter((c) => /journalctl/.test(c)).every((c) => (c.match(/journalctl/g) || []).length === (c.match(/--no-pager/g) || []).length), codes);
+      let steps = true;
+      for (const k of KINDS) {
+        const li = page.locator('#sys-step-linux-' + k);
+        const text = await li.innerText().catch(() => '');
+        const ta = page.locator('#sys-paste-' + k);
+        const attrs = await ta.evaluate((n) => [n.tagName, n.getAttribute('spellcheck'), n.getAttribute('autocomplete'), n.getAttribute('autocapitalize'), n.getAttribute('rows')].join(',')).catch(() => '');
+        if (!/It only reads; it changes nothing\./.test(text) || attrs !== 'TEXTAREA,false,off,off,6' ||
+          (await li.locator('.sys-copy[aria-controls="sys-cmd-linux-' + k + '"]').count()) !== 1 || (await li.locator('[data-role="msg"]').count()) !== 1) { steps = false; console.log('    step ' + k + ': ' + attrs); }
+      }
+      check('linux ui: each step says it only reads, has a copy button, a textarea and a message line', steps);
+      const guide = await page.locator('#sys-linux-steps').innerText().catch(() => '');
+      check('linux ui: each command is explained', /kernel version and which Linux you run/.test(guide) && /LC_ALL=C makes this one command print in English/.test(guide) &&
+        /last five start-ups/.test(guide) && /On a desktop it prints nothing; leave the box empty/.test(guide) && /how full each disk is/.test(guide) &&
+        /your account can only see part of the log; the results will say so/.test(guide), guide.slice(0, 300));
+
+      await page.click('#sys-linux-analyze', { timeout: 3000 }).catch(() => {});
+      const need = await page.locator('#sys-linux-status').innerText({ timeout: 2000 }).catch(() => '');
+      check('linux ui: all boxes empty -> asks for a paste', /Paste at least one output first\. Step 2 tells the most\./.test(need) && !(await page.locator('#sys-results').isVisible()), need);
+
+      const before = await page.locator('#ledger-list li').count();
+      await fill(page, ubuntuTexts());
+      let ok = true;
+      try { await analyze(page); } catch (e) { ok = false; }
+      check('linux ui: Ubuntu outputs analyzed', ok);
+      const score = ok ? (await page.locator('#sys-score').innerText()).trim() : '';
+      check('linux ui: Ubuntu score 25', score === '25', score);
+      const res = ok ? await page.locator('#sys-results').innerText() : '';
+      check('linux ui: findings mention amdgpu and 93 %', /amdgpu/.test(res) && /93 %/.test(res), res.slice(0, 400));
+      check('linux ui: date line says logs, read on this device', /Logs from 2026-10-18 · read on this device, nothing uploaded/.test(res), res.slice(0, 300));
+      check('linux ui: no planted identifier in the results', leaks(res).length === 0, leaks(res));
+      const reads = [];
+      for (const k of KINDS) reads.push(await msg(page, k));
+      check('linux ui: every step says Read:', reads.every((m) => /^Read: /.test(m)), reads);
+      check('linux ui: step messages carry no planted identifier', leaks(reads.join('\n')).length === 0, leaks(reads.join('\n')));
+      check('linux ui: Analyze sends nothing (outbound log unchanged)', (await page.locator('#ledger-list li').count()) === before);
+      check('linux ui: Analyze makes no outside requests', seen.external.length === 0, seen.external);
+      check('linux ui: no "Explain with AI" for Linux until its prompt exists', (await page.locator('#sys-ai-open').count()) === 0);
+      await page.locator('#system').screenshot({ path: path.join(shots, 'system-linux-desktop.png') }).catch(() => {});
+
+      await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
+      check('linux ui: Linux results hidden while Windows is selected', !(await page.locator('#sys-results').isVisible().catch(() => true)) && await page.locator('#sys-steps').isVisible().catch(() => false));
+      const winLead = await page.locator('#sys-lead').innerText().catch(() => '');
+      check('linux ui: Windows lead unchanged', /^Windows already keeps a crash history, a battery report and a system summary\./.test(winLead.trim()), winLead);
+      await page.click('#sys-os-linux', { timeout: 2000 }).catch(() => {});
+      check('linux ui: switching back keeps the pasted text and the results', (await page.locator('#sys-paste-journal').inputValue().catch(() => '')).length > 100 &&
+        await page.locator('#sys-results').isVisible().catch(() => false));
+
+      await page.click('#sys-linux-clear', { timeout: 2000 }).catch(() => {});
+      const values = await Promise.all(KINDS.map((k) => page.locator('#sys-paste-' + k).inputValue().catch(() => 'x')));
+      check('linux ui: Clear empties all five boxes and the results', values.every((v) => v === '') && !(await page.locator('#sys-results').isVisible().catch(() => true)), values.map((v) => v.length));
+      const cleared = [];
+      for (const k of KINDS) cleared.push(await msg(page, k));
+      check('linux ui: Clear empties the step messages', cleared.every((m) => !m.trim()), cleared);
+      check('linux ui: no page errors', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // Wrong box, other language, empty battery box
+      const { page, context, seen } = await newPage('ok', { userAgent: LINUX_UA });
+      await waitBanner(page);
+      await fill(page, { system: LX('ubuntu-system'), journal: LX('df-ubuntu'), boots: '', battery: '', disks: LX('df-pt') });
+      await page.click('#sys-linux-analyze', { timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      const wrong = await msg(page, 'journal');
+      check('linux ui: df output in the journal box -> wrong box, step 5', /This doesn.t look like the output of this command\. It looks like the output for step 5\./.test(wrong), wrong);
+      const bat = await msg(page, 'battery');
+      check('linux ui: empty battery box -> no battery reported', /No battery reported \(fine for a desktop\)\./.test(bat), bat);
+      const pt = await msg(page, 'disks');
+      check('linux ui: df in another language -> not in English', /This output isn.t in English\. Run the command exactly as shown: it starts with LC_ALL=C, which makes it print in English\./.test(pt), pt);
+      await fill(page, { journal: LX('journal-de'), disks: '' });
+      await page.click('#sys-linux-analyze', { timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      const de = await msg(page, 'journal');
+      check('linux ui: German journal -> not in English', /This output isn.t in English\./.test(de), de);
+      await fill(page, { system: '', journal: LX('boots-ubuntu') });
+      await page.click('#sys-linux-analyze', { timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      const bootsInJournal = await msg(page, 'journal');
+      check('linux ui: boot list in the journal box -> step 3', /It looks like the output for step 3\./.test(bootsInJournal), bootsInJournal);
+      check('linux ui: wrong pastes cause no page error', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // A huge paste is cut at 2,000,000 characters and the page stays quick
+      const { page, context, seen } = await newPage('ok', { userAgent: LINUX_UA, viewport: { width: 1280, height: 900 } });
+      await waitBanner(page);
+      await fill(page, { journal: HUGE });
+      const t0 = Date.now();
+      let ok = true;
+      try { await analyze(page); } catch (e) { ok = false; }
+      const ms = Date.now() - t0;
+      const m = await msg(page, 'journal');
+      check('linux ui: huge paste is cut and says so', ok && /Only the first 2 MB were read\./.test(m), m);
+      check('linux ui: huge paste analyzed in < 3 s', ok && ms < 3000, ms);
+      check('linux ui: huge paste causes no page error', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // Copy buttons copy the exact command (Chromium clipboard)
+      const { page, context, seen } = await newPage('ok', { userAgent: LINUX_UA, permissions: ['clipboard-read', 'clipboard-write'] });
+      await waitBanner(page);
+      const copied = [];
+      for (const k of KINDS) {
+        await page.click('#sys-step-linux-' + k + ' .sys-copy', { timeout: 2000 }).catch(() => {});
+        await page.waitForTimeout(50);
+        copied.push(await page.evaluate(() => navigator.clipboard.readText()).catch(() => null));
+      }
+      check('linux ui: copy buttons copy the exact commands', copied.every((c, i) => c === CMDS[KINDS[i]]), copied);
+      check('linux ui: copy causes no page error', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    for (const [label, ua, want] of [['Fedora', 'Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0', /You.re on Linux \(Fedora\)/],
+      ['Android', 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + fullVersion + ' Mobile Safari/537.36', /You.re on Android/],
+      ['ChromeOS', 'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + fullVersion + ' Safari/537.36', /Pick the system/]]) {
+      const { page, context } = await newPage('ok', { userAgent: ua });
+      await waitBanner(page);
+      const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
+      check('linux ui: ' + label + ' UA banner', want.test(banner), banner);
+      if (label !== 'Fedora') check('linux ui: ' + label + ' UA does not pre-select Linux', (await pressed(page, 'linux')) === 'false');
+      await context.close();
+    }
+    {
+      const { page, context } = await newPage('ok', { userAgent: MAC_UA });
+      await waitBanner(page);
+      check('linux ui: Mac UA still shows Coming soon', /Coming soon/i.test(await page.locator('#sys-soon').innerText({ timeout: 2000 }).catch(() => '')) && !(await page.locator('#sys-linux-steps').isVisible().catch(() => true)));
+      await context.close();
+    }
+    for (const [label, opts, engineName] of [['375 px', { userAgent: LINUX_UA, viewport: { width: 375, height: 812 } }, 'chromium'], ['iPhone', devices['iPhone 14'], 'webkit']]) {
+      const eng = engineName === 'webkit' ? await webkit.launch() : browser;
+      try {
+        const { page, context, seen } = await newPage('ok', opts, eng);
+        await waitBanner(page);
+        await page.click('#sys-os-linux', { timeout: 2000 }).catch(() => {});
+        if (engineName === 'webkit') {
+          // The selection fallback is used where the clipboard is refused: it must not throw.
+          await page.click('#sys-step-linux-journal .sys-copy', { timeout: 2000 }).catch(() => {});
+          await page.waitForTimeout(100);
+        }
+        const texts = ubuntuTexts();
+        texts.journal = HUGE;
+        await fill(page, texts);
+        let ok = true;
+        try { await analyze(page); } catch (e) { ok = false; }
+        check('linux ui: works at ' + label, ok);
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        check('linux ui: no horizontal scroll at ' + label + ' with a 2.5 MB paste', overflow <= 0, overflow);
+        check('linux ui: no page errors at ' + label, seen.errors.length === 0, seen.errors);
+        await page.locator('#system').screenshot({ path: path.join(shots, engineName === 'webkit' ? 'system-linux-iphone.png' : 'system-linux-375.png') }).catch(() => {});
+        await context.close();
+      } finally {
+        if (eng !== browser) await eng.close();
+      }
+    }
+  }
+
   // 8d. Explain with AI: disclosure first, exact summary sent, ledger entry, text-only rendering, errors, PDF
   console.log('Explain with AI');
   {

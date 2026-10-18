@@ -222,14 +222,16 @@
       sysBanner: function (family, label) {
         switch (family) {
           case 'windows': return 'You’re on ' + label + '. Follow the three steps below to check this PC.';
-          case 'mac': return 'You’re on macOS. Mac reports are coming soon; for now PC Check reads Windows reports.';
-          case 'linux': return 'You’re on Linux. Linux reports are coming soon; for now PC Check reads Windows reports.';
+          case 'mac': return 'You’re on macOS. Mac reports are coming soon; for now PC Check reads Windows and Linux reports.';
+          case 'linux': return 'You’re on ' + label + '. Run the five read-only commands below in a terminal and paste what they print.';
           case 'android': return 'You’re on Android. These steps are done on a computer: open this page there, or follow them on the computer and come back with the files.';
           case 'ios': return 'You’re on an iPhone or iPad. These steps are done on a computer: open this page there, or follow them on the computer and come back with the files.';
           default: return 'Pick the system of the computer you want to check.';
         }
       },
-      sysSoon: function (name) { return name + ' reports are coming soon. For now PC Check reads Windows reports; the browser checks above work on any system.'; },
+      sysSoon: function (name) { return name + ' reports are coming soon. For now PC Check reads Windows and Linux reports; the browser checks above work on any system.'; },
+      sysLeadWindows: 'Windows already keeps a crash history, a battery report and a system summary. Save them with the steps below and PC Check reads them right here in your browser. The files never leave your device.',
+      sysLeadLinux: 'Linux already keeps an error journal and knows your battery and disks. Five read-only commands print it; paste their output below and PC Check reads it right here in your browser. Nothing you paste leaves your device.',
       sysReading: 'Reading the file on this device…',
       sysReadReliability: function (date, n) { return 'Read: reliability history' + (date ? ' saved ' + date : '') + ', ' + n + (n === 1 ? ' event.' : ' events.'); },
       sysReadBattery: 'Read: battery report.',
@@ -250,7 +252,21 @@
       sysVerdictOk: 'No serious problems in these reports.',
       sysVerdictWarn: 'A few things need attention.',
       sysVerdictRisk: 'This PC has problems worth fixing soon.',
-      sysReportFrom: function (date) { return 'Reliability history from ' + date + ' · read on this device, nothing uploaded'; },
+      sysReportFrom: function (date, platform) { return (platform === 'linux' ? 'Logs from ' : 'Reliability history from ') + date + ' · read on this device, nothing uploaded'; },
+      // Linux: text pasted from five read-only commands
+      sysLinuxNotOutput: 'This doesn’t look like the output of this command.',
+      sysLinuxLooksLike: function (step) { return ' It looks like the output for step ' + step + '.'; },
+      sysLinuxLanguage: 'This output isn’t in English. Run the command exactly as shown: it starts with LC_ALL=C, which makes it print in English.',
+      sysLinuxNoBattery: 'No battery reported (fine for a desktop).',
+      sysLinuxCut: ' Only the first 2 MB were read.',
+      sysLinuxTruncated: function (n) { return ' Only the first ' + n + ' lines were read.'; },
+      sysLinuxReadSystem: 'Read: system details.',
+      sysLinuxReadJournal: function (n) { return n ? 'Read: ' + n + (n === 1 ? ' error line' : ' error lines') + ' since this start-up.' : 'Read: no errors logged since this start-up.'; },
+      sysLinuxReadBoots: function (b, n) { return 'Read: ' + b + (b === 1 ? ' start-up' : ' start-ups') + ', ' + n + (n === 1 ? ' error line' : ' error lines') + ' from the one before.'; },
+      sysLinuxReadBattery: 'Read: battery details.',
+      sysLinuxReadDisks: function (n) { return 'Read: ' + n + (n === 1 ? ' filesystem.' : ' filesystems.'); },
+      sysLinuxNeedPaste: 'Paste at least one output first. Step 2 tells the most.',
+      sysLinuxNothingRead: 'Nothing could be read. See the message under each box.',
       sysLocalOnly: 'Read on this device, nothing uploaded',
       sysFindingsTitle: 'What we found',
       sysNoFindings: 'Nothing to fix in these reports.',
@@ -322,11 +338,22 @@
       files: { reliability: null, battery: null, msinfo: null },
       steps: { reliability: null, battery: null, msinfo: null },
       status: null,
+      // Linux: texts = what was pasted (cut at the cap), parsed = parser results, steps = per-box message
+      linux: blankLinux(),
       evaluation: null,
       // Explain with AI: open = disclosure shown; busy = request in flight; text/model = the answer
       ai: blankAi()
     }
   };
+
+  function blankLinux() {
+    return {
+      texts: { system: '', journal: '', boots: '', battery: '', disks: '' },
+      parsed: { system: null, journal: null, boots: null, battery: null, disks: null },
+      steps: { system: null, journal: null, boots: null, battery: null, disks: null },
+      status: null
+    };
+  }
 
   function blankAi() {
     return { open: false, busy: false, summary: null, text: null, model: null, error: null };
@@ -1516,6 +1543,10 @@
     else family = 'other';
     var labels = { windows: 'Windows', mac: 'macOS', linux: 'Linux', android: 'Android', ios: 'iPhone or iPad', other: 'this device' };
     var info = { family: family, label: labels[family] };
+    if (family === 'linux') {
+      var distro = /Ubuntu|Fedora|Debian/.exec(ua);
+      if (distro) info.label = 'Linux (' + distro[0] + ')';
+    }
     if (family !== 'windows' || !uad || uad.platform !== 'Windows' || typeof uad.getHighEntropyValues !== 'function') return Promise.resolve(info);
     // Windows 11 reports platformVersion 13 or higher; Windows 10 reports 1 to 10.
     return uad.getHighEntropyValues(['platformVersion']).then(function (h) {
@@ -1620,9 +1651,151 @@
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Linux: output of five read-only commands, pasted and read on this device only.
+  // The pasted text is never sent, logged or rendered; only the anonymised evaluation is shown.
+  // ---------------------------------------------------------------------------
+  var LINUX_KINDS = ['system', 'journal', 'boots', 'battery', 'disks'];
+  var LINUX_STEP_NO = { system: 1, journal: 2, boots: 3, battery: 4, disks: 5 };
+  // A row of "journalctl --list-boots": index, 32-hex boot ID, then a "Day YYYY-MM-DD" timestamp.
+  var LINUX_BOOT_ROW = /^\s*-?\d+\s+[0-9a-f]{32}\s+\S+ \d{4}-\d\d-\d\d /m;
+
+  function parseLinux(kind, text, when) {
+    var S = window.PCSys;
+    switch (kind) {
+      case 'system': return S.parseLinuxSystem(text);
+      case 'journal': return S.parseJournal(text, when);
+      case 'boots': return S.parseBoots(text);
+      case 'battery': return S.parseUpower(text);
+      default: return S.parseDisks(text);
+    }
+  }
+
+  function linuxAccepted(kind, r) {
+    return !!r && !r.error && !r.unsupportedLanguage && !(kind === 'battery' && !r.present);
+  }
+
+  // Which other step a paste belongs to, to point a wrong box to the right one. A boot list is checked first,
+  // because the errors that follow it would also read as a journal.
+  function sniffLinux(kind, text) {
+    if (kind !== 'boots' && LINUX_BOOT_ROW.test(text.slice(0, 200000))) return 'boots';
+    for (var i = 0; i < LINUX_KINDS.length; i++) {
+      var k = LINUX_KINDS[i];
+      if (k === kind || k === 'boots') continue;
+      if (linuxAccepted(k, parseLinux(k, text, new Date()))) return k;
+    }
+    return null;
+  }
+
+  function linuxReadMsg(kind, r) {
+    switch (kind) {
+      case 'system': return t('sysLinuxReadSystem');
+      case 'journal': return t('sysLinuxReadJournal', r.total);
+      case 'boots': return t('sysLinuxReadBoots', r.boots.length, r.previous ? r.previous.total : 0);
+      case 'battery': return r.present ? t('sysLinuxReadBattery') : t('sysLinuxNoBattery');
+      default: return t('sysLinuxReadDisks', r.filesystems.length);
+    }
+  }
+
+  function analyzeLinux() {
+    var S = window.PCSys;
+    var lx = blankLinux();
+    var cap = S ? S.LINUX_PASTE_CAP : 2000000;
+    var raw = {};
+    LINUX_KINDS.forEach(function (k) {
+      var box = document.getElementById('sys-paste-' + k);
+      raw[k] = box ? String(box.value || '') : '';
+      lx.texts[k] = raw[k].slice(0, cap);
+    });
+    var pasted = LINUX_KINDS.some(function (k) { return lx.texts[k].trim() !== ''; });
+    if (!S || !pasted) {
+      lx.status = ['sysLinuxNeedPaste'];
+      state.sys.linux = lx;
+      if (state.sys.evaluation && state.sys.evaluation.platform === 'linux') state.sys.evaluation = null;
+      state.sys.ai = blankAi();
+      renderLinuxSteps();
+      renderSysResults();
+      renderPdfButton();
+      return;
+    }
+
+    // The boot list comes first: its newest entry dates the report and gives the journal lines their year.
+    var order = ['boots', 'system', 'journal', 'battery', 'disks'];
+    var when = new Date();
+    var readAny = false;
+    order.forEach(function (k) {
+      var text = lx.texts[k];
+      var cutNote = raw[k].length > cap ? t('sysLinuxCut') : '';
+      if (!text.trim()) {
+        if (k === 'battery') {
+          lx.parsed.battery = { present: false };
+          lx.steps.battery = { status: 'ok', msg: t('sysLinuxNoBattery') };
+        }
+        return;
+      }
+      var r = parseLinux(k, text, when);
+      if (r && r.unsupportedLanguage) {
+        lx.steps[k] = { status: 'error', msg: t('sysLinuxLanguage') + cutNote };
+      } else if (!r || r.error || (k === 'journal' && LINUX_BOOT_ROW.test(text.slice(0, 200000)))) {
+        var other = sniffLinux(k, text);
+        lx.steps[k] = { status: 'error', msg: t('sysLinuxNotOutput') + (other ? t('sysLinuxLooksLike', LINUX_STEP_NO[other]) : '') + cutNote };
+      } else {
+        lx.parsed[k] = r;
+        readAny = true;
+        if (k === 'boots' && r.reportDate) when = r.reportDate;
+        var notes = cutNote + (r.truncated ? t('sysLinuxTruncated', S.LINUX_MAX_LINES.toLocaleString('en-IE')) : '');
+        if (k === 'boots' && r.previous) notes = cutNote + (r.previous.truncated ? t('sysLinuxTruncated', S.LINUX_MAX_LINES.toLocaleString('en-IE')) : '');
+        lx.steps[k] = { status: 'ok', msg: linuxReadMsg(k, r) + notes };
+      }
+    });
+
+    if (readAny) {
+      state.sys.evaluation = S.evaluateLinux(lx.parsed, new Date());
+      lx.status = ['sysDone'];
+    } else {
+      if (state.sys.evaluation && state.sys.evaluation.platform === 'linux') state.sys.evaluation = null;
+      lx.status = ['sysLinuxNothingRead'];
+    }
+    state.sys.linux = lx;
+    state.sys.ai = blankAi();
+    renderLinuxSteps();
+    renderSysResults();
+    renderPdfButton();
+    var heading = $('#sys-results h3');
+    if (readAny && heading) heading.focus();
+  }
+
+  function clearLinux() {
+    LINUX_KINDS.forEach(function (k) {
+      var box = document.getElementById('sys-paste-' + k);
+      if (box) box.value = '';
+    });
+    state.sys.linux = blankLinux();
+    if (state.sys.evaluation && state.sys.evaluation.platform === 'linux') {
+      state.sys.evaluation = null;
+      state.sys.ai = blankAi();
+    }
+    renderLinuxSteps();
+    renderSysResults();
+    renderPdfButton();
+  }
+
+  function renderLinuxSteps() {
+    LINUX_KINDS.forEach(function (k) {
+      var root = document.getElementById('sys-step-linux-' + k);
+      if (!root) return;
+      var step = state.sys.linux.steps[k];
+      root.setAttribute('data-state', step ? step.status : 'empty');
+      $('[data-role="msg"]', root).textContent = step ? step.msg : '';
+    });
+    var status = $('#sys-linux-status');
+    if (status) status.textContent = state.sys.linux.status ? resolve(state.sys.linux.status) : '';
+  }
+
   function selectSysOs(os) {
     state.sys.selected = os;
     renderSysOs();
+    renderSysResults();
   }
 
   function renderSysBanner() {
@@ -1639,10 +1812,13 @@
       b.setAttribute('aria-pressed', String(b.getAttribute('data-os') === state.sys.selected));
     });
     var windows = state.sys.selected === 'windows';
+    var linux = state.sys.selected === 'linux';
     $('#sys-steps').hidden = !windows;
+    if ($('#sys-linux-steps')) $('#sys-linux-steps').hidden = !linux;
+    if ($('#sys-lead')) $('#sys-lead').textContent = t(linux ? 'sysLeadLinux' : 'sysLeadWindows');
     var soon = $('#sys-soon');
-    soon.hidden = windows;
-    soon.textContent = windows ? '' : t('sysSoon', SYS_OS_NAMES[state.sys.selected]);
+    soon.hidden = windows || linux;
+    soon.textContent = windows || linux ? '' : t('sysSoon', SYS_OS_NAMES[state.sys.selected]);
   }
 
   function renderSysStep(kind) {
@@ -1661,6 +1837,8 @@
     $('#sys-status').textContent = state.sys.status ? resolve(state.sys.status) : '';
     root.textContent = '';
     var e = state.sys.evaluation;
+    // Results belong to one system: they show only while that system's button is selected.
+    if (e && e.platform !== state.sys.selected) e = null;
     root.hidden = !e;
     if (!e) return;
 
@@ -1681,7 +1859,7 @@
     words.appendChild(h);
     words.appendChild(el('p', 'sys-verdict', t(band === 'ok' ? 'sysVerdictOk' : (band === 'warn' ? 'sysVerdictWarn' : 'sysVerdictRisk'))));
     var date = isoDate(e.reportDate);
-    words.appendChild(el('p', 'sys-date', date ? t('sysReportFrom', date) : t('sysLocalOnly')));
+    words.appendChild(el('p', 'sys-date', date ? t('sysReportFrom', date, e.platform) : t('sysLocalOnly')));
     top.appendChild(words);
     root.appendChild(top);
 
@@ -1727,6 +1905,8 @@
       root.appendChild(tiles);
     }
 
+    // The AI explanation is offered for Windows only until the server has a Linux prompt.
+    if (e.platform === 'linux') return;
     var ai = el('div', 'sys-ai');
     ai.id = 'sys-ai';
     root.appendChild(ai);
@@ -1805,7 +1985,7 @@
 
   function openSysAi() {
     var e = state.sys.evaluation;
-    if (!e || !window.PCSys) return;
+    if (!e || !window.PCSys || e.platform === 'linux') return;
     state.sys.ai = blankAi();
     state.sys.ai.open = true;
     state.sys.ai.summary = window.PCSys.buildSummary(e);
@@ -1858,6 +2038,7 @@
     renderSysBanner();
     renderSysOs();
     SYS_KINDS.forEach(renderSysStep);
+    renderLinuxSteps();
     renderSysResults();
   }
 
@@ -1875,11 +2056,14 @@
       sel.removeAllRanges();
       sel.addRange(range);
     };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(code.textContent).then(done, selectIt);
-    } else {
-      selectIt();
+    var copied = null;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) copied = navigator.clipboard.writeText(code.textContent);
+    } catch (e) {
+      copied = null;
     }
+    if (copied && typeof copied.then === 'function') copied.then(done, selectIt);
+    else selectIt();
   }
 
   function initSys() {
@@ -1912,6 +2096,8 @@
     });
     $all('.sys-copy').forEach(function (b) { b.addEventListener('click', function () { copyText(b); }); });
     $('#sys-analyze').addEventListener('click', analyzeSys);
+    if ($('#sys-linux-analyze')) $('#sys-linux-analyze').addEventListener('click', analyzeLinux);
+    if ($('#sys-linux-clear')) $('#sys-linux-clear').addEventListener('click', clearLinux);
 
     detectOs().then(function (os) {
       state.sys.os = os;
@@ -1982,7 +2168,7 @@
       sh.appendChild(el('span', 'report-pill', t('reportSysScore', sysEval.score)));
       sb.appendChild(sh);
       var sysDate = isoDate(sysEval.reportDate);
-      if (sysDate) sb.appendChild(el('p', null, t('sysReportFrom', sysDate)));
+      if (sysDate) sb.appendChild(el('p', null, t('sysReportFrom', sysDate, sysEval.platform)));
       sb.appendChild(el('h3', null, t('sysFindingsTitle')));
       var sysFindings = sysEval.findings.slice().sort(function (a, b) {
         return SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity);
