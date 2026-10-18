@@ -1038,6 +1038,17 @@
     return nameReCache;
   }
 
+  // iPhone: everything under the mobile user's home (data containers hold personal file names, with spaces) up to the
+  // end of the quoted value or line; possessive device names ("Jane\u2019s iPhone", "James' iPad Pro (2)": a preceding
+  // ordinary word may be masked too); device host names ("Janes-iPhone.local"); international phone numbers with at
+  // least 8 digits (a "+0100" time zone or a "+0x1c" offset never matches).
+  var IOS_MOBILE_PATH = /(\/var\/mobile\/)[^"\n]*/g;
+  var DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30} ){0,2}[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30}['\u2019]s? (?:iPhone|iPad|iPod touch|iPod|Apple Watch)(?: (?:Pro Max|Pro|Plus|mini|Air|SE))?(?: ?\(\d{1,3}\))?(?![A-Za-z0-9])/g;
+  var DEVICE_HOST = /(^|[^A-Za-z0-9\u00C0-\u024F-])[A-Za-z0-9\u00C0-\u024F-]{1,40}-(?:iPhone|iPad|iPod)(?:-\d{1,3})?(?:\.local)?(?![A-Za-z0-9])/g;
+  var PHONE_INTL = /\+[1-9][0-9 ().-]{6,20}[0-9]/g;
+
+  function maskPhone(m) { return m.replace(/[^0-9]/g, '').length >= 8 ? '[phone]' : m; }
+
   function anonymise(value, names) {
     var s = String(value === null || value === undefined ? '' : value)
       .replace(/\\x2d/gi, '-') // systemd unit names escape "-" as \x2d (dev-disk-by\x2duuid-…)
@@ -1052,6 +1063,11 @@
     var nameRe = namesRegex(names);
     if (nameRe.re) s = s.replace(nameRe.re, '[name]');
     if (nameRe.wordRe) s = s.replace(nameRe.wordRe, '$1[name]');
+    s = s
+      .replace(IOS_MOBILE_PATH, '$1[path]')
+      .replace(DEVICE_POSSESSIVE, '$1[device]')
+      .replace(DEVICE_HOST, '$1[device]')
+      .replace(PHONE_INTL, maskPhone);
     return s
       .replace(/([A-Za-z]:\\Users\\)[^\\\s]+/gi, '$1[user]')
       .replace(/(\/(?:home|Users|run\/media|media)\/)[^\/\s]+/g, '$1[user]')
@@ -1659,6 +1675,162 @@
   }
 
   // ---------------------------------------------------------------------------
+  // iPhone rules. Fixes point only to iPhone Settings, the App Store, restarting, an iCloud backup, Apple Support
+  // or an Apple Authorised Service Provider: never a computer, a profile or a third-party app.
+  // ---------------------------------------------------------------------------
+  var IOS_FIX = {
+    panics: 'Install the latest iOS (Settings > General > Software Update), update your apps in the App Store and restart the iPhone. If it keeps restarting by itself, back up to iCloud and contact Apple Support or an Apple Authorised Service Provider: repeated restarts often mean a hardware fault such as the battery, the charging port or a sensor.',
+    crashes: 'Update the app in the App Store. If it keeps crashing, delete it (Settings > General > iPhone Storage > the app > Delete App) and install it again.',
+    jetsam: 'This is normal now and then. If an app you are using closes often, update it, close apps you no longer use and restart the iPhone.',
+    batteryReplace: 'Plan a battery replacement with Apple or an Apple Authorised Service Provider. Settings > Battery > Battery Health shows Apple\'s own assessment.',
+    batteryWear: 'The battery is worn. A replacement by Apple or an Apple Authorised Service Provider restores battery life and full performance.',
+    old_ios: 'Open Settings > General > Software Update to upgrade. If this iPhone can\'t run a newer iOS, keep your apps up to date and avoid using it for banking.'
+  };
+  var IOS_PANIC_CAUSE_ORDER = ['sensor', 'thermal', 'sep', 'storage', 'gpu', 'watchdog', 'data_abort', 'other'];
+  var IOS_PANIC_CAUSE_TEXT = {
+    sensor: 'The iPhone reported a missing or failed sensor, which usually needs a repair.',
+    thermal: 'A temperature monitor stopped responding. On iPhones this often points to the battery, the charging port or a sensor.',
+    sep: 'The Secure Enclave, which protects Face ID, Touch ID and the passcode, failed.',
+    storage: 'The storage chip reported an error.',
+    gpu: 'The graphics system failed.',
+    watchdog: 'The system stopped responding, often because of a stuck process or a hardware fault.',
+    data_abort: 'A memory access fault inside iOS, usually a software bug, sometimes a hardware fault.',
+    other: 'The cause is not one PC Check recognises.'
+  };
+  // Exactly what the server accepts (api/_lib.php, bsc_validate_ios_summary) as an iOS version: the header's
+  // os_version ("iPhone OS 26.0.1 (23A355)", a Rapid Security Response "iOS 16.5.1 (c) (20F770750d)"). Never free text.
+  var SUMMARY_IOS = /^(?:iPhone OS|iOS|iPadOS) [0-9]{1,2}(?:\.[0-9]{1,3}){0,2}(?: \([a-z]\))?(?: \([0-9A-Za-z]{4,12}\))?$/;
+
+  // An app name as shown and summarised: masked first (with the names and the device rules), then cut to 80 code
+  // points without control or format characters; an empty result is "An unnamed app".
+  function iosAppName(raw, names) {
+    return (cap(anonymise(typeof raw === 'string' ? raw : '', names)) || '').trim() || UNNAMED_APP;
+  }
+
+  function iosVersionOk(v) { return typeof v === 'string' && SUMMARY_IOS.test(v); }
+
+  // input: {reports: [parseIosReport results], batteryPct: 1..100 | null, names?: [...]}. The window is the 30 days
+  // before "now" (the logs are copied off the phone minutes before the analysis); a log dated after now + 1 day is ignored.
+  function evaluateIos(input, now) {
+    var r = input || {};
+    var at = now || new Date();
+    var findings = [];
+    var facts = [];
+    var names = Array.isArray(r.names) ? r.names : [];
+    var reports = uniqueIosReports(r.reports);
+    var given = reports.length > 0;
+    var bp = r.batteryPct;
+    var batteryPct = typeof bp === 'number' && isFinite(bp) && Math.floor(bp) === bp && bp >= 1 && bp <= 100 ? bp : null;
+    var to = at.getTime() + DAY;
+    var from = at.getTime() - 30 * DAY;
+    var timed = reports.filter(function (x) {
+      return x.time instanceof Date && !isNaN(x.time.getTime()) && x.time.getTime() <= to;
+    }).sort(function (a, b) { return b.time.getTime() - a.time.getTime(); });
+    var reportDate = timed.length ? timed[0].time : null;
+    var ios = null;
+    var model = null;
+    timed.forEach(function (x) {
+      if (ios === null && iosVersionOk(x.ios)) ios = x.ios;
+      if (model === null && typeof x.model === 'string' && IOS_MODEL.test(x.model)) model = x.model;
+    });
+    var inWindow = timed.filter(function (x) { return x.time.getTime() >= from; });
+    var panics = inWindow.filter(function (x) { return x.kind === 'panic'; });
+    var crashes = inWindow.filter(function (x) { return x.kind === 'crash'; });
+    var jetsams = inWindow.filter(function (x) { return x.kind === 'jetsam'; });
+
+    var causeCount = Object.create(null);
+    panics.forEach(function (p) {
+      var c = IOS_PANIC_CAUSE_TEXT[p.cause] ? p.cause : 'other';
+      causeCount[c] = (causeCount[c] || 0) + 1;
+    });
+    // App names are masked and cut before counting, so two names that differ only in a masked part are one entry
+    var appCount = Object.create(null);
+    crashes.forEach(function (c) {
+      var app = iosAppName(c.app, names);
+      appCount[app] = (appCount[app] || 0) + 1;
+    });
+    var apps = countList(appCount);
+    var largestCount = Object.create(null);
+    var overCount = Object.create(null);
+    jetsams.forEach(function (j) {
+      if (typeof j.largest === 'string' && j.largest) {
+        var big = iosAppName(j.largest, names);
+        largestCount[big] = (largestCount[big] || 0) + 1;
+      }
+      var seen = Object.create(null);
+      (Array.isArray(j.overLimit) ? j.overLimit : []).slice(0, 3).forEach(function (o) {
+        var n = iosAppName(o, names);
+        if (seen[n]) return;
+        seen[n] = true;
+        overCount[n] = (overCount[n] || 0) + 1;
+      });
+    });
+    var largest = countList(largestCount);
+    var over = countList(overCount).slice(0, 3);
+
+    var out = { platform: 'ios', score: 100, findings: findings, facts: facts, reportDate: reportDate,
+      ios: ios, model: model,
+      panics30d: given ? panics.length : null, panicCauses: countList(causeCount),
+      crashes30d: given ? crashes.length : null, topCrashApps: apps.slice(0, 3),
+      jetsam30d: given ? jetsams.length : null,
+      batteryHealthPct: batteryPct, names: names };
+    function add(id, severity, title, detail, fix) { findings.push({ id: id, severity: severity, title: title, detail: detail || '', fix: fix || '' }); }
+
+    if (panics.length) {
+      var last = panics[0];
+      // Masked first, then cut: a name straddling the cut can never leave a fragment behind
+      var line = anonymise(typeof last.causeLine === 'string' ? last.causeLine : '', names).replace(CONTROL_FORMAT_RE, '').slice(0, 120).trim();
+      var detail = 'Most recent: ' + localDate(last.time) + (line ? ': ' + line.replace(/[.\s]+$/, '') : '') + '.';
+      IOS_PANIC_CAUSE_ORDER.forEach(function (c) { if (causeCount[c]) detail += ' ' + IOS_PANIC_CAUSE_TEXT[c]; });
+      add('panics', panics.length >= 2 ? 'risk' : 'warn',
+        'Your iPhone restarted by itself ' + plural(panics.length, 'time', 'times') + ' in 30 days', detail, IOS_FIX.panics);
+    }
+    if (crashes.length) {
+      add('crashes', crashes.length >= 3 ? 'warn' : 'info', 'Apps crashed ' + plural(crashes.length, 'time', 'times') + ' in 30 days',
+        'Most crashes: ' + apps.slice(0, 3).map(function (a) { return a.name + ' (' + plural(a.count, 'crash', 'crashes') + ')'; }).join('; ') + '.',
+        IOS_FIX.crashes);
+    }
+    if (jetsams.length) {
+      var jDetail = (largest.length ? 'Biggest memory user most often: ' + largest[0].name + '.' : '') +
+        (over.length ? ' Closed for going over their own memory limit: ' + over.map(function (a) { return a.name; }).join(', ') + '.' : '');
+      add('jetsam', 'info', 'iOS closed apps to free memory ' + plural(jetsams.length, 'time', 'times') + ' in 30 days', jDetail.trim(), IOS_FIX.jetsam);
+    }
+    if (batteryPct !== null && batteryPct < 80) {
+      add('battery', batteryPct < 60 ? 'risk' : 'warn', 'Battery holds ' + batteryPct + ' % of its original capacity',
+        'As read in Settings > Battery > Battery Health. Apple considers a battery worn below 80 %.',
+        batteryPct < 60 ? IOS_FIX.batteryReplace : IOS_FIX.batteryWear);
+    }
+    var majorMatch = ios !== null ? /^(?:iPhone OS|iOS|iPadOS) ([0-9]{1,2})/.exec(ios) : null;
+    var major = majorMatch ? +majorMatch[1] : null;
+    if (major !== null && major < IOS_MAJORS[IOS_MAJORS.length - 2]) {
+      add('old_ios', 'warn', 'iOS ' + major + ' is not one of the two latest versions',
+        'Apple gives every security fix only to the latest iOS.', IOS_FIX.old_ios);
+    }
+    if (reportDate) {
+      var age = Math.floor((at.getTime() - reportDate.getTime()) / DAY);
+      if (age > 30) add('old_report', 'info', 'The newest log is ' + age + ' days old', 'Save newer logs from Analytics Data to see the current state.', '');
+    }
+
+    var risks = findings.filter(function (f) { return f.severity === 'risk'; }).length;
+    var warns = findings.filter(function (f) { return f.severity === 'warn'; }).length;
+    out.score = Math.max(0, 100 - 25 * risks - 10 * warns);
+
+    if (ios !== null) facts.push({ label: 'System', value: ios });
+    if (model !== null) facts.push({ label: 'Model', value: model });
+    if (batteryPct !== null) facts.push({ label: 'Battery maximum capacity', value: batteryPct + ' %' });
+    if (given) {
+      facts.push({ label: 'Panics (30 days)', value: String(panics.length) });
+      facts.push({ label: 'App crashes (30 days)', value: String(crashes.length) });
+      facts.push({ label: 'Low-memory events (30 days)', value: String(jetsams.length) });
+    }
+    if (reportDate) facts.push({ label: 'Newest log from', value: localDate(reportDate) });
+
+    facts.forEach(function (f) { f.value = anonymise(f.value, names); });
+    findings.forEach(function (f) { f.title = anonymise(f.title, names); f.detail = anonymise(f.detail, names); });
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
   // The only thing that may ever be sent for an AI explanation: a small, whitelisted summary
   // ---------------------------------------------------------------------------
   // Control (Cc) and format (Cf) characters, which the server rejects: removed rather than sent.
@@ -1748,7 +1920,41 @@
     };
   }
 
+  // Exactly what the server accepts (api/_lib.php, bsc_validate_ios_summary): the iOS version and Apple's model
+  // identifier by their own regexes, causes and finding ids from the fixed enums, counts of at least 1, and the
+  // battery as a whole number from 1 to 100. A value the server would reject is sent as null or left out.
+  var SUMMARY_IOS_CAUSES = toSet(IOS_PANIC_CAUSE_ORDER);
+  var SUMMARY_IOS_FINDING_IDS = toSet(['panics', 'crashes', 'jetsam', 'battery', 'old_ios', 'old_report']);
+  var SUMMARY_SEVERITIES = toSet(['risk', 'warn', 'info']);
+
+  function buildIosSummary(e) {
+    var names = e.names || [];
+    var str = function (v) { return typeof v === 'string' ? cap(anonymise(v, names)) : null; };
+    var ios = str(e.ios);
+    var model = str(e.model);
+    var counted = function (c) { return c.count >= 1; };
+    var bp = e.batteryHealthPct;
+    return {
+      platform: 'ios',
+      ios: ios !== null && SUMMARY_IOS.test(ios) ? ios : null,
+      model: model !== null && IOS_MODEL.test(model) ? model : null,
+      score: e.score,
+      findings: (e.findings || []).filter(function (f) { return f && SUMMARY_IOS_FINDING_IDS[f.id] && SUMMARY_SEVERITIES[f.severity]; })
+        .slice(0, 20).map(function (f) { return { id: f.id, severity: f.severity }; }),
+      panics30d: summaryCount(e.panics30d),
+      panicCauses: (e.panicCauses || []).filter(function (c) { return c && SUMMARY_IOS_CAUSES[c.name]; })
+        .map(function (c) { return { name: c.name, count: summaryCount(c.count) || 0 }; }).filter(counted).sort(byCountThenName).slice(0, 3),
+      crashes30d: summaryCount(e.crashes30d),
+      topCrashApps: (e.topCrashApps || []).filter(function (a) { return a; })
+        .map(function (a) { return { name: (str(a.name) || '').trim() || UNNAMED_APP, count: summaryCount(a.count) || 0 }; })
+        .filter(counted).sort(byCountThenName).slice(0, 3),
+      jetsam30d: summaryCount(e.jetsam30d),
+      batteryHealthPct: typeof bp === 'number' && isFinite(bp) && Math.floor(bp) === bp && bp >= 1 && bp <= 100 ? bp : null
+    };
+  }
+
   function buildSummary(e) {
+    if (e && e.platform === 'ios') return buildIosSummary(e);
     if (e && e.platform === 'mac') return buildMacSummary(e);
     if (e && e.platform === 'linux') return buildLinuxSummary(e);
     var names = e.names || [];
@@ -1775,6 +1981,7 @@
     parseUpower: parseUpower, parseDisks: parseDisks,
     MAC_REPORT_HEAD: MAC_REPORT_HEAD, MACOS_MAJORS: MACOS_MAJORS, parseSpx: parseSpx, parseMacReport: parseMacReport,
     evaluateMac: evaluateMac,
-    IOS_REPORT_HEAD: IOS_REPORT_HEAD, IOS_MAJORS: IOS_MAJORS, parseIosReport: parseIosReport, uniqueIosReports: uniqueIosReports
+    IOS_REPORT_HEAD: IOS_REPORT_HEAD, IOS_MAJORS: IOS_MAJORS, parseIosReport: parseIosReport, uniqueIosReports: uniqueIosReports,
+    evaluateIos: evaluateIos
   };
 })();
