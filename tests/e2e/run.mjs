@@ -698,6 +698,102 @@ try {
     await context.close();
   }
 
+  // 8a-linux. Linux report parsers, on synthetic outputs that follow the real formats
+  console.log('Linux report parsers');
+  {
+    const lx = (f) => fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', 'linux', f), 'utf8');
+    const t = {};
+    ['ubuntu-system', 'fedora-system', 'ubuntu-journal-boot', 'fedora-journal-disk', 'journal-no-entries', 'journal-hint', 'journal-de',
+      'boots-ubuntu', 'boots-old-format', 'upower-laptop', 'upower-empty', 'df-ubuntu', 'df-fedora-full', 'df-pt'].forEach((k) => { t[k] = lx(k + '.txt'); });
+    const { page, context } = await newPage('ok');
+    const r = await page.evaluate((t) => {
+      const S = window.PCSys;
+      if (!S || !S.parseJournal) return null;
+      const ymd = (d) => d ? [d.getFullYear(), d.getMonth() + 1, d.getDate()].join('-') : null;
+      const ub = S.parseLinuxSystem(t['ubuntu-system']);
+      const fe = S.parseLinuxSystem(t['fedora-system']);
+      const plain = S.parseLinuxSystem('Linux ubuntu 6.8.0-45-generic #45-Ubuntu SMP x86_64 GNU/Linux\nPRETTY_NAME="Ubuntu 24.04.1 LTS"\nID=ubuntu\nVERSION_ID="24.04"\n');
+      const j = S.parseJournal(t['ubuntu-journal-boot'], 2026);
+      const bySrc = (res, s) => res.lines.filter((l) => l.source === s).length;
+      const iso = S.parseJournal('2026-10-18T09:00:03+0100 tuxbox-jdoe systemd[1]: Failed to start x.service.');
+      const bootsUb = S.parseBoots(t['boots-ubuntu']);
+      const bootsOld = S.parseBoots(t['boots-old-format']);
+      const up = S.parseUpower(t['upower-laptop']);
+      const dU = S.parseDisks(t['df-ubuntu']);
+      const dF = S.parseDisks(t['df-fedora-full']);
+      const big = t['ubuntu-journal-boot'].repeat(Math.ceil(2500000 / t['ubuntu-journal-boot'].length));
+      const t0 = performance.now();
+      const bigJ = S.parseJournal(big, 2026);
+      const bigMs = performance.now() - t0;
+      return {
+        caps: [S.LINUX_PASTE_CAP, S.LINUX_MAX_LINES],
+        ub: { kernel: ub.kernel, distro: ub.distro, names: ub.names, id: ub.id, versionId: ub.versionId, supportEnd: ub.supportEnd },
+        fe: { supportEnd: ymd(fe.supportEnd), names: fe.names, distro: fe.distro },
+        plainNames: plain.names, plainDistro: plain.distro, notSystem: S.parseLinuxSystem('hello world'),
+        j: { total: j.total, gnome: bySrc(j, 'gnome-shell'), kernel: bySrc(j, 'kernel'), gdm: bySrc(j, 'gdm-password'), names: j.names,
+          firstTime: j.lines[0].time && j.lines[0].time.getTime(), expFirst: new Date(2026, 9, 18, 8, 59, 58).getTime(), truncated: j.truncated, partial: j.partial },
+        fedoraJ: (() => { const f = S.parseJournal(t['fedora-journal-disk'], 2026); return { total: f.total, names: f.names }; })(),
+        noEntries: S.parseJournal(t['journal-no-entries']), hint: S.parseJournal(t['journal-hint']),
+        oldPerm: S.parseJournal('No journal files were opened due to insufficient permissions.'),
+        de: S.parseJournal(t['journal-de']), dfAsJournal: S.parseJournal(t['df-ubuntu']),
+        iso: { total: iso.total, time: iso.lines[0] && iso.lines[0].time && iso.lines[0].time.getTime(), exp: Date.parse('2026-10-18T09:00:03+01:00'), source: iso.lines[0] && iso.lines[0].source },
+        bootsUb: { n: bootsUb.boots && bootsUb.boots.length, report: bootsUb.reportDate && bootsUb.reportDate.getTime(), exp: new Date(2026, 9, 18, 10, 6, 1).getTime(),
+          prevTotal: bootsUb.previous && bootsUb.previous.total, prevYear: bootsUb.previous && bootsUb.previous.lines[0] && bootsUb.previous.lines[0].time.getFullYear() },
+        bootsOld: { n: bootsOld.boots && bootsOld.boots.length, noEntries: bootsOld.previous && bootsOld.previous.noEntries },
+        bootsSa: S.parseBoots(t['boots-ubuntu'].replace(/Sat /g, 'Sa ')), notBoots: S.parseBoots('hello'),
+        up, upJson: JSON.stringify(up), upEmpty: S.parseUpower(t['upower-empty']), upBlank: S.parseUpower('   \n'),
+        upComma: S.parseUpower('  native-path: BAT0\n    energy-full:         41,22 Wh\n    energy-full-design:  57,02 Wh\n    charge-cycles:       N/A\n'),
+        upUsage: S.parseUpower('Usage:\n  upower [OPTION…]\n\nUPower tool\n'), upWrong: S.parseUpower('hello'),
+        dU: { worst: dU.worstPct, devices: dU.filesystems.map((f) => f.device), disks: dU.disks.map((d) => d.name), backup: (dU.filesystems.filter((f) => f.device === '/dev/sdb1')[0] || {}).mount },
+        dF: { worst: dF.worstPct, sda3: dF.filesystems.filter((f) => f.device === '/dev/sda3').map((f) => f.mounts), disks: dF.disks.map((d) => d.name) },
+        dPt: S.parseDisks(t['df-pt']), notDisks: S.parseDisks('hello'),
+        bigMs, bigJ: { truncated: bigJ.truncated, total: bigJ.total },
+        manyJ: (() => { const m = S.parseJournal('Oct 18 09:00:00 host kernel: x\n'.repeat(30000), 2026); return { truncated: m.truncated, total: m.total }; })()
+      };
+    }, t);
+    check('linux: parsers are loaded', r !== null);
+    if (r) {
+      check('linux: caps are 2,000,000 chars and 20,000 lines', r.caps[0] === 2000000 && r.caps[1] === 20000, r.caps);
+      check('linux system: Ubuntu kernel and distro', r.ub.kernel === '6.8.0-45-generic' && r.ub.distro === 'Ubuntu 24.04.1 LTS' && r.ub.id === 'ubuntu' && r.ub.versionId === '24.04' && r.ub.supportEnd === null, r.ub);
+      check('linux system: Ubuntu hostname is a name', r.ub.names.includes('tuxbox-jdoe'), r.ub.names);
+      check('linux system: Fedora SUPPORT_END 2025-05-13', r.fe.supportEnd === '2025-5-13', r.fe);
+      check('linux system: Fedora hostname and its first label are names', r.fe.names.includes('fedora-ws01.home.lan') && r.fe.names.includes('fedora-ws01'), r.fe.names);
+      check('linux system: default hostname "ubuntu" is not a name', !r.plainNames.includes('ubuntu') && r.plainDistro === 'Ubuntu 24.04.1 LTS', r.plainNames);
+      check('linux system: random text -> not_system', r.notSystem.error === 'not_system', r.notSystem);
+      check('linux journal: Ubuntu has 25 lines', r.j.total === 25, r.j.total);
+      check('linux journal: gnome-shell 5 lines, kernel 10', r.j.gnome === 5 && r.j.kernel === 10, r.j);
+      check('linux journal: "gdm-password]" source is gdm-password', r.j.gdm === 1, r.j.gdm);
+      check('linux journal: names include the user jdoe and the hostname', r.j.names.includes('jdoe') && r.j.names.includes('tuxbox-jdoe'), r.j.names);
+      check('linux journal: short time parsed in local time with the year hint', r.j.firstTime === r.j.expFirst, r.j);
+      check('linux journal: Fedora hostnames are names', r.fedoraJ.total === 15 && r.fedoraJ.names.includes('fedora-ws01.home.lan'), r.fedoraJ);
+      check('linux journal: -- No entries -- -> noEntries, total 0', r.noEntries.noEntries === true && r.noEntries.total === 0, r.noEntries);
+      check('linux journal: permission hint -> partial', r.hint.partial === true && r.hint.total === 0, r.hint);
+      check('linux journal: old "insufficient permissions" line -> partial', r.oldPerm.partial === true, r.oldPerm);
+      check('linux journal: German month names -> unsupported language', r.de.unsupportedLanguage === true && !r.de.lines, r.de);
+      check('linux journal: df output -> not_journal', r.dfAsJournal.error === 'not_journal', r.dfAsJournal);
+      check('linux journal: -o short-iso line parses with the right time', r.iso.total === 1 && r.iso.time === r.iso.exp && r.iso.source === 'systemd', r.iso);
+      check('linux boots: Ubuntu has 5 boots, report date is the last entry (local)', r.bootsUb.n === 5 && r.bootsUb.report === r.bootsUb.exp, r.bootsUb);
+      check('linux boots: previous boot has 3 error lines dated 2026', r.bootsUb.prevTotal === 3 && r.bootsUb.prevYear === 2026, r.bootsUb);
+      check('linux boots: old format (em dash) has 5 boots and no previous entries', r.bootsOld.n === 5 && r.bootsOld.noEntries === true, r.bootsOld);
+      check('linux boots: localised weekday -> unsupported language', r.bootsSa.unsupportedLanguage === true, r.bootsSa);
+      check('linux boots: random text -> not_boots', r.notBoots.error === 'not_boots', r.notBoots);
+      check('linux upower: health 72.3 % and 412 cycles', r.up.present === true && r.up.healthPct === 72.3 && r.up.cycles === 412 && r.up.fullWh === 41.22 && r.up.designWh === 57.02, r.up);
+      check('linux upower: model and serial are not kept', !r.upJson.includes('5B10W13930') && !r.upJson.includes('4521'), r.upJson);
+      check('linux upower: empty box -> no battery reported', r.upEmpty.present === false && r.upBlank.present === false, [r.upEmpty, r.upBlank]);
+      check('linux upower: decimal comma also gives 72.3, N/A cycles -> null', r.upComma.healthPct === 72.3 && r.upComma.cycles === null, r.upComma);
+      check('linux upower: usage text -> no battery reported', r.upUsage.present === false, r.upUsage);
+      check('linux upower: random text -> not_battery', r.upWrong.error === 'not_battery', r.upWrong);
+      check('linux disks: Ubuntu worst 93 %, no loop device, 2 disks', r.dU.worst === 93 && !r.dU.devices.some((d) => /loop/.test(d)) && r.dU.disks.join(',') === 'sdb,nvme0n1', r.dU);
+      check('linux disks: mount point with a space is kept whole', r.dU.backup === '/media/jdoe/Backup Disk', r.dU.backup);
+      check('linux disks: Fedora worst 96 %, /dev/sda3 once with / and /home, 1 disk', r.dF.worst === 96 && r.dF.sda3.length === 1 && r.dF.sda3[0].join(',') === '/,/home' && r.dF.disks.join(',') === 'sda', r.dF);
+      check('linux disks: Portuguese df header -> unsupported language', r.dPt.unsupportedLanguage === true, r.dPt);
+      check('linux disks: random text -> not_disks', r.notDisks.error === 'not_disks', r.notDisks);
+      check('journal: 2 MB parses in < 1 s and reads <= 20,000 lines', r.bigJ.truncated === true && r.bigJ.total > 0 && r.bigJ.total <= 20000 && r.bigMs < 1000, [Math.round(r.bigMs), r.bigJ]);
+      check('linux journal: 30,000 short lines -> exactly 20,000 read, truncated', r.manyJ.truncated === true && r.manyJ.total === 20000, r.manyJ);
+    }
+    await context.close();
+  }
+
   // 8b. System report rules, score, anonymiser and AI summary
   console.log('System report rules');
   {

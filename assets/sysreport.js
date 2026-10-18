@@ -1,6 +1,6 @@
 /*!
  * PC Check system reports | CyberSecInfo | MIT License
- * Reads the reports Windows already writes, entirely in the browser. Pure functions only:
+ * Reads the reports Windows writes and the Linux command output a visitor pastes, entirely in the browser. Pure functions only:
  * no DOM changes, no network. ES2017 on purpose, like the rest of the page.
  */
 (function () {
@@ -174,6 +174,255 @@
       cpu: field('cpu'), ramGb: ram === null || isNaN(ram) ? null : ram, bios: field('bios'), problemDevices: problems,
       names: names
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Linux: text pasted from five read-only commands (run with LC_ALL=C, so English month and day names)
+  // ---------------------------------------------------------------------------
+  var LINUX_PASTE_CAP = 2000000; // characters per paste box
+  var LINUX_MAX_LINES = 20000;   // journal lines read per box
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  // Out-of-the-box hostnames: replacing them would garble the distro name, and they identify nobody.
+  var DEFAULT_HOSTNAMES = ['localhost', 'ubuntu', 'debian', 'fedora', 'linux', 'raspberrypi', 'archlinux', 'kali', 'mint',
+    'pop-os', 'opensuse', 'manjaro'];
+  // System accounts seen in journal lines: not personal, and common words in the messages themselves.
+  var SYSTEM_USERS = ['root', 'nobody', 'gdm', 'lightdm', 'sddm', 'messagebus', 'polkitd', 'daemon', 'syslog', 'avahi',
+    'colord', 'geoclue', 'rtkit', 'pulse', 'kernoops', 'whoopsie', 'user', 'unknown'];
+
+  function linuxText(text) {
+    var s = String(text === null || text === undefined ? '' : text);
+    return { text: s.slice(0, LINUX_PASTE_CAP), cut: s.length > LINUX_PASTE_CAP };
+  }
+
+  function round1(n) { return Math.round(n * 10) / 10; }
+
+  function addName(list, n) {
+    if (n && list.indexOf(n) === -1) list.push(n);
+  }
+
+  function addHostname(list, host) {
+    var h = String(host || '').trim();
+    if (!h || DEFAULT_HOSTNAMES.indexOf(h.toLowerCase()) !== -1) return;
+    addName(list, h);
+    var label = h.split('.')[0];
+    if (label && DEFAULT_HOSTNAMES.indexOf(label.toLowerCase()) === -1) addName(list, label);
+  }
+
+  function addUser(list, user) {
+    var u = String(user || '').trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,31}$/.test(u)) return;
+    if (SYSTEM_USERS.indexOf(u.toLowerCase()) !== -1 || /^systemd-/.test(u)) return;
+    addName(list, u);
+  }
+
+  // uname -a; cat /etc/os-release
+  function parseLinuxSystem(text) {
+    var lines = linuxText(text).text.split(/\r?\n/);
+    var hostname = null;
+    var kernel = null;
+    var rel = {};
+    lines.forEach(function (raw) {
+      var line = raw.trim();
+      var u = /^Linux (\S+) (\S+)/.exec(line);
+      if (u && hostname === null) { hostname = u[1]; kernel = u[2]; return; }
+      var kv = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
+      if (!kv || kv[1] in rel) return;
+      var v = kv[2].trim();
+      var q = /^"(.*)"$/.exec(v) || /^'(.*)'$/.exec(v);
+      if (q) v = q[1].replace(/\\(["'\\$`])/g, '$1');
+      rel[kv[1]] = v;
+    });
+    if (hostname === null && !('ID' in rel)) return { error: 'not_system' };
+    var distro = rel.PRETTY_NAME || ((rel.NAME || '') + ' ' + (rel.VERSION_ID || '')).trim() || null;
+    var end = /^(\d{4})-(\d\d)-(\d\d)$/.exec(rel.SUPPORT_END || '');
+    var names = [];
+    addHostname(names, hostname);
+    return {
+      hostname: hostname, kernel: kernel, distro: distro, id: rel.ID || null, versionId: rel.VERSION_ID || null,
+      supportEnd: end ? new Date(+end[1], +end[2] - 1, +end[3]) : null, names: names
+    };
+  }
+
+  // Shapes of one journal line. Each regex is anchored and has no nested quantifiers.
+  var J_SHORT = /^([A-Z][a-z]{2}) {1,2}(\d{1,2}) (\d\d):(\d\d):(\d\d) (\S+) (.*)$/;
+  var J_ISO = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:[.,]\d+)?(Z|[+-]\d\d:?\d\d)? (\S+) (.*)$/;
+  var J_ANY_DATE = /^\S{2,5}\.? \d{1,2} \d\d:\d\d:\d\d /; // any language's "Mon DD HH:MM:SS "
+  var J_SOURCE = /^(\S+?): (.*)$/;
+
+  function splitSource(rest) {
+    var m = J_SOURCE.exec(rest);
+    if (!m) return { source: '', message: rest };
+    return { source: m[1].replace(/\[\d+\]$/, '').replace(/\]+$/, ''), message: m[2] };
+  }
+
+  function collectUsers(names, source, message) {
+    var re = /\/(?:home|media)\/([^\/\s\]\[:;,'"]+)/g;
+    var m;
+    while ((m = re.exec(message)) !== null) addUser(names, m[1]);
+    re = /\b(?:user|logname|ruser)=([^\s;,\]\)'"]+)/g;
+    while ((m = re.exec(message)) !== null) addUser(names, m[1]);
+    if (source === 'pkexec' || source === 'sudo') {
+      m = /^([A-Za-z_][A-Za-z0-9_.-]{0,31}) ?: /.exec(message);
+      if (m) addUser(names, m[1]);
+    }
+  }
+
+  // journalctl -p 3 -o short (or short-iso). yearHint: a year, or the report Date (then a month later than the
+  // report month means the year before, because short lines carry no year).
+  function parseJournal(text, yearHint) {
+    var src = linuxText(text);
+    var all = src.text.split(/\r?\n/);
+    var truncated = src.cut || all.length > LINUX_MAX_LINES;
+    var hint = yearHint instanceof Date && !isNaN(yearHint.getTime()) ? yearHint : null;
+    var year = hint ? hint.getFullYear() : (typeof yearHint === 'number' ? yearHint : new Date().getFullYear());
+    var refMonth = hint ? hint.getMonth() : null;
+    var out = [];
+    var names = [];
+    var noEntries = false;
+    var partial = false;
+    var recognised = false;
+    var inHint = false;
+    var nonEmpty = false;
+    for (var i = 0; i < all.length && out.length < LINUX_MAX_LINES; i++) {
+      var line = all[i].replace(/\s+$/, '');
+      if (!line) { inHint = false; continue; }
+      nonEmpty = true;
+      if (inHint && /^\s/.test(line)) continue;
+      inHint = false;
+      var m = J_SHORT.exec(line);
+      if (m && MONTHS.indexOf(m[1]) !== -1) {
+        var mon = MONTHS.indexOf(m[1]);
+        var y = refMonth !== null && mon > refMonth ? year - 1 : year;
+        var p = splitSource(m[7]);
+        out.push({ time: new Date(y, mon, +m[2], +m[3], +m[4], +m[5]), source: p.source, message: p.message });
+        addHostname(names, m[6]);
+        collectUsers(names, p.source, p.message);
+        continue;
+      }
+      if (J_ANY_DATE.test(line)) return { unsupportedLanguage: true };
+      m = J_ISO.exec(line);
+      if (m) {
+        var zone = m[7] ? (m[7] === 'Z' ? 'Z' : m[7].slice(0, 3) + ':' + m[7].slice(-2)) : '';
+        var t = new Date(m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':' + m[6] + zone);
+        var q = splitSource(m[9]);
+        out.push({ time: isNaN(t.getTime()) ? null : t, source: q.source, message: q.message });
+        addHostname(names, m[8]);
+        collectUsers(names, q.source, q.message);
+        continue;
+      }
+      var trimmed = line.trim();
+      if (trimmed === '-- No entries --') { noEntries = true; recognised = true; continue; }
+      if (/^-- .* --$/.test(trimmed)) { recognised = true; continue; }
+      if (/^Hint: You are currently not seeing messages/.test(trimmed)) { partial = true; recognised = true; inHint = true; continue; }
+      if (/^No journal files were opened due to insufficient permissions/.test(trimmed)) { partial = true; recognised = true; continue; }
+      if (/^No journal files were found/.test(trimmed)) { noEntries = true; recognised = true; continue; }
+    }
+    if (nonEmpty && !out.length && !recognised) return { error: 'not_journal' };
+    return { lines: out, total: out.length, truncated: truncated, noEntries: noEntries && !out.length, partial: partial, names: names };
+  }
+
+  // journalctl --list-boots | tail -5; journalctl -b -1 -p 3 -o short
+  var BOOT_ROW = /^\s*(-?\d+)\s+([0-9a-f]{32})\s+(.*)$/;
+  var BOOT_STAMP = /([^\s\d\u2014\u2013>-]+) (\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/g;
+
+  function parseBoots(text) {
+    var lines = linuxText(text).text.split(/\r?\n/);
+    var boots = [];
+    var rest = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (/^\s*IDX\s+BOOT ID\b/.test(line)) continue;
+      var row = BOOT_ROW.exec(line);
+      if (!row) { rest.push(line); continue; }
+      var stamps = [];
+      var s;
+      BOOT_STAMP.lastIndex = 0;
+      while ((s = BOOT_STAMP.exec(row[3])) !== null && stamps.length < 2) {
+        if (WEEKDAYS.indexOf(s[1]) === -1) return { unsupportedLanguage: true };
+        stamps.push(new Date(+s[2], +s[3] - 1, +s[4], +s[5], +s[6], +s[7]));
+      }
+      if (stamps.length < 2) {
+        if (/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/.test(row[3])) return { unsupportedLanguage: true };
+        rest.push(line);
+        continue;
+      }
+      boots.push({ idx: +row[1], first: stamps[0], last: stamps[1] });
+    }
+    var newest = null;
+    boots.forEach(function (b) { if (!newest || b.idx > newest.idx) newest = b; });
+    var reportDate = newest ? newest.last : null;
+    var previous = parseJournal(rest.join('\n'), reportDate || undefined);
+    if (previous.unsupportedLanguage) return { unsupportedLanguage: true };
+    if (previous.error) {
+      if (!boots.length) return { error: 'not_boots' };
+      previous = { lines: [], total: 0, truncated: false, noEntries: false, partial: false, names: [] };
+    }
+    if (!boots.length && !previous.total) return { error: 'not_boots' };
+    return { boots: boots, previous: previous, reportDate: reportDate };
+  }
+
+  // upower -i $(upower -e | grep BAT). Only the energy figures are kept: never the vendor, model or serial.
+  function parseUpower(text) {
+    var s = linuxText(text).text;
+    if (!s.trim() || /^\s*Usage:/m.test(s) || /upower \[OPTION/.test(s)) return { present: false };
+    if (!/\benergy/.test(s) && !/native-path/.test(s)) return { error: 'not_battery' };
+    function wh(key) {
+      var m = new RegExp('^\\s*' + key + ':\\s*([0-9]+(?:[.,][0-9]+)?)\\s*Wh', 'm').exec(s);
+      return m ? parseFloat(m[1].replace(',', '.')) : null;
+    }
+    var full = wh('energy-full');
+    var design = wh('energy-full-design');
+    var c = /^\s*charge-cycles:\s*(\d+)\s*$/m.exec(s);
+    return {
+      present: true, fullWh: full, designWh: design, cycles: c ? parseInt(c[1], 10) : null,
+      healthPct: full !== null && design ? round1((full / design) * 100) : null
+    };
+  }
+
+  // df -h; lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
+  var DF_HEADER = /^Filesystem\s+(?:Size|1K-blocks|1M-blocks)\s+Used\s+Avail(?:able)?\s+(?:Use|Capacity)%\s+Mounted on\s*$/;
+  var DF_ROW = /^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)%\s+(\S.*)$/;
+  var DF_CONT = /^\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)%\s+(\S.*)$/; // df wraps a long device name onto its own line
+  var LSBLK_HEADER = /^NAME\s+SIZE\s+TYPE\b/;
+  var LSBLK_ROW = /^[\s|`\u2502\u251C\u2514\u2500-]*([^\s|`\u2502\u251C\u2514\u2500-]\S*)\s+(\S+)\s+(\S+)/;
+
+  function parseDisks(text) {
+    var lines = linuxText(text).text.split(/\r?\n/);
+    var mode = null;
+    var sawDf = false;
+    var sawLsblk = false;
+    var filesystems = [];
+    var byDevice = {};
+    var disks = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].replace(/\s+$/, '');
+      if (DF_HEADER.test(line)) { mode = 'df'; sawDf = true; continue; }
+      if (LSBLK_HEADER.test(line)) { mode = 'lsblk'; sawLsblk = true; continue; }
+      if (!line) continue;
+      if (mode === 'df') {
+        var m = DF_ROW.exec(line);
+        var dev, size, pct, mount;
+        if (m) { dev = m[1]; size = m[2]; pct = +m[5]; mount = m[6]; }
+        else if (/^\S+$/.test(line) && i + 1 < lines.length && (m = DF_CONT.exec(lines[i + 1].replace(/\s+$/, '')))) {
+          dev = line; size = m[1]; pct = +m[4]; mount = m[5]; i++;
+        } else continue;
+        if (!/^\/dev\//.test(dev) || /^\/dev\/loop/.test(dev)) continue;
+        if (byDevice[dev]) { byDevice[dev].mounts.push(mount); continue; }
+        var entry = { device: dev, sizeText: size, usedPct: pct, mount: mount, mounts: [mount] };
+        byDevice[dev] = entry;
+        filesystems.push(entry);
+      } else if (mode === 'lsblk') {
+        var b = LSBLK_ROW.exec(line);
+        if (b && b[3] === 'disk' && !/^zram/.test(b[1]) && !/^0B?$/.test(b[2])) disks.push({ name: b[1], sizeText: b[2] });
+      } else if (!sawDf && /^[^\d]*\S%\s+\S[^\d]*$/.test(line)) {
+        return { unsupportedLanguage: true }; // a df header in another language
+      }
+    }
+    if (!sawDf && !sawLsblk) return { error: 'not_disks' };
+    var worst = null;
+    filesystems.forEach(function (f) { if (worst === null || f.usedPct > worst) worst = f.usedPct; });
+    return { filesystems: filesystems, disks: disks, worstPct: worst };
   }
 
   // ---------------------------------------------------------------------------
@@ -367,6 +616,9 @@
 
   window.PCSys = {
     decode: decode, parseReliability: parseReliability, parseBattery: parseBattery, parseMsinfo: parseMsinfo,
-    evaluateWindows: evaluateWindows, anonymise: anonymise, buildSummary: buildSummary
+    evaluateWindows: evaluateWindows, anonymise: anonymise, buildSummary: buildSummary,
+    LINUX_PASTE_CAP: LINUX_PASTE_CAP, LINUX_MAX_LINES: LINUX_MAX_LINES,
+    parseLinuxSystem: parseLinuxSystem, parseJournal: parseJournal, parseBoots: parseBoots,
+    parseUpower: parseUpower, parseDisks: parseDisks
   };
 })();
