@@ -7,8 +7,8 @@
  * Run: php tests/php/fixtures_pii_test.php
  */
 
-/** Every e-mail, MAC, IPv4/IPv6 and international phone number in a Linux, Mac or iPhone fixture must be a planted one. Returns the number of problems. */
-function planted_check($file, $text, $planted)
+/** Every e-mail, MAC, IPv4/IPv6 and international phone number in a Linux, Mac, iPhone or Android fixture must be a planted one (Android also: IMEI-like numbers and Wi-Fi names). Returns the number of problems. */
+function planted_check($file, $text, $planted, $label = '')
 {
     $bad = 0;
     $name = basename($file);
@@ -36,6 +36,14 @@ function planted_check($file, $text, $planted)
         if (preg_match_all('/[0-9]/', $v) >= 8) {
             $found['phones'][] = $v;
         }
+    }
+    if ($label === 'android') {
+        $found['imeis'] = array();
+        $found['ssids'] = array();
+        preg_match_all('/(?<![0-9])[0-9]{15}(?![0-9])/', $text, $m);
+        $found['imeis'] = $m[0];
+        preg_match_all('/SSID:?\s*"([^"]{1,64})"/i', $text, $m);
+        $found['ssids'] = $m[1];
     }
     foreach ($found as $kind => $list) {
         foreach ($list as $v) {
@@ -65,6 +73,7 @@ $groups = array(
     'linux' => array('dir' => $dir . 'linux/', 'glob' => '*.txt'),
     'mac' => array('dir' => $dir . 'mac/', 'glob' => '*'),
     'ios' => array('dir' => $dir . 'ios/', 'glob' => '*'),
+    'android' => array('dir' => $dir . 'android/', 'glob' => '*.txt'),
 );
 $dirFiles = array();
 foreach ($groups as $label => $g) {
@@ -86,22 +95,32 @@ foreach ($groups as $label => $g) {
         fwrite(STDERR, 'FAIL: ' . $label . "/PLANTED.json is not valid JSON\n");
         continue;
     }
-    foreach (array('emails', 'macs', 'ips', 'phones') as $k) {
+    foreach (array('emails', 'macs', 'ips', 'phones', 'imeis', 'ssids') as $k) {
         foreach (isset($decoded[$k]) ? $decoded[$k] : array() as $v) {
             $planted[$label][$k][strtolower($v)] = true;
-            if (($label === 'mac' || $label === 'ios') && $k === 'ips' && strpos($v, '::') !== false) {
+            if (($label === 'mac' || $label === 'ios' || $label === 'android') && $k === 'ips' && strpos($v, '::') !== false) {
                 $plantedIpv6[] = $v;
             }
         }
     }
 }
-$allFiles = array_merge($files, $dirFiles['linux'], $dirFiles['mac'], $dirFiles['ios']);
+$androidTool = __DIR__ . '/../tools/make-android-zips.mjs';
+if (!is_file($androidTool)) {
+    $failures++;
+    fwrite(STDERR, "FAIL: tests/tools/make-android-zips.mjs is missing\n");
+} else {
+    $dirFiles['android'][] = $androidTool;
+}
+$allFiles = array_merge($files, $dirFiles['linux'], $dirFiles['mac'], $dirFiles['ios'], $dirFiles['android']);
 foreach ($allFiles as $file) {
     $label = null;
     foreach ($groups as $l => $g) {
         if (strpos($file, $g['dir']) === 0) {
             $label = $l;
         }
+    }
+    if ($file === $androidTool) {
+        $label = 'android';
     }
     $raw = file_get_contents($file);
     $text = (substr($raw, 0, 2) === "\xFF\xFE") ? mb_convert_encoding(substr($raw, 2), 'UTF-8', 'UTF-16LE') : $raw;
@@ -112,12 +131,12 @@ foreach ($allFiles as $file) {
         }
     }
     if ($label !== null) {
-        $failures += planted_check($file, $text, $planted[$label]);
-        if (($label === 'mac' || $label === 'ios') && strpos(str_replace($plantedIpv6, '', $text), '::') !== false) {
+        $failures += planted_check($file, $text, $planted[$label], $label);
+        if (($label === 'mac' || $label === 'ios' || $label === 'android') && strpos(str_replace($plantedIpv6, '', $text), '::') !== false) {
             $failures++;
             fwrite(STDERR, 'FAIL: ' . basename($file) . " contains '::' outside a planted IPv6 value\n");
         }
-        if ($label === 'ios' && preg_match('/\x{00E3}|\x{00F5}|\x{00E7}|\x{00E2}|\x{00EA}|\x{00F4}|\x{00C3}|\x{00D5}|\x{00C7}/u', $text)) {
+        if (($label === 'ios' || $label === 'android') && preg_match('/\x{00E3}|\x{00F5}|\x{00E7}|\x{00E2}|\x{00EA}|\x{00F4}|\x{00C3}|\x{00D5}|\x{00C7}/u', $text)) {
             // Same accented letters the e2e language grep looks for: no Portuguese in iPhone fixtures.
             $failures++;
             fwrite(STDERR, 'FAIL: ' . basename($file) . " contains an accented letter (Portuguese check)\n");

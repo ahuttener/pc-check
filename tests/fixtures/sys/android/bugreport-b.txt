@@ -1,0 +1,75 @@
+========================================================
+== dumpstate: 2026-10-16 19:40:12
+========================================================
+
+Build: TP1A.220624.014.A515FXXU9HWK1
+Build fingerprint: 'samsung/a51nsxx/a51:13/TP1A.220624.014/A515FXXU9HWK1:user/release-keys'
+Bootloader: A515FXXU9HWK1
+Network: ExampleTel Mobile
+Kernel: Linux version 4.14.199-26919731 #1 SMP PREEMPT Mon Jan 12 14:00:00 KST 2026
+Uptime: up 2 days, 01:26,  load average: 4.80, 4.51, 4.12
+Bugreport format version: 2.0
+Dumpstate info: id=1 pid=9120 dry_run=0 parallel_run=1 args=-S bugreport_mode=BUGREPORT_FULL
+
+------ SYSTEM PROPERTIES (getprop) ------
+[net.hostname]: [android-5f2e9c0d4b7a1e36]
+[persist.sys.boot.reason.history]: [kernel_panic,1791980024
+reboot,longkey,1791743400
+shutdown,battery,1791186310
+reboot,thermal,1790698805
+reboot,userrequested,1788256800]
+[ro.boot.serialno]: [R58N91ABCDE]
+[ro.build.version.release]: [13]
+[ro.build.version.release_or_codename]: [13]
+[ro.build.version.sdk]: [33]
+[ro.build.version.security_patch]: [2026-02-01]
+[ro.product.manufacturer]: [samsung]
+[ro.product.model]: [SM-A515F]
+[ro.serialno]: [R58N91ABCDE]
+[sys.boot.reason]: [kernel_panic]
+------ 0.027s was the duration of 'SYSTEM PROPERTIES' ------
+------ SYSTEM LOG (logcat -v threadtime -v printable -v uid -d *:v) ------
+--------- beginning of main
+10-16 06:00:01.000  1000  1302  1302 I SystemServer: Boot completed
+10-16 11:12:13.414 10231 21005 21110 D SyncAdapter: account jdoe.backup@example.org synced
+10-16 19:39:58.120 10231 22110 22110 E AndroidRuntime: FATAL EXCEPTION: main
+10-16 19:39:58.120 10231 22110 22110 E AndroidRuntime: Process: com.example.snapnotes, PID: 22110
+10-16 19:39:58.121 10231 22110 22110 E AndroidRuntime: java.lang.NullPointerException: Cannot open /storage/emulated/0/Download/Jane Doe CV.pdf for Jane Doe's Galaxy A51
+------ 0.215s was the duration of 'SYSTEM LOG' ------
+------ DUMPSYS (/system/bin/dumpsys) ------
+-------------------------------------------------------------------------------
+DUMP OF SERVICE battery:
+Current Battery Service state:
+  AC powered: true
+  USB powered: false
+  Wireless powered: false
+  Charge counter: 1902000
+  status: 2
+  health: 3
+  present: true
+  level: 41
+  scale: 100
+  voltage: 3987
+  temperature: 452
+  technology: Li-ion
+  cycle count: 812
+--------- 0.003s was the duration of dumpsys battery, ending at: 2026-10-16 19:40:30
+-------------------------------------------------------------------------------
+DUMP OF SERVICE batterystats:
+Statistics since last charge:
+  Estimated battery capacity: 4000 mAh
+  Last learned battery capacity: 2280 mAh
+--------- 0.412s was the duration of dumpsys batterystats, ending at: 2026-10-16 19:40:41
+-------------------------------------------------------------------------------
+DUMP OF SERVICE diskstats:
+Latency: 4ms [512B Data Write]
+Data-Free: 2516582K / 52428800K total = 4% free
+System-Free: 0K / 5242880K total = 0% free
+--------- 0.031s was the duration of dumpsys diskstats, ending at: 2026-10-16 19:40:42
+-------------------------------------------------------------------------------
+DUMP OF SERVICE telephony.registry:
+  mOperatorAlphaLong=ExampleTel Mobile mLine1Number=+44 7700 900123
+  mImei=490154203237518
+--------- 0.006s was the duration of dumpsys telephony.registry, ending at: 2026-10-16 19:40:43
+------ 0.900s was the duration of 'DUMPSYS' ------
+== dumpstate: done (id 1)

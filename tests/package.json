@@ -6,6 +6,7 @@
     "playwright": "^1.61.1"
   },
   "scripts": {
-    "test": "node --check ../assets/app.js && php php/parsers_test.php && php php/ratelimit_test.php && php php/fixtures_pii_test.php && php php/explain_test.php && node api/run.mjs && node e2e/run.mjs"
+    "zips:check": "node tools/make-android-zips.mjs --self-check",
+    "test": "npm run zips:check && node --check ../assets/app.js && php php/parsers_test.php && php php/ratelimit_test.php && php php/fixtures_pii_test.php && php php/explain_test.php && node api/run.mjs && node e2e/run.mjs"
   }
 }

@@ -1,0 +1,21 @@
+========================================================
+== dumpstate: 2026-10-17 07:00:00
+========================================================
+
+Build: AP4A.250105.002
+Build fingerprint: 'example/examplex1/examplex1:15/AP4A.250105.002/20250105:user/release-keys'
+Bugreport format version: 2.0
+
+------ SYSTEM PROPERTIES (getprop) ------
+[ro.build.version.release]: [15]
+[ro.build.version.security_patch]: [2026-07-05]
+[ro.product.manufacturer]: [Example]
+[ro.product.model]: [Phone X1]
+[ro.serialno]: [a1b2c3d4e5f6]
+[sys.boot.reason]: [reboot]
+------ 0.004s was the duration of 'SYSTEM PROPERTIES' ------
+------ LAST KMSG (/sys/fs/pstore/console-ramoops-0) ------
+[ 8812.204551] Kernel panic - not syncing: Fatal exception in interrupt
+[ 8812.204560] CPU: 4 PID: 0 Comm: swapper/4 Tainted: G        W
+------ 0.010s was the duration of 'LAST KMSG' ------
+== dumpstate: done (id 2)

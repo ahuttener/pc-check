@@ -1,0 +1,7 @@
+----- pid 29902 at 2026-10-16 12:30:44.019 -----
+Cmd line: com.example.snapnotes
+Build fingerprint: 'google/shiba/shiba:16/BP3A.250905.014/13873947:user/release-keys'
+"main" prio=5 tid=1 Blocked
+  at com.example.snapnotes.SyncWorker.upload(SyncWorker.java:88)
+  - waiting to lock account jane.doe@example.com for Jane Doe
+----- end 29902 -----
