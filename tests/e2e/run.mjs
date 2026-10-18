@@ -918,6 +918,110 @@ try {
     await context.close();
   }
 
+  // 8b-linux. Linux rules, score, facts, anonymiser additions and the Linux summary
+  console.log('Linux report rules');
+  {
+    const lx = (f) => fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', 'linux', f), 'utf8');
+    const t = {};
+    ['ubuntu-system', 'ubuntu-journal-boot', 'boots-ubuntu', 'upower-laptop', 'df-ubuntu', 'fedora-system', 'fedora-journal-disk',
+      'boots-old-format', 'upower-empty', 'df-fedora-full', 'journal-no-entries', 'journal-hint'].forEach((k) => { t[k] = lx(k + '.txt'); });
+    t.planted = JSON.parse(lx('PLANTED.json'));
+    const fx = (f) => fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', f)).toString('base64');
+    t.win = { rel: fx('reliability.xml'), bat: fx('battery-report.html'), msi: fx('msinfo32-head.txt') };
+    const { page, context } = await newPage('ok');
+    const r = await page.evaluate((t) => {
+      const S = window.PCSys;
+      if (!S || !S.evaluateLinux) return null;
+      const now = new Date('2026-10-18T12:00:00');
+      // The report date comes from the boot list; the journal takes its year from it, as the page does.
+      const run = (sys, journal, boots, upower, df) => {
+        const b = boots ? S.parseBoots(t[boots]) : undefined;
+        const when = b && b.reportDate ? b.reportDate : now;
+        return S.evaluateLinux({
+          system: sys ? S.parseLinuxSystem(t[sys]) : undefined,
+          journal: journal ? S.parseJournal(t[journal], when) : undefined,
+          boots: b, battery: upower ? S.parseUpower(t[upower]) : undefined, disks: df ? S.parseDisks(t[df]) : undefined
+        }, now);
+      };
+      const ids = (e) => e.findings.map((f) => f.id + ':' + f.severity);
+      const text = (e) => JSON.stringify(S.buildSummary(e)) + '\n' + e.facts.map((f) => f.label + ': ' + f.value).join('\n') + '\n' +
+        e.findings.map((f) => f.title + '\n' + f.detail + '\n' + f.fix).join('\n');
+      const ub = run('ubuntu-system', 'ubuntu-journal-boot', 'boots-ubuntu', 'upower-laptop', 'df-ubuntu');
+      const fe = run('fedora-system', 'fedora-journal-disk', 'boots-old-format', 'upower-empty', 'df-fedora-full');
+      const line = (src, msg) => 'Oct 18 09:00:00 host ' + src + ': ' + msg;
+      const jr = (lines) => S.evaluateLinux({ journal: S.parseJournal(lines.join('\n'), now) }, now);
+      const acpi = [];
+      for (let i = 0; i < 20; i++) acpi.push(line('kernel', i % 2 ? 'ACPI Error: AE_NOT_FOUND, During name lookup/catalog (20230628/psobject-220)' : 'ACPI BIOS Error (bug): Could not resolve symbol [\\_SB.PC00], AE_NOT_FOUND'));
+      const planted = [].concat(t.planted.hostnames, t.planted.users, t.planted.emails, t.planted.macs, t.planted.ips, t.planted.serials,
+        t.planted.uuids, t.planted.ssids, t.planted.bootIds);
+      const leaks = (s) => planted.filter((p) => s.toLowerCase().indexOf(String(p).toLowerCase()) !== -1).concat(/\/home\//.test(s) ? ['/home/'] : []);
+      const buf = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
+      const win = S.evaluateWindows({ reliability: S.parseReliability(S.decode(buf(t.win.rel))), battery: S.parseBattery(S.decode(buf(t.win.bat))),
+        msinfo: S.parseMsinfo(S.decode(buf(t.win.msi))) }, new Date('2026-10-18T09:00:00Z'));
+      const hostUbuntu = S.evaluateLinux({ system: S.parseLinuxSystem('Linux ubuntu 6.8.0-45-generic #45-Ubuntu SMP x86_64 GNU/Linux\nPRETTY_NAME="Ubuntu 24.04.1 LTS"\nID=ubuntu\nVERSION_ID="24.04"\n') }, now);
+      return {
+        ub: { score: ub.score, ids: ids(ub), summary: JSON.stringify(S.buildSummary(ub)), facts: ub.facts, platform: ub.platform, leaks: leaks(text(ub)),
+          fixes: ub.findings.map((f) => f.fix) },
+        fe: { score: fe.score, ids: ids(fe), facts: fe.facts, leaks: leaks(text(fe)), summary: JSON.stringify(S.buildSummary(fe)),
+          crashDetail: (fe.findings.filter((f) => f.id === 'crashes')[0] || {}).detail, diskDetail: (fe.findings.filter((f) => f.id === 'disk_errors')[0] || {}).detail,
+          fixes: fe.findings.map((f) => f.fix) },
+        none: (() => { const e = S.evaluateLinux({ journal: S.parseJournal(t['journal-no-entries'], now) }, now); return { ids: ids(e), score: e.score, boot: e.bootErrors }; })(),
+        hint: ids(S.evaluateLinux({ journal: S.parseJournal(t['journal-hint'], now) }, now)),
+        acpi: ids(jr(acpi)),
+        segv: ids(jr([line('kernel', 'totem[4242]: segfault at 0 ip 00007f sp 00007ffd error 4 in libgtk-4.so'),
+          line('systemd-coredump[1]', 'Process 4242 (totem) of user 1000 dumped core.'), line('systemd-coredump[2]', 'Process 4300 (totem) of user 1000 dumped core.')])),
+        anon: {
+          uuid: S.anonymise('dev-disk-by\\x2duuid-3f1c2a9e\\x2d8b7d\\x2d4e6f\\x2d9a0b\\x2d1c2d3e4f5a6b'),
+          ssid: S.anonymise('wlp2s0: CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid="JDoe-Home-5G" auth_failures=1'),
+          ssid2: S.anonymise("Trying to associate with SSID 'JDoe-Home-5G'"),
+          v6: S.anonymise('could not renew lease 2001:db8::1f'),
+          cpp: S.anonymise('terminate called: std::vector::_M_range_check'),
+          hex: S.anonymise('boot f1e2d3c4b5a697887766554433221100 usb 0123456789ABCDEF'),
+          distro: hostUbuntu.facts.filter((f) => f.label === 'System').map((f) => f.value)[0],
+          distroSummary: S.buildSummary(hostUbuntu).distro
+        },
+        winPlatform: win.platform,
+        winSummary: JSON.stringify(S.buildSummary(win))
+      };
+    }, t);
+    check('linux: PCSys.evaluateLinux exists', r !== null);
+    if (r) {
+      check('linux ubuntu: platform linux, score 25', r.ub.platform === 'linux' && r.ub.score === 25, [r.ub.platform, r.ub.score]);
+      check('linux ubuntu: findings in order', r.ub.ids.join(',') === 'driver_errors:warn,repeated_errors:warn,crashes:info,oom:warn,prev_boot_crash:risk,disk_full:warn,battery:warn', r.ub.ids);
+      check('linux ubuntu: summary JSON is exact', r.ub.summary === '{"platform":"linux","distro":"Ubuntu 24.04.1 LTS","kernel":"6.8.0-45-generic","score":25,"findings":[{"id":"driver_errors","severity":"warn"},{"id":"repeated_errors","severity":"warn"},{"id":"crashes","severity":"info"},{"id":"oom","severity":"warn"},{"id":"prev_boot_crash","severity":"risk"},{"id":"disk_full","severity":"warn"},{"id":"battery","severity":"warn"}],"bootErrors":25,"topErrorSources":[{"name":"kernel","count":10},{"name":"gnome-shell","count":5},{"name":"NetworkManager","count":2}],"topCrashApps":[{"name":"firefox","count":2}],"oomKills":1,"previousBootErrors":3,"diskMaxUsedPct":93,"batteryHealthPct":72.3}', r.ub.summary);
+      const fact = (facts, label) => (facts.filter((f) => f.label === label)[0] || {}).value;
+      check('linux ubuntu: facts (system, kernel, disks, fullest, battery, errors, date)',
+        fact(r.ub.facts, 'System') === 'Ubuntu 24.04.1 LTS' && fact(r.ub.facts, 'Kernel') === '6.8.0-45-generic' && fact(r.ub.facts, 'Disks') === '2 (476.9G, 1.8T)' &&
+        fact(r.ub.facts, 'Fullest disk') === '93 % (/)' && fact(r.ub.facts, 'Battery health') === '72.3 % (412 cycles)' &&
+        fact(r.ub.facts, 'Errors this boot') === '25' && fact(r.ub.facts, 'Logs from') === '2026-10-18', r.ub.facts);
+      check('linux fedora: findings in order', r.fe.ids.join(',') === 'disk_errors:risk,readonly_fs:risk,hardware:risk,crashes:info,disk_full:risk,eol_release:warn', r.fe.ids);
+      check('linux fedora: score 0', r.fe.score === 0, r.fe.score);
+      check('linux fedora: nautilus counted once (abrt line not counted twice)', /nautilus \(1 crash\)/.test(r.fe.crashDetail || ''), r.fe.crashDetail);
+      check('linux fedora: disk errors name the disk sda', /\bsda\b/.test(r.fe.diskDetail || ''), r.fe.diskDetail);
+      check('linux fedora: no battery -> "No battery reported", no battery finding', fact(r.fe.facts, 'Battery health') === 'No battery reported' && !r.fe.ids.some((i) => i.startsWith('battery')), r.fe.facts);
+      check('linux: -- No entries -- -> no findings, score 100, bootErrors 0', r.none.ids.length === 0 && r.none.score === 100 && r.none.boot === 0, r.none);
+      check('linux: permission hint -> only journal_partial info', r.hint.join(',') === 'journal_partial:info', r.hint);
+      check('linux: 20 ACPI lines -> no finding', r.acpi.length === 0, r.acpi);
+      check('linux: a segfault plus 2 core dumps of one app -> crashes warn', r.segv.join(',') === 'crashes:warn', r.segv);
+      check('linux anonymiser: no planted identifier in summary, facts, findings or PDF text', r.ub.leaks.length === 0 && r.fe.leaks.length === 0, [r.ub.leaks, r.fe.leaks]);
+      const fixes = r.ub.fixes.concat(r.fe.fixes);
+      check('linux: fix texts carry no command or sudo', fixes.every((f) => f && !/sudo|\bapt\b|\bdnf\b|journalctl|\$ |`|\bsystemctl\b|\brm\b/.test(f)), fixes);
+      check('linux anonymiser: \\x2d UUID -> [id], no hex left', r.anon.uuid.includes('[id]') && !/[0-9a-f]{4,}/i.test(r.anon.uuid), r.anon.uuid);
+      check('linux anonymiser: ssid="..." and SSID \'...\' -> ssid="[wifi]"', r.anon.ssid.includes('ssid="[wifi]"') && !/JDoe/i.test(r.anon.ssid) && r.anon.ssid2.includes('ssid="[wifi]"') && !/JDoe/i.test(r.anon.ssid2), [r.anon.ssid, r.anon.ssid2]);
+      check('linux anonymiser: compressed IPv6 -> [ip]', r.anon.v6 === 'could not renew lease [ip]', r.anon.v6);
+      check('linux anonymiser: std::vector unchanged', r.anon.cpp === 'terminate called: std::vector::_M_range_check', r.anon.cpp);
+      check('linux anonymiser: 16+ hex runs -> [id]', r.anon.hex === 'boot [id] usb [id]', r.anon.hex);
+      check('linux anonymiser: hostname "ubuntu" never replaces Ubuntu in the distro', r.anon.distro === 'Ubuntu 24.04.1 LTS' && r.anon.distroSummary === 'Ubuntu 24.04.1 LTS', r.anon);
+      check('windows evaluation is marked platform windows', r.winPlatform === 'windows', r.winPlatform);
+      check('windows summary unchanged after anonymiser additions', r.winSummary === '{"os":"Microsoft Windows 11 Home","model":"Predator PTN16-51","ramGb":32,"score":50,'
+        + '"findings":[{"id":"shutdowns","severity":"warn"},{"id":"hardware","severity":"warn"},{"id":"crashes","severity":"warn"},'
+        + '{"id":"stability","severity":"warn"},{"id":"updates","severity":"warn"}],'
+        + '"topCrashApps":[{"name":"Java Update Scheduler","count":25},{"name":"AcerRegistrationBackGroundTask","count":25},'
+        + '{"name":"MiracastPowerManager.exe","count":25}],"batteryHealthPct":90.4,"shutdowns30d":1,"hardwareErrors30d":1,"stabilityNow":1.97}', r.winSummary);
+    }
+    await context.close();
+  }
+
   // 8c. System report panel (UI): OS banner, buttons, guide, uploads, results
   console.log('System report panel');
   {

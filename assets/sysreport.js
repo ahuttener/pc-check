@@ -497,8 +497,16 @@
   // ---------------------------------------------------------------------------
   function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
+  // Compressed IPv6 ("2001:db8::1f", "fe80::1"): hex groups around a "::", not glued to a word ("std::vector").
+  var IPV6_COMPRESSED = /(^|[^\w:])((?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?|::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})(?![\w:])/gi;
+
   function anonymise(value, names) {
-    var s = String(value === null || value === undefined ? '' : value);
+    var s = String(value === null || value === undefined ? '' : value)
+      .replace(/\\x2d/gi, '-') // systemd unit names escape "-" as \x2d (dev-disk-by\x2duuid-…)
+      .replace(/\bssid(?:=| )?"[^"\r\n]{0,128}"/gi, 'ssid="[wifi]"')
+      .replace(/\bssid(?:=| )?'[^'\r\n]{0,128}'/gi, 'ssid="[wifi]"')
+      .replace(IPV6_COMPRESSED, function (all, before, ip) { return /\d/.test(ip) ? before + '[ip]' : all; })
+      .replace(/\b(?:[0-9a-f]{16,}|[0-9A-F]{16,})\b/g, '[id]'); // boot IDs, machine IDs, USB serials
     (names || []).filter(function (n) { return n && n.length >= 3; }).forEach(function (n) {
       s = s.replace(new RegExp(escapeRe(n), 'gi'), '[name]');
     });
@@ -541,7 +549,7 @@
     var at = now || new Date();
     var findings = [];
     var facts = [];
-    var out = { score: 100, findings: findings, facts: facts, reportDate: null,
+    var out = { platform: 'windows', score: 100, findings: findings, facts: facts, reportDate: null,
       shutdowns30d: null, hardwareErrors30d: null, topCrashApps: [], stabilityNow: null, batteryHealthPct: null,
       os: null, model: null, ramGb: null, names: (r.names || []).concat(r.msinfo && r.msinfo.names ? r.msinfo.names : []) };
     function add(id, severity, title, detail, fix) { findings.push({ id: id, severity: severity, title: title, detail: detail || '', fix: fix || '' }); }
@@ -640,6 +648,262 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Linux rules: findings, score and facts from the five pasted outputs
+  // ---------------------------------------------------------------------------
+  // Used only when os-release has no SUPPORT_END (end of standard support; Ubuntu ESM and Debian LTS are not counted
+  // beyond what is listed). Unknown distributions or versions: no finding.
+  var LINUX_EOL = {
+    ubuntu: { '20.04': '2025-05-31', '22.04': '2027-04-30', '24.04': '2029-04-30', '24.10': '2025-07-10', '25.04': '2026-01-15', '25.10': '2026-07-09' },
+    debian: { '10': '2024-06-30', '11': '2026-08-31', '12': '2028-06-30' }
+  };
+  var ACPI_NOISE = /^ACPI (BIOS )?Error|ACPI Error/;
+  var DISK_ERROR = /I\/O error, dev (sd|nvme|mmcblk|vd|hd)\w*|Buffer I\/O error on dev|failed command: (READ|WRITE)|critical medium error|Medium Error|nvme\d+: (I\/O \d+ QID \d+ timeout|controller is down)|EXT4-fs error|BTRFS( error|: error)|XFS .*(corruption|Internal error)|Currently unreadable|Offline uncorrectable|SMART .*FAIL/i;
+  var DISK_NAME = /(?:\/dev\/|\bdev(?:ice)?:? |\b(?=nvme\d+:))((?:sd[a-z]+|vd[a-z]+|hd[a-z]+|nvme\d+(?:n\d+)?|mmcblk\d+)(?:p?\d+)?)/gi;
+  var READONLY_FS = /Remounting filesystem read-only|forced readonly|remount.*read-only/i;
+  var HW_RISK = /\[Hardware Error\]|Machine check/i;
+  var HW_WARN = /PCIe Bus Error|AER: .*error/i;
+  var GPU_DRIVER = /^(?:(amdgpu|i915|xe|nouveau|nvidia|radeon)\b|\[drm:\S*? \[(amdgpu|i915|xe|nouveau|nvidia|radeon)\]\]|(NVRM):)/;
+  var GPU_TROUBLE = /ERROR|timeout|timed out|\bhang|reset.*fail/i;
+  var WIFI_DRIVER = /^(iwlwifi|ath\d+k?|rtw\d*|mt7\d+\w*?)(?:_\w+)?(?=[\s:])/; // "ath10k_pci" -> ath10k
+  var WIFI_TROUBLE = /error|fail|timeout|timed out/i;
+  var FIRMWARE_FAIL = /Direct firmware load .* failed|firmware: failed to load/;
+  var CORE_DUMP = /Process \d+ \((.+?)\) of user \d+ dumped core/;
+  var SEGFAULT = /(\S+?)\[\d+\]: segfault at/;
+  var OOM_KILLED = /Out of memory: Killed process \d+ \((.+?)\)/;
+  var OOM_ANY = /oom-kill:/;
+  var PREV_CRASH = /Kernel panic|BUG: (soft|hard) lockup|watchdog: BUG|hard LOCKUP|\bOops\b|general protection fault|kernel BUG at/i;
+  var PREV_CRASH_KINDS = [
+    { re: /Kernel panic/i, what: 'kernel panic' }, { re: /soft lockup/i, what: 'soft lockup (frozen CPU)' },
+    { re: /hard lockup|hard LOCKUP/i, what: 'hard lockup (frozen CPU)' }, { re: /\bOops\b|kernel BUG at|general protection fault/i, what: 'kernel crash (oops)' },
+    { re: /watchdog: BUG/i, what: 'watchdog alert' }
+  ];
+  var LINUX_FIX = {
+    disk_errors: 'Back up your files now, then open the Disks app, select the disk and check SMART Data & Self-Tests. Plan to replace the disk.',
+    readonly_fs: 'Back up your files now. Restart; if the disk turns read-only again, check it in the Disks app (SMART Data & Self-Tests) and plan to replace it.',
+    hardware: 'Install firmware (BIOS/UEFI) updates from Software Updater / GNOME Software or your PC maker. If the errors continue, have the memory and processor tested by a repair shop.',
+    hardwarePcie: 'Install firmware (BIOS/UEFI) updates from Software Updater / GNOME Software or your PC maker. If the errors continue, reseat the card or device in that slot.',
+    driver_errors: 'Install all updates in Software Updater / GNOME Software / Discover and restart. On Ubuntu, Additional Drivers may offer a recommended graphics or Wi-Fi driver.',
+    repeated_errors: 'Install all updates and restart. If one program keeps logging errors, update, reinstall or remove it in GNOME Software or Discover.',
+    crashes: 'Update these apps in Software Updater / GNOME Software / Discover. If one keeps crashing, reinstall it or try its Flatpak or Snap version.',
+    oom: 'Close memory-hungry apps and browser tabs; System Monitor shows what uses the most memory. If it keeps happening, the PC may need more RAM.',
+    prev_boot_crash: 'Install all updates, including firmware updates, in Software Updater / GNOME Software and restart. On Ubuntu, Additional Drivers may offer a more stable graphics driver.',
+    disk_full: 'Open Disk Usage Analyzer to find large folders; empty the Trash and remove apps you don’t use in GNOME Software or Discover.',
+    disk_inodes: 'Open Disk Usage Analyzer to find folders with very many small files (caches, old downloads); empty the Trash and remove what you don’t need.',
+    batteryRisk: 'Plan a battery replacement with the laptop maker or a repair shop.',
+    batteryWarn: 'Normal wear. Avoid keeping it at 100 % and hot for long periods; some laptops can limit the charge in Settings > Power.',
+    eol_release: 'Upgrade to a supported release with Software Updater / GNOME Software, after a backup.',
+    journal_partial: 'Copy the output from an administrator’s account, which can read the system’s messages, then analyse again.'
+  };
+
+  function usable(x) { return x && !x.error && !x.unsupportedLanguage ? x : null; }
+
+  function byCountThenName(a, b) {
+    if (b.count !== a.count) return b.count - a.count;
+    return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+  }
+
+  function countList(map) {
+    return Object.keys(map).map(function (k) { return { name: k, count: map[k] }; }).sort(byCountThenName);
+  }
+
+  // "476.9G" -> bytes, for ordering the disk sizes in the facts
+  function sizeBytes(t) {
+    var m = /^([\d.,]+)([BKMGTPE]?)/i.exec(String(t || ''));
+    if (!m) return 0;
+    return parseFloat(m[1].replace(',', '.')) * Math.pow(1024, 'BKMGTPE'.indexOf((m[2] || 'B').toUpperCase()));
+  }
+
+  function diskOf(name) {
+    var n = name.toLowerCase();
+    return n.replace(/^((?:sd|vd|hd)[a-z]+)\d+$/, '$1').replace(/^(nvme\d+n\d+|mmcblk\d+)p\d+$/, '$1');
+  }
+
+  function evaluateLinux(reports, now) {
+    var r = reports || {};
+    var at = now || new Date();
+    var findings = [];
+    var facts = [];
+    var sys = usable(r.system);
+    var journal = usable(r.journal);
+    var boots = usable(r.boots);
+    var bat = usable(r.battery);
+    var disks = usable(r.disks);
+    var prev = boots && boots.previous ? boots.previous : null;
+
+    // Every name any paste revealed (hostnames, users), minus out-of-the-box hostnames that are also distro names.
+    var names = nameSet();
+    [r.names, sys && sys.names, journal && journal.names, prev && prev.names, disks && disks.names].forEach(function (list) {
+      (list || []).forEach(function (n) { if (n && !DEFAULT_HOST_SET[String(n).toLowerCase()]) addName(names, n); });
+    });
+
+    var out = { platform: 'linux', score: 100, findings: findings, facts: facts,
+      reportDate: boots && boots.reportDate ? boots.reportDate : at,
+      distro: sys ? sys.distro : null, kernel: sys ? sys.kernel : null,
+      bootErrors: journal ? journal.total : null, topErrorSources: [], topCrashApps: [], oomKills: null,
+      previousBootErrors: prev ? prev.total : null, diskMaxUsedPct: disks ? disks.worstPct : null,
+      batteryHealthPct: bat && bat.present && typeof bat.healthPct === 'number' ? bat.healthPct : null, names: names.list };
+    function add(id, severity, title, detail, fix) { findings.push({ id: id, severity: severity, title: title, detail: detail || '', fix: fix || '' }); }
+
+    // This boot's lines feed every rule except prev_boot_crash. ACPI firmware noise counts in the totals only.
+    var lines = journal ? journal.lines : [];
+    var bySource = Object.create(null);
+    var diskDevices = nameSet();
+    var diskHits = 0;
+    var readonly = 0;
+    var hwRisk = 0;
+    var hwWarn = 0;
+    var drivers = nameSet();
+    var crashes = Object.create(null);
+    var oomKilled = 0;
+    var oomAny = 0;
+    var oomApps = nameSet();
+    lines.forEach(function (l) {
+      var src = l.source || '';
+      if (src) bySource[src] = (bySource[src] || 0) + 1;
+      var msg = l.message || '';
+      if (ACPI_NOISE.test(msg)) return;
+      if (DISK_ERROR.test(msg)) {
+        diskHits++;
+        var d;
+        DISK_NAME.lastIndex = 0;
+        while ((d = DISK_NAME.exec(msg)) !== null) addName(diskDevices, diskOf(d[1]));
+      }
+      if (READONLY_FS.test(msg)) readonly++;
+      if (HW_RISK.test(msg)) hwRisk++;
+      else if (HW_WARN.test(msg)) hwWarn++;
+      if (src === 'kernel') {
+        var g = GPU_DRIVER.exec(msg);
+        if (g && GPU_TROUBLE.test(msg)) addName(drivers, g[1] || g[2] || 'nvidia');
+        var w = WIFI_DRIVER.exec(msg);
+        if (w && WIFI_TROUBLE.test(msg)) addName(drivers, w[1]);
+        if (FIRMWARE_FAIL.test(msg)) {
+          var owner = /^([a-z][a-z0-9_]*) [0-9a-f]{4}:/.exec(msg);
+          addName(drivers, 'missing firmware' + (owner ? ' (' + owner[1] + ')' : ''));
+        }
+      }
+      var c = CORE_DUMP.exec(msg) || SEGFAULT.exec(msg);
+      if (c) crashes[c[1]] = (crashes[c[1]] || 0) + 1;
+      var o = OOM_KILLED.exec(msg);
+      if (o) { oomKilled++; addName(oomApps, o[1]); }
+      else if (OOM_ANY.test(msg)) oomAny++;
+    });
+    var sources = countList(bySource);
+    out.topErrorSources = sources.slice(0, 3);
+    var crashList = countList(crashes);
+    out.topCrashApps = crashList.slice(0, 3);
+    if (journal) out.oomKills = oomKilled || oomAny;
+
+    if (diskHits) {
+      add('disk_errors', 'risk', 'A disk reported read or write errors',
+        (diskDevices.list.length ? 'Errors on ' + diskDevices.list.slice(0, 5).join(', ') + '. ' : '') + 'Failing reads or writes usually mean the disk is wearing out or its cable is loose.',
+        LINUX_FIX.disk_errors);
+    }
+    if (readonly) {
+      add('readonly_fs', 'risk', 'A disk was switched to read-only after errors',
+        'Linux stops writing to a filesystem when it finds damage, to protect your files. New files cannot be saved there until it is fixed.',
+        LINUX_FIX.readonly_fs);
+    }
+    if (hwRisk) {
+      add('hardware', 'risk', 'The processor or memory reported a hardware error',
+        'Machine-check errors come from the processor, memory or motherboard; firmware updates fix some of them.', LINUX_FIX.hardware);
+    } else if (hwWarn) {
+      add('hardware', 'warn', 'A PCIe device reported errors',
+        'PCIe errors come from a card or built-in device (graphics, Wi-Fi, disk). Many are corrected automatically, but repeated ones point to firmware or hardware trouble.',
+        LINUX_FIX.hardwarePcie);
+    }
+    if (drivers.list.length) {
+      add('driver_errors', 'warn', 'Graphics or Wi-Fi drivers logged errors',
+        'Drivers with errors this boot: ' + drivers.list.slice(0, 5).join(', ') + '. These can cause freezes, screen glitches or dropped Wi-Fi.',
+        LINUX_FIX.driver_errors);
+    }
+    var repeated = sources.filter(function (s) { return s.name !== 'kernel' && s.count >= 5; });
+    if (repeated.length) {
+      add('repeated_errors', 'warn', 'Some programs keep logging errors',
+        'Most errors this boot: ' + repeated.slice(0, 3).map(function (s) { return s.name + ' (' + plural(s.count, 'error', 'errors') + ')'; }).join('; ') + '.',
+        LINUX_FIX.repeated_errors);
+    }
+    var crashTotal = crashList.reduce(function (n, a) { return n + a.count; }, 0);
+    if (crashTotal) {
+      add('crashes', crashTotal >= 3 ? 'warn' : 'info', crashTotal >= 3 ? 'Some programs keep crashing' : (crashTotal === 1 ? 'A program crashed this boot' : 'Programs crashed this boot'),
+        'Crashes this boot: ' + crashList.slice(0, 3).map(function (a) { return a.name + ' (' + plural(a.count, 'crash', 'crashes') + ')'; }).join('; ') + '.',
+        LINUX_FIX.crashes);
+    }
+    if (out.oomKills) {
+      add('oom', 'warn', 'The system ran out of memory',
+        'Linux closed ' + (oomApps.list.length ? oomApps.list.slice(0, 3).join(', ') : 'a program') + ' to free memory. Unsaved work in it was lost.',
+        LINUX_FIX.oom);
+    }
+    var prevLines = prev ? prev.lines : [];
+    var kinds = nameSet();
+    prevLines.forEach(function (l) {
+      var msg = l.message || '';
+      if (!PREV_CRASH.test(msg)) return;
+      var k = PREV_CRASH_KINDS.filter(function (x) { return x.re.test(msg); })[0];
+      addName(kinds, k ? k.what : 'kernel crash');
+    });
+    if (kinds.list.length) {
+      add('prev_boot_crash', 'risk', 'The previous session ended in a system crash or freeze',
+        'The previous boot logged: ' + kinds.list.join(', ') + '. Drivers, overheating or failing hardware are the usual causes.',
+        LINUX_FIX.prev_boot_crash);
+    }
+    if (disks && disks.worstPct !== null && disks.worstPct >= 90) {
+      var full = disks.filesystems.filter(function (f) { return f.usedPct >= 90; }).sort(function (a, b) { return b.usedPct - a.usedPct; });
+      var where = full.slice(0, 5).map(function (f) { return (f.mounts || [f.mount]).join(' and ') + ' (' + f.usedPct + ' %)'; }).join('; ');
+      var sev = disks.worstPct >= 95 ? 'risk' : 'warn';
+      if (disks.inodes) {
+        add('disk_full', sev, 'A disk is running out of file entries (inodes)',
+          'File entries used: ' + where + '. When none are left, no new file can be saved, even with free space.', LINUX_FIX.disk_inodes);
+      } else {
+        add('disk_full', sev, disks.worstPct >= 95 ? 'A disk is almost full' : 'A disk is getting full',
+          'Space used: ' + where + '. A full disk can stop updates and apps from saving.', LINUX_FIX.disk_full);
+      }
+    }
+    if (out.batteryHealthPct !== null && out.batteryHealthPct < 80) {
+      var h = out.batteryHealthPct;
+      add('battery', h < 60 ? 'risk' : 'warn', 'Battery holds ' + h + ' % of its original charge',
+        (bat.cycles !== null ? plural(bat.cycles, 'charge cycle', 'charge cycles') + ' so far. ' : '') + 'Batteries lose capacity with age and heat.',
+        h < 60 ? LINUX_FIX.batteryRisk : LINUX_FIX.batteryWarn);
+    }
+    if (sys) {
+      var end = sys.supportEnd ? localDate(sys.supportEnd) : null;
+      if (!end && sys.id && sys.versionId && LINUX_EOL[sys.id.toLowerCase()]) end = LINUX_EOL[sys.id.toLowerCase()][sys.versionId] || null;
+      if (end && end < localDate(out.reportDate)) {
+        add('eol_release', 'warn', (sys.distro || 'This Linux release') + ' no longer gets security updates',
+          'Support ended on ' + end + '.', LINUX_FIX.eol_release);
+      }
+    }
+    if ((journal && journal.partial) || (prev && prev.partial)) {
+      add('journal_partial', 'info', 'The error log was only partly readable',
+        'This account can only see its own messages, not the system’s, so some problems may be missing.', LINUX_FIX.journal_partial);
+    }
+
+    var risks = findings.filter(function (f) { return f.severity === 'risk'; }).length;
+    var warns = findings.filter(function (f) { return f.severity === 'warn'; }).length;
+    out.score = Math.max(0, 100 - 25 * risks - 10 * warns);
+
+    if (out.distro) facts.push({ label: 'System', value: out.distro });
+    if (out.kernel) facts.push({ label: 'Kernel', value: out.kernel });
+    if (disks && disks.disks.length) {
+      var sizes = disks.disks.slice().sort(function (a, b) { return sizeBytes(a.sizeText) - sizeBytes(b.sizeText); })
+        .map(function (d) { return d.sizeText; });
+      facts.push({ label: 'Disks', value: disks.disks.length + ' (' + sizes.join(', ') + ')' });
+    }
+    if (disks && disks.worstPct !== null) {
+      var worst = disks.filesystems.filter(function (f) { return f.usedPct === disks.worstPct; })[0];
+      facts.push({ label: 'Fullest disk', value: disks.worstPct + ' %' + (disks.inodes ? ' of file entries' : '') + (worst ? ' (' + worst.mount + ')' : '') });
+    }
+    if (bat && !bat.present) facts.push({ label: 'Battery health', value: 'No battery reported' });
+    else if (out.batteryHealthPct !== null) {
+      facts.push({ label: 'Battery health', value: out.batteryHealthPct + ' %' + (bat.cycles !== null ? ' (' + plural(bat.cycles, 'cycle', 'cycles') + ')' : '') });
+    }
+    if (journal) facts.push({ label: 'Errors this boot', value: String(journal.total) });
+    if (journal || boots) facts.push({ label: 'Logs from', value: localDate(out.reportDate) });
+    facts.forEach(function (f) { f.value = anonymise(f.value, out.names); });
+    findings.forEach(function (f) { f.title = anonymise(f.title, out.names); f.detail = anonymise(f.detail, out.names); });
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
   // The only thing that may ever be sent for an AI explanation: a small, whitelisted summary
   // ---------------------------------------------------------------------------
   // Control (Cc) and format (Cf) characters, which the server rejects: removed rather than sent.
@@ -665,7 +929,35 @@
     return out;
   }
 
+  var SUMMARY_KERNEL = /^[0-9][0-9A-Za-z._+~-]{0,79}$/; // what the server accepts as a kernel release
+
+  function summaryNumber(v, max) { return typeof v === 'number' && isFinite(v) && v >= 0 && v <= max ? v : null; }
+
+  function buildLinuxSummary(e) {
+    var names = e.names || [];
+    var str = function (v) { return v === null || v === undefined ? null : cap(anonymise(v, names)); };
+    var kernel = str(e.kernel);
+    var list = function (items) {
+      return (items || []).map(function (a) { return { name: str(a.name), count: a.count }; }).sort(byCountThenName).slice(0, 3);
+    };
+    return {
+      platform: 'linux',
+      distro: str(e.distro),
+      kernel: kernel !== null && SUMMARY_KERNEL.test(kernel) ? kernel : null,
+      score: e.score,
+      findings: e.findings.slice(0, 20).map(function (f) { return { id: f.id, severity: f.severity }; }),
+      bootErrors: summaryNumber(e.bootErrors, 100000),
+      topErrorSources: list(e.topErrorSources),
+      topCrashApps: list(e.topCrashApps),
+      oomKills: summaryNumber(e.oomKills, 100000),
+      previousBootErrors: summaryNumber(e.previousBootErrors, 100000),
+      diskMaxUsedPct: summaryNumber(e.diskMaxUsedPct, 100),
+      batteryHealthPct: summaryNumber(e.batteryHealthPct, 200)
+    };
+  }
+
   function buildSummary(e) {
+    if (e && e.platform === 'linux') return buildLinuxSummary(e);
     var names = e.names || [];
     return {
       os: cap(e.os === null ? null : anonymise(e.os, names)),
@@ -683,7 +975,7 @@
 
   window.PCSys = {
     decode: decode, parseReliability: parseReliability, parseBattery: parseBattery, parseMsinfo: parseMsinfo,
-    evaluateWindows: evaluateWindows, anonymise: anonymise, buildSummary: buildSummary,
+    evaluateWindows: evaluateWindows, evaluateLinux: evaluateLinux, anonymise: anonymise, buildSummary: buildSummary,
     LINUX_PASTE_CAP: LINUX_PASTE_CAP, LINUX_MAX_LINES: LINUX_MAX_LINES,
     parseLinuxSystem: parseLinuxSystem, parseJournal: parseJournal, parseBoots: parseBoots,
     parseUpower: parseUpower, parseDisks: parseDisks
