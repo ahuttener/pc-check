@@ -227,6 +227,9 @@
         if (phone && computer) return 'You’re on ' + label + '. The ' + computer + ' steps below are done on that computer; you can read them here.';
         if (family === 'ios' && selected === 'android') return 'You’re on ' + (label === 'iPad' ? 'an iPad' : 'an iPhone') + '. Android reports are coming soon; pick iPhone above to check this ' + label + '.';
         if (family === 'android' && selected === 'ios') return 'You’re on Android. The iPhone steps below are done on the iPhone itself; you can read them here.';
+        // A computer visitor who picks a phone gets a neutral line, not their own computer's steps.
+        if (!phone && selected === 'ios') return 'The iPhone steps below are done on the iPhone itself; you can read them here.';
+        if (!phone && selected === 'android') return 'Android reports are coming soon.';
         switch (family) {
           case 'windows': return 'You’re on ' + label + '. Follow the three steps below to check this PC.';
           case 'mac': return 'You’re on ' + label + '. Save the reports with apps already on your Mac and choose them below. No Terminal needed.';
@@ -2213,7 +2216,9 @@
     var banner = $('#sys-banner');
     if (!banner || !state.sys.os) return;
     banner.textContent = '';
-    banner.appendChild(svgUse(SYS_GLYPH[state.sys.os.family] || 'os-windows', 'sys-glyph'));
+    var family = state.sys.os.family;
+    var phonePicked = (state.sys.selected === 'ios' || state.sys.selected === 'android') && family !== 'ios' && family !== 'android';
+    banner.appendChild(svgUse(phonePicked ? 'os-phone' : (SYS_GLYPH[family] || 'os-windows'), 'sys-glyph'));
     banner.appendChild(el('span', null, t('sysBanner', state.sys.os.family, state.sys.os.label, state.sys.selected)));
   }
 
@@ -2334,8 +2339,6 @@
       root.appendChild(tiles);
     }
 
-    // Explain with AI is not offered for the iPhone yet: nothing sends an iPhone summary.
-    if (e.platform === 'ios') return;
     var ai = el('div', 'sys-ai');
     ai.id = 'sys-ai';
     root.appendChild(ai);
@@ -2643,6 +2646,7 @@
       sb.appendChild(sh);
       var sysDate = isoDate(sysEval.reportDate);
       if (sysDate) sb.appendChild(el('p', null, t('sysReportFrom', sysDate, sysEval.platform, state.sys.mac.fromSpx)));
+      else if (sysEval.platform === 'ios') sb.appendChild(el('p', null, t('sysLocalOnly')));
       sb.appendChild(el('h3', null, t('sysFindingsTitle')));
       var sysFindings = sysEval.findings.slice().sort(function (a, b) {
         return SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity);

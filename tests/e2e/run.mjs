@@ -2515,7 +2515,7 @@ try {
         (await page.locator('#sys-results h4').allTextContents()).map((s) => s.trim()).includes('This iPhone'), res.slice(-400));
       check('ios ui: date line says Newest log from, read on this device', /Newest log from \d{4}-\d\d-\d\d · read on this device, nothing uploaded/.test(res), res.slice(0, 300));
       check('ios ui: status says nothing was sent', (await status(page)) === 'Analyzed on this device. Nothing was sent.', await status(page));
-      check('ios ui: Explain with AI hidden for iPhone (not yet available)', (await page.locator('#sys-ai-open').count()) === 0 && !(await visible(page, '#sys-ai')));
+      check('ios ui: Explain with AI offered for the iPhone results', await visible(page, '#sys-ai-open'));
       check('ios ui: PDF button shown for the iPhone results', await visible(page, '#pdf'));
       const shownA = await shownText(page);
       check('ios ui: file names are never shown (Set A)', leaks(shownA).length === 0, leaks(shownA));
@@ -2633,6 +2633,36 @@ try {
         check('ios ui: ' + label + ' -> no page errors', seen.errors.length === 0, seen.errors);
         await context.close();
       }
+    }
+    {
+      // A computer visitor who picks iPhone or Android gets a neutral banner, never their own computer's
+      const WIN_UA6 = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + fullVersion + ' Safari/537.36';
+      const IOS_BANNER = /^The iPhone steps below are done on the iPhone itself; you can read them here\.$/;
+      const ANDROID_BANNER = /^Android reports are coming soon\.$/;
+      for (const [label, opts, own] of [['Windows', { userAgent: WIN_UA6 }, /^You.re on Windows[^.]*\. Follow the three steps below to check this PC\.$/],
+        ['Mac', { userAgent: MAC_UA, initScript: TOUCH(0) }, /^You.re on macOS\. Save the reports with apps already on your Mac/]]) {
+        const { page, context, seen } = await newPage('ok', opts);
+        await waitBanner(page);
+        await page.click('#sys-os-ios', { timeout: 2000 }).catch(() => {});
+        const bIos = (await bannerOf(page)).trim();
+        check('ios ui: ' + label + ' visitor picks iPhone -> neutral iPhone banner', IOS_BANNER.test(bIos), bIos);
+        await page.click('#sys-os-android', { timeout: 2000 }).catch(() => {});
+        const bAnd = (await bannerOf(page)).trim();
+        check('ios ui: ' + label + ' visitor picks Android -> coming soon banner', ANDROID_BANNER.test(bAnd), bAnd);
+        await page.click('#sys-os-' + (label === 'Mac' ? 'mac' : 'windows'), { timeout: 2000 }).catch(() => {});
+        const bOwn = (await bannerOf(page)).trim();
+        check('ios ui: ' + label + ' visitor back on their own system -> their own banner', own.test(bOwn), bOwn);
+        check('ios ui: ' + label + ' visitor banner switch -> no page errors', seen.errors.length === 0, seen.errors);
+        await context.close();
+      }
+    }
+    {
+      // On an iPad nothing in the iPhone steps calls the device "this iPhone"
+      const { page, context } = await newPage('ok', { userAgent: IPAD_UA });
+      await waitBanner(page);
+      const steps = await page.locator('#sys-ios-steps').innerText().catch(() => '');
+      check('ios ui: iPad -> no "this iPhone" in the steps or the privacy line', !!steps && !/this iPhone/.test(steps), (steps.match(/.{0,40}this iPhone.{0,20}/) || [])[0]);
+      await context.close();
     }
     for (const [label, opts, engineName, shot] of [['iPhone SE (375 px)', devices['iPhone SE (3rd gen)'], 'webkit', 'system-ios-375.png'], ['iPhone SE (320 px)', devices['iPhone SE'], 'webkit', null], ['iPhone 14', devices['iPhone 14'], 'webkit', 'system-ios-iphone.png'],
       ['375 px Chromium', { userAgent: IPHONE_UA, viewport: { width: 375, height: 812 } }, 'chromium', null]]) {
@@ -3017,13 +3047,136 @@ try {
       }
     }
 
+    // iPhone: the same flow with the iPhone summary (Set A + battery 84), in WebKit on an iPhone 14 and an iPhone SE
+    const IFX6 = (f) => path.join(here, '..', 'fixtures', 'sys', 'ios', f);
+    const IOS_SET_A = ['panic-full-2026-10-14-224107.000.ips', 'panic-full-2026-10-02-081533.000.ips', 'panic-base-2026-10-02-081533.000.ips',
+      'MobileSafari-2026-10-15-091244.ips', 'MobileSafari-2026-10-16-200103.ips', 'SnapNotes-2026-10-16-153012.ips',
+      'JetsamEvent-2026-10-16-071002.ips', 'JetsamEvent-2026-10-17-130512.ips', 'Analytics-2026-10-17-020304.ips',
+      'SnapNotes.cpu_resource-2026-10-11-101010.ips'];
+    const plantedI = JSON.parse(fs.readFileSync(IFX6('PLANTED.json'), 'utf8'));
+    const PLANTED_I = [].concat(...Object.values(plantedI)).map((p) => String(p).toLowerCase());
+    // File names, raw log keys and text from the logs must never appear; /var/mobile/ only as /var/mobile/[path].
+    const IOS_FILE_BITS = ['panic-full-', 'panic-base-', 'jetsamevent-', 'mobilesafari-2026', 'snapnotes-2026', 'analytics-2026', '.ips',
+      'processbypid', 'crashreporterkey', 'deviceidentifierforvendor', 'jane doe cv', 'exampletel'];
+    const leaksI = (s) => { const l = String(s).toLowerCase(); return PLANTED_I.concat(IOS_FILE_BITS).filter((p) => l.includes(p))
+      .concat(/\/var\/mobile\/(?!\[path\])/.test(String(s)) ? ['/var/mobile/'] : []); };
+    const IPHONE_375 = { userAgent: devices['iPhone 14'].userAgent, viewport: { width: 375, height: 812 } };
+    async function iosAnalyzed(engine = browser, opts = IPHONE_375) {
+      const made = await newPage('ok', opts, engine);
+      const { page } = made;
+      await page.waitForFunction(() => (document.getElementById('sys-banner') || {}).textContent, null, { timeout: 5000 }).catch(() => {});
+      await page.setInputFiles('#sys-file-ios-logs', IOS_SET_A.map(IFX6), { timeout: 10000 });
+      await page.waitForFunction(() => /^(ok|error)$/.test((document.getElementById('sys-step-ios-logs') || { getAttribute: () => '' }).getAttribute('data-state') || ''), null, { timeout: 15000 }).catch(() => {});
+      await page.fill('#sys-ios-battery', '84', { timeout: 2000 });
+      await page.click('#sys-ios-analyze', { timeout: 3000 });
+      await page.waitForSelector('#sys-results:not([hidden])', { timeout: 10000 });
+      return made;
+    }
+    {
+      const wk = await webkit.launch();
+      try {
+        let made;
+        try { made = await iosAnalyzed(wk, devices['iPhone 14']); } catch (e) { made = null; }
+        check('ai ios: setup (Set A + 84 analyzed in WebKit, iPhone 14)', !!made);
+        if (made) {
+          const { page, context, seen } = made;
+          const mock = { mode: 'ok', delay: 200 };
+          await mockExplain(page, mock);
+          check('ai ios: "Explain with AI" button appears after Analyze', await page.locator('#sys-ai-open').isVisible().catch(() => false));
+          check('ai ios: disclosure not shown before the click', !(await page.locator('#sys-ai-disclosure').isVisible().catch(() => false)));
+          const before = await page.locator('#ledger-list li').count();
+          await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
+          const disc = await page.locator('#sys-ai-disclosure').innerText({ timeout: 2000 }).catch(() => '');
+          check('ai ios: exact disclosure shown before sending', disc.trim() === DISCLOSURE, disc);
+          const shownText = await page.locator('#sys-ai-summary').innerText({ timeout: 2000 }).catch(() => '');
+          let shown = null;
+          try { shown = JSON.parse(shownText); } catch (e) { /* stays null */ }
+          check('ai ios: the summary shown is the iPhone shape with the battery number', shown !== null && shown.platform === 'ios' && shown.score === 65 &&
+            shown.ios === 'iPhone OS 26.0.1 (23A355)' && shown.model === 'iPhone15,4' && shown.batteryHealthPct === 84, shownText.slice(0, 300));
+          check('ai ios: nothing sent and nothing logged before Send', mock.bodies.length === 0 && (await page.locator('#ledger-list li').count()) === before);
+          await page.click('#sys-ai-send', { timeout: 2000 }).catch(() => {});
+          await page.waitForSelector('#sys-ai-text p', { timeout: 5000 }).catch(() => {});
+          check('ai ios: exactly one request', mock.bodies.length === 1, mock.bodies.length);
+          let body = null;
+          try { body = JSON.parse(mock.bodies[0]); } catch (e) { /* stays null */ }
+          check('ai ios: request body is exactly {summary} with platform "ios"', body !== null && JSON.stringify(Object.keys(body)) === '["summary"]' && body.summary.platform === 'ios', mock.bodies[0]);
+          check('ai ios: request body equals the summary shown', body !== null && JSON.stringify(body.summary) === JSON.stringify(shown), [mock.bodies[0], shownText]);
+          check('ai ios: request carries "batteryHealthPct":84', /"batteryHealthPct":84[,}]/.test(String(mock.bodies[0])), mock.bodies[0]);
+          check('ai ios: no planted identifier and no file name in the request or the summary shown', !!mock.bodies[0] && leaksI(mock.bodies[0]).length === 0 && leaksI(shownText).length === 0,
+            [leaksI(String(mock.bodies[0])), leaksI(shownText)]);
+          const ledger = await page.locator('#ledger-list').innerText();
+          check('ai ios: outbound log gains one entry', (await page.locator('#ledger-list li').count()) === before + 1 && /anonymised summary/.test(ledger), ledger.slice(-300));
+          const paras = await page.locator('#sys-ai-text p').allInnerTexts();
+          check('ai ios: explanation renders as text paragraphs', paras.length === 2 && paras[0].includes('Your PC is mostly fine') && paras[1].includes('Second paragraph'), paras);
+          check('ai ios: model output never parsed as HTML', paras.join(' ').includes('<b>bold</b>') && (await page.locator('#sys-ai-text b, #sys-ai-text img').count()) === 0 && !(await page.evaluate(() => window.__xss)));
+
+          check('pdf ios: PDF button available', await page.locator('#pdf').isVisible().catch(() => false));
+          await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+          const report = await page.locator('#report').innerText();
+          check('pdf ios: heading says "System report (iPhone)"', report.includes('System report (iPhone)') && !/System report \((Windows|Linux|Mac)\)/.test(report), report.slice(0, 300));
+          check('pdf ios: score 65 / 100 and iPhone OS 26.0.1', /\b65 \/ 100/.test(report) && report.includes('iPhone OS 26.0.1'), report.slice(0, 600));
+          check('pdf ios: "Newest log from" date line', /Newest log from 2026-10-17 · read on this device, nothing uploaded/.test(report), report.slice(0, 400));
+          check('pdf ios: facts under "This iPhone", never "This PC"', report.includes('This iPhone') && !report.includes('This PC') && /84 %/.test(report), report.slice(-900));
+          check('pdf ios: findings and the healthy-battery good news', /restarted by itself/.test(report) && /MobileSafari/.test(report) &&
+            report.includes('Good news: Battery is healthy \u2014 it holds 84 % of its original capacity.'), report.slice(0, 1200));
+          check('pdf ios: includes the AI explanation as text', report.includes('Second paragraph: update the drivers.') && (await page.locator('#report b, #report img:not([src*="emblem.png"])').count()) === 0);
+          check('pdf ios: no planted identifier, no file name, no raw log key', leaksI(report).length === 0, leaksI(report));
+          check('pdf ios: footer says a summary was sent', !/nothing was sent/i.test(report), report.slice(-300));
+
+          await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
+          check('pdf ios: iPhone report not offered while Windows is selected', !(await page.locator('#pdf').isVisible().catch(() => true)));
+          await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+          check('pdf ios: no iPhone system section while Windows is selected', !(await page.locator('#report').innerText()).includes('System report'));
+          await page.click('#sys-os-ios', { timeout: 2000 }).catch(() => {});
+          check('pdf ios: iPhone report offered again with iPhone selected', await page.locator('#pdf').isVisible().catch(() => false));
+          check('ai ios: no page errors', seen.errors.length === 0, seen.errors);
+          check('ai ios: no outside requests', seen.external.length === 0, seen.external);
+          await context.close();
+        }
+
+        // iPhone SE (375 px): the friendly error messages, then an explanation that fits without horizontal scroll
+        let small;
+        try { small = await iosAnalyzed(wk, devices['iPhone SE (3rd gen)']); } catch (e) { small = null; }
+        if (small) {
+          const { page, context, seen } = small;
+          const mock = { mode: 429 };
+          await mockExplain(page, mock);
+          await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
+          const results = {};
+          for (const mode of [429, 503, 502]) {
+            mock.mode = mode;
+            await page.click('#sys-ai-send', { timeout: 3000 }).catch(() => {});
+            await waitErr(page);
+            results[mode] = await errText(page);
+            await page.waitForFunction(() => { const b = document.getElementById('sys-ai-send'); return b && !b.disabled; }, null, { timeout: 3000 }).catch(() => {});
+          }
+          check('ai ios: 429 says "limit"', /limit/i.test(results[429]), results[429]);
+          check('ai ios: 503 says not available', /not available/i.test(results[503]) && results[503] !== results[429], results[503]);
+          check('ai ios: 502 has its own friendly message', !!results[502] && results[502] !== results[503] && results[502] !== results[429], results[502]);
+          check('ai ios: every attempt sent with platform ios, no explanation shown', mock.bodies.length === 3 && mock.bodies.every((b) => JSON.parse(b).summary.platform === 'ios') && (await page.locator('#sys-ai-text p').count()) === 0, mock.bodies.length);
+          mock.mode = 'ok';
+          await page.click('#sys-ai-send', { timeout: 3000 }).catch(() => {});
+          await page.waitForSelector('#sys-ai-text p', { timeout: 5000 }).catch(() => {});
+          const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+          check('ai ios: explanation shown at 375 px with no horizontal scroll', (await page.locator('#sys-ai-text p').count()) === 2 && overflow <= 0, overflow);
+          check('ai ios: errors and explanation at 375 px cause no page error', seen.errors.length === 0, seen.errors);
+          await context.close();
+        } else {
+          check('ai ios: iPhone SE setup', false);
+        }
+      } finally {
+        await wk.close();
+      }
+    }
+
     // Not mocked: the real local endpoint (php -S, no key) must get past Content-Type, Origin and the summary
     // whitelist and stop at "not configured" (503). The paid upstream is never reached.
     for (const [label, engineName] of [['Chromium', 'chromium'], ['WebKit', 'webkit'], ['Chromium, Linux', 'chromium'], ['WebKit, Linux', 'webkit'],
-      ['Chromium, Mac', 'chromium'], ['WebKit, Mac', 'webkit']]) {
+      ['Chromium, Mac', 'chromium'], ['WebKit, Mac', 'webkit'], ['Chromium, iPhone', 'chromium'], ['WebKit, iPhone', 'webkit']]) {
       const eng = engineName === 'webkit' ? await webkit.launch() : browser;
       try {
-        const { page, context, seen } = /Linux/.test(label) ? await linuxAnalyzed(eng) : (/Mac/.test(label) ? await macAnalyzed(eng) : await analyzed({}, eng));
+        const { page, context, seen } = /Linux/.test(label) ? await linuxAnalyzed(eng) : (/Mac/.test(label) ? await macAnalyzed(eng) :
+          (/iPhone/.test(label) ? await iosAnalyzed(eng) : await analyzed({}, eng)));
         await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
         const res = page.waitForResponse(/\/api\/explain\.php/, { timeout: 8000 }).catch(() => null);
         await page.click('#sys-ai-send', { timeout: 2000 }).catch(() => {});
