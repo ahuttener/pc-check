@@ -1,0 +1,12 @@
+{"bug_type":"298","timestamp":"2026-10-16 07:10:02.00 +0100","os_version":"iPhone OS 26.0.1 (23A355)","roots_installed":0,"incident_id":"5A6B7C8D-9E0F-4A1B-8C2D-3E4F5A6B7C8D"}
+{
+  "product" : "iPhone15,4",
+  "incident" : "5A6B7C8D-9E0F-4A1B-8C2D-3E4F5A6B7C8D",
+  "date" : "2026-10-16 07:10:02.18 +0100",
+  "build" : "iPhone OS 26.0.1 (23A355)",
+  "largestProcess" : "MobileSafari",
+  "processes" : [
+    {"name" : "MobileSafari", "rpages" : 118200, "states" : ["frontmost"], "pid" : 4630},
+    {"name" : "Weather", "reason" : "vm-pageshortage", "rpages" : 15022, "states" : ["suspended"], "pid" : 2871}
+  ]
+}

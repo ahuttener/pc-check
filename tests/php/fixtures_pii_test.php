@@ -7,7 +7,7 @@
  * Run: php tests/php/fixtures_pii_test.php
  */
 
-/** Every e-mail, MAC and IPv4/IPv6 in a Linux or Mac fixture must be a planted one. Returns the number of problems. */
+/** Every e-mail, MAC, IPv4/IPv6 and international phone number in a Linux, Mac or iPhone fixture must be a planted one. Returns the number of problems. */
 function planted_check($file, $text, $planted)
 {
     $bad = 0;
@@ -16,6 +16,7 @@ function planted_check($file, $text, $planted)
         'emails' => array(),
         'macs' => array(),
         'ips' => array(),
+        'phones' => array(),
     );
     preg_match_all('/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i', $text, $m);
     $found['emails'] = $m[0];
@@ -28,6 +29,13 @@ function planted_check($file, $text, $planted)
     preg_match_all('/(?<![0-9A-F:])(?:[0-9A-F:]*::[0-9A-F:]*|(?:[0-9A-F]{1,4}:){3,}[0-9A-F]{1,4})(?![0-9A-F:])/i', $rest, $m);
     foreach ($m[0] as $v) {
         $found['ips'][] = $v;
+    }
+    // International phone numbers: only matches with at least 8 digits count (+0100 time zones never do).
+    preg_match_all('/\+[1-9][0-9 ().-]{6,20}[0-9]/', $text, $m);
+    foreach ($m[0] as $v) {
+        if (preg_match_all('/[0-9]/', $v) >= 8) {
+            $found['phones'][] = $v;
+        }
     }
     foreach ($found as $kind => $list) {
         foreach ($list as $v) {
@@ -56,6 +64,7 @@ $plantedIpv6 = array();
 $groups = array(
     'linux' => array('dir' => $dir . 'linux/', 'glob' => '*.txt'),
     'mac' => array('dir' => $dir . 'mac/', 'glob' => '*'),
+    'ios' => array('dir' => $dir . 'ios/', 'glob' => '*'),
 );
 $dirFiles = array();
 foreach ($groups as $label => $g) {
@@ -77,16 +86,16 @@ foreach ($groups as $label => $g) {
         fwrite(STDERR, 'FAIL: ' . $label . "/PLANTED.json is not valid JSON\n");
         continue;
     }
-    foreach (array('emails', 'macs', 'ips') as $k) {
+    foreach (array('emails', 'macs', 'ips', 'phones') as $k) {
         foreach (isset($decoded[$k]) ? $decoded[$k] : array() as $v) {
             $planted[$label][$k][strtolower($v)] = true;
-            if ($label === 'mac' && $k === 'ips' && strpos($v, '::') !== false) {
+            if (($label === 'mac' || $label === 'ios') && $k === 'ips' && strpos($v, '::') !== false) {
                 $plantedIpv6[] = $v;
             }
         }
     }
 }
-$allFiles = array_merge($files, $dirFiles['linux'], $dirFiles['mac']);
+$allFiles = array_merge($files, $dirFiles['linux'], $dirFiles['mac'], $dirFiles['ios']);
 foreach ($allFiles as $file) {
     $label = null;
     foreach ($groups as $l => $g) {
@@ -104,9 +113,14 @@ foreach ($allFiles as $file) {
     }
     if ($label !== null) {
         $failures += planted_check($file, $text, $planted[$label]);
-        if ($label === 'mac' && strpos(str_replace($plantedIpv6, '', $text), '::') !== false) {
+        if (($label === 'mac' || $label === 'ios') && strpos(str_replace($plantedIpv6, '', $text), '::') !== false) {
             $failures++;
             fwrite(STDERR, 'FAIL: ' . basename($file) . " contains '::' outside a planted IPv6 value\n");
+        }
+        if ($label === 'ios' && preg_match('/\x{00E3}|\x{00F5}|\x{00E7}|\x{00E2}|\x{00EA}|\x{00F4}|\x{00C3}|\x{00D5}|\x{00C7}/u', $text)) {
+            // Same accented letters the e2e language grep looks for: no Portuguese in iPhone fixtures.
+            $failures++;
+            fwrite(STDERR, 'FAIL: ' . basename($file) . " contains an accented letter (Portuguese check)\n");
         }
         continue;
     }

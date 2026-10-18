@@ -1,0 +1,13 @@
+{"bug_type":"210","timestamp":"2026-10-02 08:15:33.00 +0100","os_version":"iPhone OS 26.0.1 (23A355)","roots_installed":0,"incident_id":"1C2D3E4F-5061-4728-93A4-B5C6D7E8F901"}
+{
+  "build" : "iPhone OS 26.0.1 (23A355)",
+  "product" : "iPhone15,4",
+  "incident" : "1C2D3E4F-5061-4728-93A4-B5C6D7E8F901",
+  "crashReporterKey" : "c0ffee12a4b5c6d7e8f90123456789abcdef0123",
+  "date" : "2026-10-02 08:15:33.20 +0100",
+  "panicString" : "panic(cpu 1 caller 0xfffffff02b2c3d4e): Kernel data abort. at pc 0xfffffff02c3d4e5f, lr 0xfffffff02c3d4e10 (saved state: 0xffffffe8a2c3d3f60)\nDebugger message: panic\nOS version: 23A355\nPaniclog version: 14\n",
+  "panicFlags" : "0x902",
+  "processByPid" : {
+    "1207" : {"procname" : "SnapNotes", "path" : "\/private\/var\/containers\/Bundle\/Application\/5C6D7E8F-9A0B-4C1D-8E2F-3A4B5C6D7E8F\/SnapNotes.app\/SnapNotes"}
+  }
+}

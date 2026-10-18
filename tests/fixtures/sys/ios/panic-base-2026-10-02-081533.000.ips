@@ -1,0 +1,6 @@
+{"bug_type":"210","timestamp":"2026-10-02 08:15:33.00 +0100","os_version":"iPhone OS 26.0.1 (23A355)","roots_installed":0,"incident_id":"1C2D3E4F-5061-4728-93A4-B5C6D7E8F901"}
+{
+  "product" : "iPhone15,4",
+  "incident" : "1C2D3E4F-5061-4728-93A4-B5C6D7E8F901",
+  "panicString" : "panic(cpu 1 caller 0xfffffff02b2c3d4e): Kernel data abort. at pc 0xfffffff02c3d4e5f, lr 0xfffffff02c3d4e10 (saved state: 0xffffffe8a2c3d3f60)\n"
+}

@@ -1,0 +1,6 @@
+{"app_name":"Carousel","timestamp":"2026-10-13 12:00:00.00 +0100","bug_type":"309","os_version":"Watch OS 10.6 (21U580)","name":"Carousel","incident_id":"A5B6C7D8-E9F0-4A1B-92C3-D4E5F6071829"}
+{
+  "modelCode" : "Watch6,2",
+  "procName" : "Carousel",
+  "exception" : {"type":"EXC_CRASH","signal":"SIGABRT"}
+}

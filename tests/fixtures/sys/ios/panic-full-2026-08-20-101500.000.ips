@@ -1,0 +1,9 @@
+{"bug_type":"210","timestamp":"2026-08-20 10:15:00.00 +0100","os_version":"iPhone OS 16.7.10 (20H350)","roots_installed":0,"incident_id":"83940516-C7D8-4E9F-B0A1-B2C3D4E5F607"}
+{
+  "build" : "iPhone OS 16.7.10 (20H350)",
+  "product" : "iPhone10,4",
+  "incident" : "83940516-C7D8-4E9F-B0A1-B2C3D4E5F607",
+  "date" : "2026-08-20 10:15:00.31 +0100",
+  "panicString" : "panic(cpu 1 caller 0xfffffff0072c3d4e): SEP Panic: sks firmware assertion at 0x0001b2c3\nDebugger message: panic\nOS version: 20H350\n",
+  "panicFlags" : "0x2"
+}

@@ -1,0 +1,5 @@
+{"bug_type":"202","timestamp":"2026-10-11 10:10:10.00 +0100","os_version":"iPhone OS 26.0.1 (23A355)","app_name":"SnapNotes","name":"SnapNotes","incident_id":"61728394-A5B6-4C7D-98E9-F0A1B2C3D4E5"}
+Date/Time:        2026-10-11 10:10:10.000 +0100
+Event:            cpu usage
+Action taken:     none
+CPU:              90 seconds cpu time over 112 seconds (80% cpu average), exceeding limit of 80% cpu over 180 seconds

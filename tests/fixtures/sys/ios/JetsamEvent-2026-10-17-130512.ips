@@ -1,0 +1,18 @@
+{"bug_type":"298","timestamp":"2026-10-17 13:05:12.00 +0100","os_version":"iPhone OS 26.0.1 (23A355)","roots_installed":0,"incident_id":"4F506172-8394-4A5B-C6D7-E8F90A1B2C3D"}
+{
+  "crashReporterKey" : "c0ffee12a4b5c6d7e8f90123456789abcdef0123",
+  "kernel" : "Darwin Kernel Version 25.0.0: Mon Aug 25 21:17:51 PDT 2025; root:xnu-12377.1.9~3\/RELEASE_ARM64_T8120",
+  "product" : "iPhone15,4",
+  "incident" : "4F506172-8394-4A5B-C6D7-E8F90A1B2C3D",
+  "date" : "2026-10-17 13:05:12.41 +0100",
+  "build" : "iPhone OS 26.0.1 (23A355)",
+  "timeDelta" : 6,
+  "memoryStatus" : {"compressorSize" : 98304, "compressions" : 1203344, "decompressions" : 803211, "busyBufferCount" : 0, "memoryPages" : {"active" : 101233, "throttled" : 0, "fileBacked" : 60122, "wired" : 52011, "purgeable" : 1022, "inactive" : 99120, "free" : 4011, "speculative" : 2011}},
+  "largestProcess" : "MobileSafari",
+  "genCounter" : 3,
+  "processes" : [
+    {"name" : "SnapNotes", "reason" : "per-process-limit", "rpages" : 91234, "states" : ["frontmost"], "pid" : 5120},
+    {"name" : "MobileSafari", "rpages" : 120001, "states" : ["suspended"], "pid" : 4211},
+    {"name" : "Podcasts", "reason" : "vm-pageshortage", "rpages" : 20311, "states" : ["suspended"], "pid" : 3302}
+  ]
+}

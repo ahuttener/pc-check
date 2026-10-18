@@ -1,0 +1,19 @@
+{"app_name":"SnapNotes","timestamp":"2026-10-16 15:30:12.00 +0100","app_version":"4.2","slice_uuid":"6e5f4a3b-2c1d-3e0f-9a8b-7c6d5e4f3a2b","adam_id":"1234567890","build_version":"4.2.1","platform":2,"bundleID":"com.example.snapnotes","share_with_app_devs":1,"is_first_party":0,"bug_type":"309","os_version":"iPhone OS 26.0.1 (23A355)","roots_installed":0,"name":"SnapNotes","incident_id":"3E4F5061-7283-494A-B5C6-D7E8F90A1B2C"}
+{
+  "uptime" : 191000,
+  "procRole" : "Foreground",
+  "version" : 2,
+  "userID" : 501,
+  "modelCode" : "iPhone15,4",
+  "captureTime" : "2026-10-16 15:30:11.6620 +0100",
+  "incident" : "3E4F5061-7283-494A-B5C6-D7E8F90A1B2C",
+  "pid" : 5120,
+  "cpuType" : "ARM-64",
+  "procName" : "SnapNotes",
+  "procPath" : "\/private\/var\/containers\/Bundle\/Application\/5C6D7E8F-9A0B-4C1D-8E2F-3A4B5C6D7E8F\/SnapNotes.app\/SnapNotes",
+  "bundleInfo" : {"CFBundleShortVersionString":"4.2","CFBundleVersion":"4.2.1"},
+  "storeInfo" : {"deviceIdentifierForVendor":"7F8E9DA0-B1C2-4D3E-8F40-5162738495A6","thirdParty":true},
+  "crashReporterKey" : "c0ffee12a4b5c6d7e8f90123456789abcdef0123",
+  "exception" : {"codes":"0x0000000000000000, 0x0000000000000000","rawCodes":[0,0],"type":"EXC_CRASH","signal":"SIGABRT"},
+  "asi" : {"libsystem_c.dylib":["abort() called"],"SnapNotes":["Saving \/private\/var\/mobile\/Containers\/Data\/Application\/8A9B0C1D-2E3F-4A5B-9C6D-7E8F9A0B1C2D\/Documents\/Jane Doe CV.pdf for Jane’s iPhone (jane.doe@example.com, +353 85 555 0142)"]}
+}

@@ -1,0 +1,18 @@
+{"app_name":"SnapNotes","timestamp":"2026-10-12 11:02:04.00 +0100","app_version":"3.9","slice_uuid":"7a6b5c4d-3e2f-41a0-9b8c-7d6e5f4a3b2c","adam_id":"1234567890","build_version":"3.9.0","bundleID":"com.example.snapnotes","share_with_app_devs":0,"is_first_party":0,"bug_type":"109","os_version":"iPhone OS 16.7.10 (20H350)","incident_id":"8394A5B6-C7D8-4E9F-B0A1-B2C3D4E5F607","name":"SnapNotes"}
+Incident Identifier: 8394A5B6-C7D8-4E9F-B0A1-B2C3D4E5F607
+CrashReporter Key:   d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0
+Hardware Model:      iPhone10,4
+Process:             SnapNotes [2210]
+Path:                /private/var/containers/Bundle/Application/94A5B6C7-D8E9-4F0A-81B2-C3D4E5F60718/SnapNotes.app/SnapNotes
+Identifier:          com.example.snapnotes
+Version:             3.9 (3.9.0)
+Code Type:           ARM-64 (Native)
+Parent Process:      launchd [1]
+
+Date/Time:           2026-10-12 11:02:03.9001 +0100
+OS Version:          iPhone OS 16.7.10 (20H350)
+Report Version:      104
+
+Exception Type:  EXC_CRASH (SIGKILL)
+Termination Reason: FRONTBOARD 2343432205
+Triggered by Thread:  0

@@ -1,0 +1,25 @@
+{"app_name":"MobileSafari","timestamp":"2026-10-15 09:12:44.00 +0100","app_version":"26.0.1","slice_uuid":"4d3c2b1a-0f9e-38d7-c6b5-a4938271605f","build_version":"8622.1.22","platform":2,"bundleID":"com.apple.mobilesafari","share_with_app_devs":0,"is_first_party":1,"bug_type":"309","os_version":"iPhone OS 26.0.1 (23A355)","roots_installed":0,"name":"MobileSafari","incident_id":"2D3E4F50-6172-4839-A4B5-C6D7E8F90A1B"}
+{
+  "uptime" : 180000,
+  "procRole" : "Foreground",
+  "version" : 2,
+  "userID" : 501,
+  "deployVersion" : 210,
+  "modelCode" : "iPhone15,4",
+  "coalitionID" : 655,
+  "osVersion" : {
+    "isEmbedded" : true,
+    "train" : "iPhone OS 26.0.1",
+    "releaseType" : "User",
+    "build" : "23A355"
+  },
+  "captureTime" : "2026-10-15 09:12:43.9120 +0100",
+  "incident" : "2D3E4F50-6172-4839-A4B5-C6D7E8F90A1B",
+  "pid" : 4211,
+  "cpuType" : "ARM-64",
+  "procName" : "MobileSafari",
+  "procPath" : "\/Applications\/MobileSafari.app\/MobileSafari",
+  "crashReporterKey" : "c0ffee12a4b5c6d7e8f90123456789abcdef0123",
+  "exception" : {"codes":"0x0000000000000001, 0x0000000000000000","rawCodes":[1,0],"type":"EXC_BAD_ACCESS","signal":"SIGSEGV","subtype":"KERN_INVALID_ADDRESS at 0x0000000000000000"},
+  "termination" : {"flags":0,"code":11,"namespace":"SIGNAL","indicator":"Segmentation fault: 11","byProc":"exc handler","byPid":4211}
+}

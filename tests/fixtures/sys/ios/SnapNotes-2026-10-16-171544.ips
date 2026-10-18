@@ -1,0 +1,14 @@
+{"app_name":"SnapNotes","timestamp":"2026-10-16 17:15:44.00 +0100","app_version":"3.9","slice_uuid":"7a6b5c4d-3e2f-41a0-9b8c-7d6e5f4a3b2c","adam_id":"1234567890","build_version":"3.9.0","platform":2,"bundleID":"com.example.snapnotes","share_with_app_devs":0,"is_first_party":0,"bug_type":"309","os_version":"iPhone OS 16.7.10 (20H350)","roots_installed":0,"name":"SnapNotes","incident_id":"94A5B6C7-D8E9-4F0A-B1B2-C3D4E5F60719"}
+{
+  "uptime" : 40100,
+  "version" : 2,
+  "userID" : 501,
+  "modelCode" : "iPhone10,4",
+  "captureTime" : "2026-10-16 17:15:43.1200 +0100",
+  "incident" : "94A5B6C7-D8E9-4F0A-B1B2-C3D4E5F60719",
+  "pid" : 3391,
+  "cpuType" : "ARM-64",
+  "procName" : "SnapNotes",
+  "crashReporterKey" : "d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0",
+  "exception" : {"codes":"0x0000000000000001, 0x0000000000000020","rawCodes":[1,32],"type":"EXC_BAD_ACCESS","signal":"SIGSEGV","subtype":"KERN_INVALID_ADDRESS at 0x0000000000000020"}
+}

@@ -1,0 +1,10 @@
+{"bug_type":"210","timestamp":"2026-10-09 21:33:01.00 +0100","os_version":"iPhone OS 16.7.10 (20H350)","roots_installed":0,"incident_id":"72839405-B6C7-4D8E-A9F0-A1B2C3D4E5F6"}
+{
+  "build" : "iPhone OS 16.7.10 (20H350)",
+  "product" : "iPhone10,4",
+  "incident" : "72839405-B6C7-4D8E-A9F0-A1B2C3D4E5F6",
+  "crashReporterKey" : "d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0",
+  "date" : "2026-10-09 21:33:01.70 +0100",
+  "panicString" : "panic(cpu 0 caller 0xfffffff0071b2c3d): ANS2 Recoverable Panic - assert failed\nDebugger message: panic\nOS version: 20H350\nPaniclog version: 13\n",
+  "panicFlags" : "0x2"
+}
