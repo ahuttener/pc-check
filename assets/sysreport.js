@@ -306,7 +306,7 @@
   // The only thing that may ever be sent for an AI explanation: a small, whitelisted summary
   // ---------------------------------------------------------------------------
   // Control (Cc) and format (Cf) characters, which the server rejects: removed rather than sent.
-  var CONTROL_FORMAT_RE = /[\u0000-\u001F\u007F-\u009F­؀-؅؜۝܏࢐࢑࣢᠎​-‏‪-‮⁠-⁤⁦-⁯﻿￹-￻]|\uD804[\uDCBD\uDCCD]|\uD80D[\uDC30-\uDC3F]|\uD82F[\uDCA0-\uDCA3]|\uD834[\uDD73-\uDD7A]|\uDB40[\uDC01\uDC20-\uDC7F]/g;
+  var CONTROL_FORMAT_RE = /[\u0000-\u001F\u007F-\u009F\u00AD\u0600-\u0605\u061C\u06DD\u070F\u0890\u0891\u08E2\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\uFFF9-\uFFFB]|\uD804[\uDCBD\uDCCD]|\uD80D[\uDC30-\uDC3F]|\uD82F[\uDCA0-\uDCA3]|\uD834[\uDD73-\uDD7A]|\uDB40[\uDC01\uDC20-\uDC7F]/g;
 
   // At most 80 characters counted as code points (as the server counts them). An emoji is kept whole or
   // dropped whole, and lone surrogates are removed, so the JSON is always valid UTF-8.

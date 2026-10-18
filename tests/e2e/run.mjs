@@ -1,7 +1,7 @@
 // End-to-end tests with Playwright. Every outside service is simulated with page.route.
 // Run from tests/: node e2e/run.mjs   (starts php -S on 127.0.0.1:$BSC_PORT, default 8765, serving the project folder)
 import { chromium, webkit, devices } from 'playwright';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -548,6 +548,19 @@ try {
   {
     const fx = (f) => fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', f)).toString('base64');
     const files = { rel: fx('reliability.xml'), bat: fx('battery-report.html'), msi: fx('msinfo32-head.txt') };
+    // The server's own verdict, character by character (PHP's PCRE tables), for the cap() filter test
+    const rejected = JSON.parse(execFileSync('php', [path.join(here, '..', 'tools', 'rejected-codepoints.php')], { encoding: 'utf8' }));
+    // Every range of CONTROL_FORMAT_RE in assets/sysreport.js, as code points
+    files.ranges = [[0x0, 0x1F], [0x7F, 0x9F], [0xAD, 0xAD], [0x600, 0x605], [0x61C, 0x61C], [0x6DD, 0x6DD], [0x70F, 0x70F], [0x890, 0x891],
+      [0x8E2, 0x8E2], [0x180E, 0x180E], [0x200B, 0x200F], [0x202A, 0x202E], [0x2060, 0x2064], [0x2066, 0x206F], [0xFEFF, 0xFEFF],
+      [0xFFF9, 0xFFFB], [0x110BD, 0x110BD], [0x110CD, 0x110CD], [0x13430, 0x1343F], [0x1BCA0, 0x1BCA3], [0x1D173, 0x1D17A],
+      [0xE0001, 0xE0001], [0xE0020, 0xE007F]];
+    // Characters just outside those ranges that the server accepts: they must survive
+    files.neighbours = [0x20, 0x7E, 0xA0, 0xAC, 0xAE, 0x5FF, 0x606, 0x61B, 0x61D, 0x6DC, 0x6DE, 0x70E, 0x710, 0x88F, 0x892, 0x8E1, 0x8E3,
+      0x180D, 0x180F, 0x200A, 0x2010, 0x2029, 0x202F, 0x205F, 0x2065, 0x2070, 0xFEFE, 0xFF00, 0xFFF8, 0xFFFC, 0x110BC, 0x110BE,
+      0x110CC, 0x110CE, 0x1342F, 0x13440, 0x1BC9F, 0x1BCA4, 0x1D172, 0x1D17B, 0xE0000, 0xE0002, 0xE001F, 0xE0080, 0x1F600]
+      .filter((cp) => !rejected.includes(cp));
+    files.rejected = rejected;
     const { page, context } = await newPage('ok');
     const r = await page.evaluate((files) => {
       const S = window.PCSys;
@@ -580,11 +593,19 @@ try {
         capped: (() => {
           const base = S.evaluateWindows({ msinfo: { os: 'Microsoft Windows 11 Home', ramGb: 8, problemDevices: [] } }, now);
           base.model = 'M'.repeat(79) + '\u{1F600}tail';
-          base.os = 'Win\u0007dows​ 11‮ Home﻿';
+          base.os = 'Win' + String.fromCharCode(7) + 'dows' + String.fromCharCode(0x200B) + ' 11' + String.fromCharCode(0x202E) + ' Home' + String.fromCharCode(0xFEFF);
           const sm = S.buildSummary(base);
           base.model = 'x'.repeat(78) + '\u{1F600}\u{1F600}\u{1F600}';
           const sm2 = S.buildSummary(base);
-          return { model: sm.model, os: sm.os, model2: sm2.model };
+          // Every code point the server rejects (from PHP) and the start, middle and end of every range in
+          // the browser's filter must be removed; the neighbours just outside the ranges must be kept.
+          const strip = (cp) => { base.os = 'A' + String.fromCodePoint(cp) + 'B'; return S.buildSummary(base).os; };
+          const notRemoved = (cps) => cps.filter((cp) => strip(cp) !== 'AB').map((cp) => cp.toString(16));
+          const notKept = (cps) => cps.filter((cp) => strip(cp) !== 'A' + String.fromCodePoint(cp) + 'B').map((cp) => cp.toString(16));
+          const samples = [];
+          files.ranges.forEach(([a, z]) => { samples.push(a, Math.floor((a + z) / 2), z); });
+          return { model: sm.model, os: sm.os, model2: sm2.model,
+            phpMissed: notRemoved(files.rejected), rangeMissed: notRemoved(samples), neighboursLost: notKept(files.neighbours) };
         })()
       };
     }, files);
@@ -608,6 +629,9 @@ try {
       check('summary cap: emoji at the cut leaves no lone surrogate', !lone(r.capped.model) && cps(r.capped.model) <= 80 && r.capped.model.startsWith('M'.repeat(79)), [r.capped.model.length, r.capped.model.slice(-3)]);
       check('summary cap: counts code points like the server (80 max), keeps whole emoji', !lone(r.capped.model2) && cps(r.capped.model2) === 80 && r.capped.model2.endsWith('\u{1F600}\u{1F600}'), [r.capped.model2.length, cps(r.capped.model2)]);
       check('summary cap: control and format characters removed', r.capped.os === 'Windows 11 Home', JSON.stringify(r.capped.os));
+      check('summary cap: removes every code point the server rejects (PHP Cc/Cf, ' + files.rejected.length + ' code points)', files.rejected.length > 100 && r.capped.phpMissed.length === 0, r.capped.phpMissed);
+      check('summary cap: removes start, middle and end of every filter range', r.capped.rangeMissed.length === 0, r.capped.rangeMissed);
+      check('summary cap: keeps the characters just outside the ranges (' + files.neighbours.length + ')', files.neighbours.length > 30 && r.capped.neighboursLost.length === 0, r.capped.neighboursLost);
       check('summary has only whitelisted fields',JSON.stringify(r.keys) === JSON.stringify(['batteryHealthPct', 'findings', 'hardwareErrors30d', 'model', 'os', 'ramGb', 'score', 'shutdowns30d', 'stabilityNow', 'topCrashApps']), r.keys);
     }
     await context.close();
@@ -766,7 +790,10 @@ try {
     {
       let ok = true;
       let made;
-      try { made = await analyzed(); } catch (e) { ok = false; }
+      // Records the fetch options used for explain.php: the Origin header the server checks depends on them.
+      const FETCH_SPY = `(() => { const f = window.fetch; window.__explainInits = [];
+        window.fetch = function (url, init) { if (/explain\.php/.test(String(url))) window.__explainInits.push(Object.assign({}, init || {}, { body: undefined, signal: undefined })); return f.apply(this, arguments); }; })();`;
+      try { made = await analyzed({ initScript: FETCH_SPY }); } catch (e) { ok = false; }
       check('ai: setup (fixtures analyzed)', ok);
       if (made) {
         const { page, context, seen } = made;
@@ -799,6 +826,9 @@ try {
         check('ai: no lone surrogate in the summary (emoji at the cut)', body !== null && !lone(String(body.summary.model)), body && body.summary.model);
         const hdr = mock.headers[0] || {};
         check('ai: sent as application/json, same-origin (Origin is not "null")', /^application\/json/.test(hdr['content-type'] || '') && (hdr.origin === undefined || hdr.origin === BASE.replace(/\/$/, '')), hdr);
+        const inits = await page.evaluate(() => window.__explainInits);
+        // "no-referrer" would make a POST's Origin "null" (Fetch spec, e.g. Firefox), which explain.php rejects with 403.
+        check('ai: fetch uses referrerPolicy same-origin, POST, no credentials', inits.length === 1 && inits[0].referrerPolicy === 'same-origin' && inits[0].method === 'POST' && inits[0].credentials === 'omit', inits);
         const ledger = await page.locator('#ledger-list').innerText();
         check('ai: outbound log has the entry', (await page.locator('#ledger-list li').count()) === before + 1 && /anonymised summary/.test(ledger) && ledger.includes('127.0.0.1:' + PORT), ledger.slice(-300));
         const paras = await page.locator('#sys-ai-text p').allInnerTexts();
