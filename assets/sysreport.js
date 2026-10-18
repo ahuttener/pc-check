@@ -515,6 +515,342 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Mac: System Information report (.spx, an XML property list) and diagnostic reports (.ips, .panic, .crash)
+  // ---------------------------------------------------------------------------
+  var MAC_REPORT_HEAD = 1048576; // characters read from each diagnostic report (panicString comes early in the body)
+  // macOS majors in release order (numbering jumped from 15 to 26); the last three are the supported ones.
+  var MACOS_MAJORS = [10, 11, 12, 13, 14, 15, 26, 27];
+  var SPX_TYPES = toSet(['SPHardwareDataType', 'SPSoftwareDataType', 'SPPowerDataType', 'SPStorageDataType']);
+  var BATTERY_SERVICE = toSet(['fair', 'poor', 'service recommended', 'replace soon', 'replace now', 'service battery', 'check battery']);
+  var PLIST_MAX_DEPTH = 32;
+  var NAME_LETTER = /[A-Za-z\u00C0-\u024F]/g;
+
+  function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date); }
+  function pstr(v) { return typeof v === 'string' ? v : null; }
+
+  // ISO 8601 UTC dates of a property list ("2026-10-18T08:12:44Z"), parsed by hand
+  function plistDate(s) {
+    var m = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.\d{1,9})?Z$/.exec(String(s).trim());
+    if (!m) return null;
+    var t = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+    return isNaN(t) ? null : new Date(t);
+  }
+
+  // One plist element as a JS value. Dicts get a null prototype, so no key can reach Object.prototype.
+  function plistValue(node, depth) {
+    if (!node || depth > PLIST_MAX_DEPTH) return null;
+    var tag = node.nodeName;
+    var c;
+    if (tag === 'dict') {
+      var o = Object.create(null);
+      var key = null;
+      for (c = node.firstElementChild; c; c = c.nextElementSibling) {
+        if (c.nodeName === 'key') { key = c.textContent; continue; }
+        if (key !== null) { o[key] = plistValue(c, depth + 1); key = null; }
+      }
+      return o;
+    }
+    if (tag === 'array') {
+      var a = [];
+      for (c = node.firstElementChild; c; c = c.nextElementSibling) a.push(plistValue(c, depth + 1));
+      return a;
+    }
+    if (tag === 'true') return true;
+    if (tag === 'false') return false;
+    var text = node.textContent;
+    if (tag === 'string') return text;
+    if (tag === 'integer') { var i = parseInt(text, 10); return isNaN(i) ? null : i; }
+    if (tag === 'real') { var f = parseFloat(text); return isNaN(f) ? null : f; }
+    if (tag === 'date') return plistDate(text);
+    return null; // data and anything unknown
+  }
+
+  // The value element that follows <key>name</key> among a dict's children, without converting anything
+  function dictEntry(dict, name) {
+    for (var c = dict.firstElementChild; c; c = c.nextElementSibling) {
+      if (c.nodeName === 'key' && c.textContent === name) {
+        var v = c.nextElementSibling;
+        return v && v.nodeName !== 'key' ? v : null;
+      }
+    }
+    return null;
+  }
+
+  // "Export as Text": a heading line ending in ":" and indented "Label: value" lines, in the Mac's language
+  function looksLikeSpxText(head) {
+    var lines = head.split(/\r?\n/);
+    var first = null;
+    for (var i = 0; i < lines.length && first === null; i++) if (lines[i].trim()) first = trimEnd(lines[i]);
+    if (first === null || first.charAt(first.length - 1) !== ':') return false;
+    return lines.some(function (l) { return /^[ \t]+[^ \t:][^:]*: \S/.test(l); });
+  }
+
+  function letters(s) { return (String(s).match(NAME_LETTER) || []).length; }
+
+  // Computer name, user, serials, UUIDs and volume names, kept only so the anonymiser can remove them elsewhere.
+  // Plain strings are replaced as substrings; {word} entries only as whole words.
+  function spxNames(hw, sw, battery, volumes) {
+    var list = [];
+    var seen = Object.create(null);
+    function add(v) { var s = pstr(v); if (s && s.trim() && !seen['s:' + s]) { seen['s:' + s] = true; list.push(s); } }
+    function addWord(v) {
+      var s = pstr(v);
+      if (!s || !s.trim()) return;
+      var k = 'w:' + s.toLowerCase();
+      if (!seen[k]) { seen[k] = true; list.push({ word: s }); }
+    }
+    var computer = pstr(sw && sw.local_host_name);
+    if (computer) {
+      computer = computer.slice(0, 256);
+      add(computer);
+      add(computer.replace(/[\u2019']/g, function (ch) { return ch === '\u2019' ? "'" : '\u2019'; }));
+      add(computer.replace(/[\u2019']/g, '').trim().replace(/\s+/g, '-'));
+    }
+    var user = pstr(sw && sw.user_name);
+    var full = null;
+    if (user) {
+      user = user.slice(0, 256);
+      var m = /^([^()]*)\(([^()]*)\)\s*$/.exec(user);
+      full = (m ? m[1] : user).trim();
+      add(full);
+      if (m) add(m[2].trim());
+    }
+    if (full) full.split(/[\s,]+/).forEach(function (w) { if (letters(w) >= 4) addWord(w); });
+    if (computer) {
+      var re = /([A-Za-z\u00C0-\u024F]+)[\u2019']s(?![A-Za-z\u00C0-\u024F])/g;
+      var p;
+      while ((p = re.exec(computer)) !== null) if (p[1].length >= 4) addWord(p[1]);
+    }
+    if (hw) { add(hw.serial_number); add(hw.platform_UUID); add(hw.provisioning_UDID); }
+    if (battery) add(battery.serial);
+    volumes.forEach(function (v) {
+      var mount = pstr(v.mount_point) || '';
+      var name = pstr(v._name);
+      if (name && mount.indexOf('/System/Volumes/') !== 0 && name !== 'Macintosh HD') addWord(name);
+      add(v.volume_uuid);
+    });
+    return list;
+  }
+
+  // System Information -> File -> Save... (.spx). One DOMParser call; only four data types are converted.
+  function parseSpx(text) {
+    var s = String(text === null || text === undefined ? '' : text);
+    var head = s.slice(0, 2000);
+    if (head.indexOf('<plist') === -1 || s.indexOf('<key>_dataType</key>') === -1) {
+      return looksLikeSpxText(head) ? { error: 'spx_text' } : { error: 'not_spx' };
+    }
+    if (head.slice(0, 5) === '<?xml') { var end = head.indexOf('?>'); if (end > 0) s = s.slice(end + 2); }
+    var doc;
+    try { doc = new DOMParser().parseFromString(s, 'application/xml'); } catch (e) { return { error: 'not_spx' }; }
+    if (!doc || doc.getElementsByTagName('parsererror').length) return { error: 'not_spx' };
+    var root = doc.documentElement;
+    var arr = root && root.nodeName === 'plist' ? root.firstElementChild : null;
+    if (!arr || arr.nodeName !== 'array') return { error: 'not_spx' };
+
+    var found = Object.create(null);
+    var any = false;
+    var reportDate = null;
+    for (var d = arr.firstElementChild; d; d = d.nextElementSibling) {
+      if (d.nodeName !== 'dict') continue;
+      var stamp = dictEntry(d, '_timeStamp');
+      if (stamp && stamp.nodeName === 'date') {
+        var t = plistDate(stamp.textContent);
+        if (t && (!reportDate || t.getTime() > reportDate.getTime())) reportDate = t;
+      }
+      var typeNode = dictEntry(d, '_dataType');
+      var type = typeNode && typeNode.nodeName === 'string' ? typeNode.textContent : '';
+      if (SPX_TYPES[type] && !found[type]) {
+        var items = dictEntry(d, '_items');
+        var list = items && items.nodeName === 'array' ? plistValue(items, 0) : [];
+        found[type] = list.filter(isObj);
+        any = true;
+      }
+    }
+    if (!any) return { error: 'not_spx' };
+
+    function item(type, name, fallback) {
+      var l = found[type] || [];
+      for (var i = 0; i < l.length; i++) if (l[i]._name === name) return l[i];
+      return fallback && l.length ? l[0] : null;
+    }
+    var hw = item('SPHardwareDataType', 'hardware_overview', true);
+    var sw = item('SPSoftwareDataType', 'os_overview', true);
+    var macos = pstr(sw && sw.os_version);
+    var major = macos ? /^(?:macOS|Mac OS X|OS X) (\d+)/.exec(macos) : null;
+    var chipType = pstr(hw && hw.chip_type);
+    var cpuType = pstr(hw && hw.cpu_type);
+    var memText = pstr(hw && hw.physical_memory);
+    var mem = memText ? parseFloat(memText.replace(',', '.')) : NaN;
+    if (!isNaN(mem) && /\bMB\b/i.test(memText)) mem = round1(mem / 1024);
+    if (!isNaN(mem) && /\bTB\b/i.test(memText)) mem = mem * 1024;
+
+    var battery = { present: false };
+    var batSerial = null;
+    var bi = item('SPPowerDataType', 'spbattery_information', false);
+    if (bi) {
+      var health = isObj(bi.sppower_battery_health_info) ? bi.sppower_battery_health_info : {};
+      var model = isObj(bi.sppower_battery_model_info) ? bi.sppower_battery_model_info : {};
+      batSerial = model.sppower_battery_serial_number;
+      var capText = health.sppower_battery_health_maximum_capacity;
+      var cap = capText === null || capText === undefined ? NaN : parseFloat(String(capText).replace(',', '.'));
+      var cyc = health.sppower_battery_cycle_count;
+      if (typeof cyc === 'string') cyc = parseInt(cyc, 10);
+      var condition = pstr(health.sppower_battery_health);
+      battery = {
+        present: true,
+        healthPct: isNaN(cap) ? null : cap,
+        cycles: typeof cyc === 'number' && !isNaN(cyc) ? cyc : null,
+        condition: condition,
+        service: !!(condition && BATTERY_SERVICE[condition.trim().toLowerCase()])
+      };
+    }
+
+    var storage = found.SPStorageDataType || [];
+    var volumes = [];
+    storage.forEach(function (v) {
+      var mount = pstr(v.mount_point);
+      var size = v.size_in_bytes;
+      var free = v.free_space_in_bytes;
+      if (!mount || typeof size !== 'number' || size < 1000000000 || mount.indexOf('/System/Volumes/') === 0) return;
+      var drive = isObj(v.physical_drive) ? v.physical_drive : {};
+      var startup = mount === '/';
+      volumes.push({
+        where: startup ? 'startup' : (drive.is_internal_disk === 'yes' ? 'internal' : 'external'),
+        mount: startup ? '/' : '/Volumes/[volume]',
+        usedPct: typeof free === 'number' && free >= 0 && free <= size ? round1((size - free) / size * 100) : null,
+        smart: pstr(drive.smart_status)
+      });
+    });
+
+    return {
+      reportDate: reportDate,
+      macos: macos,
+      osMajor: major ? +major[1] : null,
+      modelName: pstr(hw && hw.machine_name),
+      modelId: pstr(hw && hw.machine_model),
+      chip: chipType || cpuType || null,
+      chipKind: chipType ? 'chip' : (cpuType ? 'cpu' : null),
+      ramGb: isNaN(mem) ? null : mem,
+      battery: battery,
+      volumes: volumes,
+      names: spxNames(hw, sw, { serial: batSerial }, storage)
+    };
+  }
+
+  // "2026-10-14 22:41:07.00 +0100" -> Date. By hand: Safari's Date() rejects this form.
+  function macReportTime(s) {
+    var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)(?:\.(\d{1,9}))? ([+-])(\d\d):?(\d\d)$/.exec(String(s === null || s === undefined ? '' : s).slice(0, 64).trim());
+    if (!m) return null;
+    var ms = m[7] ? Math.round(parseFloat('0.' + m[7]) * 1000) : 0;
+    var offset = (+m[9] * 60 + +m[10]) * 60000 * (m[8] === '-' ? -1 : 1);
+    var t = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], ms) - offset;
+    return isNaN(t) ? null : new Date(t);
+  }
+
+  // Tested in this order on the first line of the panic string
+  var PANIC_CAUSES = [
+    { name: 'cpu_error', re: /CATERR|IERR|Machine Check|\bMCA\b/i },
+    { name: 'sleep_wake', re: /Sleep Wake failure|SleepWake|wake failure/i },
+    { name: 'gpu', re: /\bGPU\b|AGX|AMDRadeon|NVDA|IOAccelerator|IntelFramebuffer/i },
+    { name: 'watchdog', re: /watchdog/i },
+    { name: 'data_abort', re: /data abort|instruction fetch abort|page fault|Kernel trap at/i }
+  ];
+
+  function panicCause(line) {
+    for (var i = 0; i < PANIC_CAUSES.length; i++) if (PANIC_CAUSES[i].re.test(line)) return PANIC_CAUSES[i].name;
+    return 'other';
+  }
+
+  // Third-party kernel extensions named after "Kernel Extensions in backtrace:", up to the next blank line (at most 3)
+  function panicExtensions(panicText) {
+    var marker = 'Kernel Extensions in backtrace:';
+    var at = panicText.indexOf(marker);
+    if (at === -1) return [];
+    var lines = panicText.slice(at + marker.length, at + marker.length + 16384).split('\n');
+    var out = [];
+    for (var i = 0; i < lines.length && out.length < 3; i++) {
+      var line = lines[i].slice(0, 1024);
+      if (i > 0 && !line.trim()) break;
+      var re = /\bcom\.(?!apple\.)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?=\()/g;
+      var m;
+      while ((m = re.exec(line)) !== null && out.length < 3) if (out.indexOf(m[0]) === -1) out.push(m[0]);
+    }
+    return out;
+  }
+
+  function skipSpace(s, i) {
+    while (i < s.length) {
+      var c = s.charCodeAt(i);
+      if (c !== 32 && c !== 9 && c !== 10 && c !== 13 && c !== 0xFEFF) break;
+      i++;
+    }
+    return i;
+  }
+
+  function macPanic(body, time) {
+    var panicText = null;
+    if (body.charAt(skipSpace(body, 0)) === '{') {
+      var m = /"panicString"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/.exec(body);
+      if (m) { try { panicText = JSON.parse('"' + m[1] + '"'); } catch (e) { panicText = null; } }
+    } else {
+      var p = body.indexOf('panic(');
+      if (p !== -1) panicText = body.slice(p);
+    }
+    if (typeof panicText !== 'string' || !panicText) return { error: 'not_mac_report' };
+    var nl = panicText.indexOf('\n');
+    var first = trimEnd((nl === -1 ? panicText : panicText.slice(0, nl)).slice(0, LINE_CHARS));
+    var rest = first.replace(/^panic\(cpu \d+ caller 0x[0-9a-fA-F]+\):\s*/, '');
+    return {
+      kind: 'panic', time: time, cause: panicCause(rest),
+      causeLine: anonymise(rest).slice(0, 120).trim(),
+      extensions: panicExtensions(panicText)
+    };
+  }
+
+  function macCrash(header, body, time) {
+    var head = body.slice(0, 65536);
+    var app = pstr(header.app_name) || pstr(header.name);
+    if (!app) { var p = /"procName"\s*:\s*"([^"\\]*)"/.exec(head); app = p ? p[1] : ''; }
+    var ex = /"exception"\s*:\s*\{[^}]*"type"\s*:\s*"([A-Z_]+)"/.exec(head);
+    return { kind: 'crash', time: time, app: app.slice(0, 256), exception: ex ? ex[1] : null };
+  }
+
+  // Legacy .crash text (macOS 11 and earlier): "Process:  Safari [1234]", "Date/Time:  2026-10-01 09:09:09.123 +0100"
+  function macLegacyCrash(s) {
+    var lines = s.slice(0, 65536).split('\n');
+    var app = null;
+    var date = null;
+    var ex = null;
+    for (var i = 0; i < lines.length; i++) {
+      var line = trimEnd(lines[i].slice(0, LINE_CHARS));
+      var m;
+      if (app === null && (m = /^Process:\s+(.+?) \[\d+\]/.exec(line))) app = m[1];
+      else if (date === null && (m = /^Date\/Time:\s+(.+)$/.exec(line))) date = m[1];
+      else if (ex === null && (m = /^Exception Type:\s+(\S+)/.exec(line))) ex = m[1];
+    }
+    if (app === null || date === null) return { error: 'not_mac_report' };
+    return { kind: 'crash', time: macReportTime(date), app: app.slice(0, 256), exception: ex };
+  }
+
+  // One diagnostic report (.ips, .panic, .crash). Only the first MAC_REPORT_HEAD characters are read; the file name
+  // is never passed in (older ones carry the computer name).
+  function parseMacReport(text) {
+    var s = String(text === null || text === undefined ? '' : text).slice(0, MAC_REPORT_HEAD);
+    var nl = s.indexOf('\n');
+    var first = nl === -1 ? s : s.slice(0, nl);
+    var header = null;
+    if (first.length <= 8192) { try { header = JSON.parse(first); } catch (e) { header = null; } }
+    if (isObj(header) && typeof header.bug_type === 'string') {
+      var body = nl === -1 ? '' : s.slice(nl + 1);
+      var time = macReportTime(header.timestamp);
+      if (header.bug_type === '210') return macPanic(body, time);
+      if (header.bug_type === '309' || header.bug_type === '109') return macCrash(header, body, time);
+      return { kind: 'other' };
+    }
+    return macLegacyCrash(s);
+  }
+
+  // ---------------------------------------------------------------------------
   // Anonymiser: nothing personal may reach the AI summary or the PDF
   // ---------------------------------------------------------------------------
   function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -1070,6 +1406,7 @@
     evaluateWindows: evaluateWindows, evaluateLinux: evaluateLinux, anonymise: anonymise, buildSummary: buildSummary,
     LINUX_PASTE_CAP: LINUX_PASTE_CAP, LINUX_MAX_LINES: LINUX_MAX_LINES,
     parseLinuxSystem: parseLinuxSystem, parseJournal: parseJournal, parseBoots: parseBoots,
-    parseUpower: parseUpower, parseDisks: parseDisks
+    parseUpower: parseUpower, parseDisks: parseDisks,
+    MAC_REPORT_HEAD: MAC_REPORT_HEAD, MACOS_MAJORS: MACOS_MAJORS, parseSpx: parseSpx, parseMacReport: parseMacReport
   };
 })();

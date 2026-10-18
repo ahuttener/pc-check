@@ -824,6 +824,127 @@ try {
     await context.close();
   }
 
+  // 8a-mac. Mac report parsers, on synthetic files that follow the real formats
+  console.log('Mac report parsers');
+  {
+    const macDir = path.join(here, '..', 'fixtures', 'sys', 'mac');
+    const mx = (f) => fs.readFileSync(path.join(macDir, f), 'utf8');
+    const reportFiles = fs.readdirSync(macDir).filter((f) => /\.(ips|panic|crash)$/.test(f)).sort();
+    const reports = {};
+    reportFiles.forEach((f) => { reports[f] = mx(f); });
+    const input = {
+      silicon: mx('silicon.spx'), intel: mx('intel.spx'), text: mx('sysinfo-text.txt'), reports,
+      rel: fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', 'reliability.xml')).toString('base64'),
+      df: fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', 'linux', 'df-ubuntu.txt'), 'utf8')
+    };
+    const planted = JSON.parse(mx('PLANTED.json'));
+    const plantedValues = [].concat(...Object.keys(planted).map((k) => planted[k])).concat(['Doe Family WiFi']).map((v) => v.toLowerCase());
+    const { page, context } = await newPage('ok');
+    const r = await page.evaluate((t) => {
+      const S = window.PCSys;
+      if (!S || !S.parseSpx || !S.parseMacReport) return null;
+      const buf = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
+      const iso = (d) => (d instanceof Date ? d.toISOString() : d);
+      const noNames = (o) => { const c = Object.assign({}, o); delete c.names; return JSON.stringify(c); };
+      const si = S.parseSpx(t.silicon);
+      const it = S.parseSpx(t.intel);
+      const rep = {};
+      Object.keys(t.reports).forEach((f) => { const x = S.parseMacReport(t.reports[f]); rep[f] = { r: x, time: iso(x.time), json: JSON.stringify(x) }; });
+      const caterr = t.reports['Kernel-2026-10-09-213301.panic'];
+      const padded = caterr.replace('"processByPid" : {', '"processByPid" : {"pad" : "' + 'x'.repeat(3000000) + '",');
+      const t0 = performance.now();
+      const paddedR = S.parseMacReport(padded);
+      const paddedMs = performance.now() - t0;
+      return {
+        head: S.MAC_REPORT_HEAD, majors: S.MACOS_MAJORS,
+        si: Object.assign({}, si, { reportDate: iso(si.reportDate), names: undefined }), siNames: si.names,
+        siJson: noNames(si), itJson: noNames(it),
+        it: { chip: it.chip, chipKind: it.chipKind, osMajor: it.osMajor, battery: it.battery, volumes: it.volumes },
+        text: S.parseSpx(t.text), rel: S.parseSpx(S.decode(buf(t.rel))),
+        tiny: S.parseSpx('<?xml version="1.0"?><plist version="1.0"><dict><key>a</key><string>b</string></dict></plist>'),
+        service: S.parseSpx(t.silicon.replace('<string>Good</string>', '<string>Service Recommended</string>')).battery,
+        worn: S.parseSpx(t.silicon.replace('78%', '55%')).battery,
+        rep, padded: { cause: paddedR.cause, kind: paddedR.kind, ms: paddedMs },
+        spxAsReport: S.parseMacReport(t.silicon), dfAsReport: S.parseMacReport(t.df),
+        badHeader: S.parseMacReport('{"bug_type":\n{\n  "panicString" : "panic(cpu 0 caller 0x1): watchdog"\n}\n')
+      };
+    }, input);
+    check('mac: parsers are loaded', r !== null);
+    if (r) {
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      check('mac: report head is 1 MB and the macOS majors end with 26', r.head === 1048576 && r.majors.indexOf(26) > r.majors.indexOf(15) && r.majors.indexOf(13) !== -1, [r.head, r.majors]);
+      const si = r.si;
+      check('mac spx: Apple silicon macOS, model, chip, memory', si.macos === 'macOS 26.0.1 (25A362)' && si.osMajor === 26 && si.modelName === 'MacBook Air' && si.modelId === 'Mac14,2' &&
+        si.chip === 'Apple M2' && si.chipKind === 'chip' && si.ramGb === 16, si);
+      check('mac spx: battery health, cycles, condition', same(si.battery, { present: true, healthPct: 78, cycles: 412, condition: 'Good', service: false }), si.battery);
+      check('mac spx: report date is the newest _timeStamp', si.reportDate === '2026-10-18T08:12:44.000Z', si.reportDate);
+      check('mac spx: counted volumes (no /System/Volumes/Data, volume name hidden)', same(si.volumes, [{ where: 'startup', mount: '/', usedPct: 91.9, smart: 'Verified' }, { where: 'external', mount: '/Volumes/[volume]', usedPct: 40, smart: null }]), si.volumes);
+      const has = (v) => r.siNames.some((n) => same(n, v));
+      const want = ['Jane’s MacBook Air', "Jane's MacBook Air", 'Janes-MacBook-Air', 'Jane Doe', 'jdoe', { word: 'Jane' }, 'K7Q2W9X4RT', '4B7C1D2E-3F40-5A6B-7C8D-9E0F1A2B3C4D',
+        '00008112-001A2B3C4D5E801E', 'F8Y2251Z9NKQ7LGAS', { word: 'Jane’s Backup' }, '8D2C1B0A-9F8E-4D7C-B6A5-948372615A0B', '6F5E4D3C-2B1A-4098-8F7E-6D5C4B3A2918'];
+      check('mac spx: names for the anonymiser', want.every(has), [want.filter((w) => !has(w)), r.siNames]);
+      check('mac spx: Macintosh HD and short words are not names', !has('Macintosh HD') && !has({ word: 'Macintosh HD' }) && !has({ word: 'Doe' }) && !has({ word: 'Data' }), r.siNames);
+      const leaks = (s) => plantedValues.filter((v) => s.toLowerCase().indexOf(v) !== -1);
+      const repLeaks = Object.keys(r.rep).map((f) => leaks(r.rep[f].json)).reduce((a, b) => a.concat(b), []);
+      check('mac: parsers keep no identifiers', !leaks(r.siJson).length && !leaks(r.itJson).length && !repLeaks.length, [leaks(r.siJson), leaks(r.itJson), repLeaks]);
+      check('mac spx: Intel chip, macOS 13, no battery', r.it.chip === '6-Core Intel Core i5' && r.it.chipKind === 'cpu' && r.it.osMajor === 13 && same(r.it.battery, { present: false }), r.it);
+      check('mac spx: Intel startup disk 96 % and Failing, external 30 %', r.it.volumes.length === 2 && r.it.volumes[0].where === 'startup' && r.it.volumes[0].usedPct === 96 &&
+        r.it.volumes[0].smart === 'Failing' && r.it.volumes[1].usedPct === 30 && r.it.volumes[1].mount === '/Volumes/[volume]', r.it.volumes);
+      check('mac spx: text export -> spx_text', same(r.text, { error: 'spx_text' }), r.text);
+      check('mac spx: Windows reliability XML -> not_spx', same(r.rel, { error: 'not_spx' }), r.rel);
+      check('mac spx: plist without System Information data -> not_spx', same(r.tiny, { error: 'not_spx' }), r.tiny);
+      check('mac spx: Service Recommended -> service', r.service.service === true && r.service.condition === 'Service Recommended', r.service);
+      check('mac spx: 55% maximum capacity -> healthPct 55', r.worn.healthPct === 55, r.worn);
+      const R = (prefix) => r.rep[Object.keys(r.rep).filter((f) => f.indexOf(prefix) === 0)[0]];
+      const w = R('panic-full-2026-10-14');
+      check('mac panic: watchdog, time, cause line', w.r.kind === 'panic' && w.r.cause === 'watchdog' && w.time === '2026-10-14T21:41:07.000Z' &&
+        /^watchdog timeout: no checkins from watchdogd/.test(w.r.causeLine) && w.r.causeLine.length <= 120 && same(w.r.extensions, []), w);
+      check('mac panic: Kernel data abort -> data_abort', R('panic-full-2026-10-02').r.cause === 'data_abort', R('panic-full-2026-10-02'));
+      const ca = R('Kernel-2026-10-09');
+      check('mac panic: CATERR -> cpu_error with the third-party extension', ca.r.cause === 'cpu_error' && same(ca.r.extensions, ['com.paragon-software.filesystems.ntfs']), ca);
+      const tx = R('Kernel-2026-08-20');
+      check('mac panic: text body -> data_abort, time', tx.r.kind === 'panic' && tx.r.cause === 'data_abort' && tx.time === '2026-08-20T09:15:00.000Z', tx);
+      const chrome = Object.keys(r.rep).filter((f) => /^Google Chrome/.test(f)).map((f) => r.rep[f].r);
+      check('mac crash: both Chrome helper crashes', chrome.length === 2 && chrome.every((c) => c.kind === 'crash' && c.app === 'Google Chrome Helper (Renderer)' && c.exception === 'EXC_BAD_ACCESS'), chrome);
+      const word = Object.keys(r.rep).filter((f) => /^Microsoft Word/.test(f)).map((f) => r.rep[f].r);
+      check('mac crash: Word -> EXC_CRASH', word.length === 2 && word.every((c) => c.kind === 'crash' && c.app === 'Microsoft Word' && c.exception === 'EXC_CRASH'), word);
+      const sa = R('Safari_');
+      check('mac crash: legacy .crash -> Safari, EXC_BAD_ACCESS, time', sa.r.kind === 'crash' && sa.r.app === 'Safari' && sa.r.exception === 'EXC_BAD_ACCESS' && sa.time === '2026-10-01T08:09:09.123Z', sa);
+      check('mac report: Jetsam -> other', same(R('JetsamEvent').r, { kind: 'other' }), R('JetsamEvent'));
+      check('mac report: .spx, df output and a broken header -> not_mac_report', r.spxAsReport.error === 'not_mac_report' && r.dfAsReport.error === 'not_mac_report' && r.badHeader.error === 'not_mac_report', [r.spxAsReport, r.dfAsReport, r.badHeader]);
+      check('mac panic: 3 MB of padding after panicString -> still cpu_error, fast', r.padded.kind === 'panic' && r.padded.cause === 'cpu_error' && r.padded.ms < 200, [Math.round(r.padded.ms), r.padded]);
+    }
+    await context.close();
+
+    // A full System Information report holds dozens of data types: 25 MB must parse quickly in both engines
+    for (const engineName of ['chromium', 'webkit']) {
+      const eng = engineName === 'webkit' ? await webkit.launch() : browser;
+      try {
+        const made = await newPage('ok', {}, eng);
+        const b = await made.page.evaluate((spx) => {
+          const S = window.PCSys;
+          if (!S || !S.parseSpx) return null;
+          const entry = (i) => '<dict><key>_name</key><string>App ' + i + '</string><key>path</key><string>/Applications/App ' + i + '.app</string><key>version</key><string>1.0</string></dict>';
+          const parts = [];
+          let size = spx.length; // the wrapper below adds more, so the total is over 25,000,000
+          for (let i = 0; size < 25000000; i++) { const e = entry(i); parts.push(e); size += e.length; }
+          const apps = '\n\t<dict><key>_dataType</key><string>SPApplicationsDataType</string><key>_items</key><array>' + parts.join('') +
+            '</array><key>_timeStamp</key><date>2026-10-01T08:00:00Z</date></dict>';
+          const at = spx.indexOf('<array>') + '<array>'.length;
+          const big = spx.slice(0, at) + apps + spx.slice(at);
+          const t0 = performance.now();
+          const res = S.parseSpx(big);
+          const ms = performance.now() - t0;
+          return { ms, len: big.length, same: JSON.stringify(res) === JSON.stringify(S.parseSpx(spx)) };
+        }, input.silicon);
+        check('spx: 25 MB parses in < 4 s (' + engineName + ')', b !== null && b.len >= 25000000 && b.same && b.ms < 4000, b && [Math.round(b.ms), b.len, b.same]);
+        await made.context.close();
+      } finally {
+        if (eng !== browser) await eng.close();
+      }
+    }
+  }
+
   // 8b. System report rules, score, anonymiser and AI summary
   console.log('System report rules');
   {
