@@ -872,7 +872,7 @@ try {
     check('mac: parsers are loaded', r !== null);
     if (r) {
       const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-      check('mac: report head is 1 MB and the macOS majors end with 26', r.head === 1048576 && r.majors.indexOf(26) > r.majors.indexOf(15) && r.majors.indexOf(13) !== -1, [r.head, r.majors]);
+      check('mac: report head is 1 MB and the macOS majors end with 15, 26, 27', r.head === 1048576 && r.majors.slice(-3).join(',') === '15,26,27' && r.majors.indexOf(13) !== -1, [r.head, r.majors]);
       const si = r.si;
       check('mac spx: Apple silicon macOS, model, chip, memory', si.macos === 'macOS 26.0.1 (25A362)' && si.osMajor === 26 && si.modelName === 'MacBook Air' && si.modelId === 'Mac14,2' &&
         si.chip === 'Apple M2' && si.chipKind === 'chip' && si.ramGb === 16, si);
@@ -943,6 +943,123 @@ try {
         if (eng !== browser) await eng.close();
       }
     }
+  }
+
+  // 8a-mac-rules. Mac rules, score, facts, anonymiser additions and the AI summary
+  console.log('Mac report rules');
+  {
+    const macDir = path.join(here, '..', 'fixtures', 'sys', 'mac');
+    const mx = (f) => fs.readFileSync(path.join(macDir, f), 'utf8');
+    const all = fs.readdirSync(macDir);
+    const pick = (re) => all.filter((f) => re.test(f)).sort().map(mx);
+    const input = {
+      silicon: mx('silicon.spx'), intel: mx('intel.spx'),
+      setA: pick(/^(panic-full-|Google Chrome Helper|JetsamEvent-)/),
+      setB: pick(/^(Kernel-|Microsoft Word-|Safari_)/),
+      oldPanic: pick(/^Kernel-2026-08-20/), jetsam: pick(/^JetsamEvent-/)
+    };
+    const planted = JSON.parse(mx('PLANTED.json'));
+    const plantedValues = [].concat(...Object.keys(planted).map((k) => planted[k])).map((v) => v.toLowerCase());
+    const { page, context } = await newPage('ok');
+    const r = await page.evaluate((t) => {
+      const S = window.PCSys;
+      if (!S || !S.evaluateMac) return null;
+      const now = new Date('2026-10-18T12:00:00');
+      const reps = (list) => list.map((x) => S.parseMacReport(x));
+      const brief = (e) => ({
+        score: e.score, ids: e.findings.map((f) => f.id + ':' + f.severity), findings: e.findings, facts: e.facts,
+        summary: JSON.stringify(S.buildSummary(e)), panics30d: e.panics30d, crashes30d: e.crashes30d, panicCauses: e.panicCauses,
+        macos: e.macos, platform: e.platform,
+        reportDate: e.reportDate instanceof Date ? e.reportDate.getFullYear() + '-' + String(e.reportDate.getMonth() + 1).padStart(2, '0') + '-' + String(e.reportDate.getDate()).padStart(2, '0') : null,
+        shown: JSON.stringify(S.buildSummary(e)) + '\n' + e.facts.map((f) => f.value).join('\n') + '\n' + e.findings.map((f) => f.title + '\n' + f.detail + '\n' + f.fix).join('\n')
+      });
+      const si = S.parseSpx(t.silicon);
+      const it = S.parseSpx(t.intel);
+      return {
+        A: brief(S.evaluateMac({ spx: si, reports: reps(t.setA) }, now)),
+        B: brief(S.evaluateMac({ spx: it, reports: reps(t.setB) }, now)),
+        siOnly: brief(S.evaluateMac({ spx: si }, now)),
+        aReports: brief(S.evaluateMac({ reports: reps(t.setA) }, now)),
+        oldPanic: brief(S.evaluateMac({ spx: si, reports: reps(t.oldPanic) }, now)),
+        jetsam: brief(S.evaluateMac({ reports: reps(t.jetsam) }, now)),
+        worn: brief(S.evaluateMac({ spx: S.parseSpx(t.silicon.replace('78%', '55%')) }, now)),
+        service: brief(S.evaluateMac({ spx: S.parseSpx(t.silicon.replace('78%', '85%').replace('<string>Good</string>', '<string>Service Recommended</string>')) }, now)),
+        stale: brief(S.evaluateMac({ spx: si }, new Date('2026-12-01T12:00:00Z'))),
+        mac15: brief(S.evaluateMac({ spx: S.parseSpx(t.silicon.replace('macOS 26.0.1 (25A362)', 'macOS 15.7 (24G222)')) }, now)),
+        ram8192: S.parseSpx(t.silicon.replace('<string>16 GB</string>', '<string>8,192 MB</string>')).ramGb,
+        empty: brief(S.evaluateMac({}, now)),
+        anon: {
+          volume: S.anonymise('Opening /Volumes/Jane\u2019s Backup/x'),
+          udid: S.anonymise('id 00008112-001A2B3C4D5E801E'),
+          word: S.anonymise('Jane said hi', [{ word: 'Jane' }]),
+          wordInside: S.anonymise('Janet', [{ word: 'Jane' }]),
+          wordCase: S.anonymise('JANE and jane, Jane.', [{ word: 'Jane' }]),
+          plain: S.anonymise('Sam\u2019s iMac and Samsung', ['Sam\u2019s iMac']),
+          mixed: S.anonymise('Jane\u2019s MacBook Air: Jane', ['Jane\u2019s MacBook Air', { word: 'Jane' }]),
+          noObjectText: S.anonymise('[object Object] stays', [{ word: 'Jane' }])
+        },
+        volumeWords: S.parseSpx(t.silicon.replace('<string>Jane\u2019s Backup</string>', '<string>Backup</string>')).names
+      };
+    }, input);
+    check('mac rules: evaluateMac is loaded', r !== null);
+    if (r) {
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const fact = (facts, label) => (facts.filter((f) => f.label === label)[0] || {}).value;
+      const A = r.A;
+      check('mac set A: platform mac, score 55', A.platform === 'mac' && A.score === 55, A.score);
+      check('mac set A: panics risk, crashes info, disk_full warn, battery warn (in that order)', A.ids.join(',') === 'panics:risk,crashes:info,disk_full:warn,battery:warn', A.ids);
+      check('mac set A: summary JSON is exact', A.summary === '{"platform":"mac","macos":"macOS 26.0.1 (25A362)","model":"MacBook Air (Mac14,2)","chip":"Apple M2","ramGb":16,"score":55,"findings":[{"id":"panics","severity":"risk"},{"id":"crashes","severity":"info"},{"id":"disk_full","severity":"warn"},{"id":"battery","severity":"warn"}],"panics30d":2,"panicCauses":[{"name":"data_abort","count":1},{"name":"watchdog","count":1}],"crashes30d":2,"topCrashApps":[{"name":"Google Chrome Helper (Renderer)","count":2}],"diskMaxUsedPct":91.9,"batteryHealthPct":78,"batteryCycles":412}', A.summary);
+      const aPan = A.findings[0];
+      check('mac set A: panics title, most recent watchdog, both cause sentences', aPan.title === 'Your Mac restarted after a kernel panic 2 times in 30 days' &&
+        /^Most recent: 2026-10-14: watchdog timeout: no checkins from watchdogd/.test(aPan.detail) && /The system stopped responding/.test(aPan.detail) &&
+        /A memory access fault inside macOS/.test(aPan.detail) && !/kernel extension was involved/.test(aPan.detail), aPan);
+      check('mac set A: crashes detail names the app and its count', A.findings[1].title === 'Apps crashed 2 times in 30 days' && /Google Chrome Helper \(Renderer\) \(2 crashes\)/.test(A.findings[1].detail), A.findings[1]);
+      check('mac set A: disk_full title and detail', A.findings[2].title === 'Startup disk is 91.9 % full' && /startup disk \(\/\) 91\.9 %/.test(A.findings[2].detail) && !/40 %/.test(A.findings[2].detail), A.findings[2]);
+      check('mac set A: battery title and detail', A.findings[3].title === 'Battery holds 78 % of its original charge' && /^412 charge cycles so far\. macOS rates it: Good\.$/.test(A.findings[3].detail) &&
+        /^Normal wear\./.test(A.findings[3].fix), A.findings[3]);
+      check('mac set A: facts in order', same(A.facts.map((f) => f.label), ['System', 'Model', 'Chip', 'Memory', 'Startup disk', 'Battery health', 'Kernel panics (30 days)', 'App crashes (30 days)', 'Report from']), A.facts);
+      check('mac set A: fact values', fact(A.facts, 'System') === 'macOS 26.0.1 (25A362)' && fact(A.facts, 'Model') === 'MacBook Air (Mac14,2)' && fact(A.facts, 'Chip') === 'Apple M2' &&
+        fact(A.facts, 'Memory') === '16 GB' && fact(A.facts, 'Startup disk') === '91.9 % used' && fact(A.facts, 'Battery health') === '78 % (412 cycles)' &&
+        fact(A.facts, 'Kernel panics (30 days)') === '2' && fact(A.facts, 'App crashes (30 days)') === '2' && fact(A.facts, 'Report from') === '2026-10-18', A.facts);
+      const B = r.B;
+      check('mac set B: score 20', B.score === 20, B.score);
+      check('mac set B: panics warn, crashes warn, disk_smart risk, disk_full risk, old_macos warn', B.ids.join(',') === 'panics:warn,crashes:warn,disk_smart:risk,disk_full:risk,old_macos:warn', B.ids);
+      check('mac set B: summary JSON is exact', B.summary === '{"platform":"mac","macos":"macOS 13.7.1 (22H221)","model":"iMac (iMac19,1)","chip":"6-Core Intel Core i5","ramGb":16,"score":20,"findings":[{"id":"panics","severity":"warn"},{"id":"crashes","severity":"warn"},{"id":"disk_smart","severity":"risk"},{"id":"disk_full","severity":"risk"},{"id":"old_macos","severity":"warn"}],"panics30d":1,"panicCauses":[{"name":"cpu_error","count":1}],"crashes30d":3,"topCrashApps":[{"name":"Microsoft Word","count":2},{"name":"Safari","count":1}],"diskMaxUsedPct":96,"batteryHealthPct":null,"batteryCycles":null}', B.summary);
+      check('mac set B: panics detail names the third-party extension and the CPU cause', B.findings[0].title === 'Your Mac restarted after a kernel panic 1 time in 30 days' &&
+        /A non-Apple kernel extension was involved: com\.paragon-software\.filesystems\.ntfs\./.test(B.findings[0].detail) && /The processor reported a hardware error/.test(B.findings[0].detail), B.findings[0]);
+      check('mac set B: battery fact reads "No battery reported", Processor label', fact(B.facts, 'Battery health') === 'No battery reported' && fact(B.facts, 'Processor') === '6-Core Intel Core i5' && fact(B.facts, 'Chip') === undefined, B.facts);
+      check('mac set B: disk_smart and disk_full texts', B.findings[2].title === 'A disk reports that it is failing' && B.findings[2].detail === 'Startup disk: SMART status Failing.' &&
+        B.findings[3].title === 'Startup disk is 96 % full', [B.findings[2], B.findings[3]]);
+      check('mac set B: old_macos title', B.findings[4].title === 'macOS 13 is not one of the three latest versions', B.findings[4]);
+      check('mac rules: silicon.spx alone -> no report counts, disk_full + battery, score 80', r.siOnly.panics30d === null && r.siOnly.crashes30d === null &&
+        r.siOnly.ids.join(',') === 'disk_full:warn,battery:warn' && r.siOnly.score === 80 && fact(r.siOnly.facts, 'Kernel panics (30 days)') === undefined, r.siOnly);
+      check('mac rules: Set A reports alone -> report date 2026-10-16, no macOS, panics + crashes', r.aReports.reportDate === '2026-10-16' && r.aReports.macos === null &&
+        r.aReports.ids.join(',') === 'panics:risk,crashes:info', r.aReports);
+      check('mac rules: an August panic is outside the window -> panics30d 0, no finding', r.oldPanic.panics30d === 0 && !r.oldPanic.ids.some((i) => /^panics/.test(i)) && same(r.oldPanic.panicCauses, []), r.oldPanic);
+      check('mac rules: Jetsam only -> 0 panics, 0 crashes, no findings, score 100', r.jetsam.panics30d === 0 && r.jetsam.crashes30d === 0 && r.jetsam.ids.length === 0 && r.jetsam.score === 100, r.jetsam);
+      check('mac rules: battery 55 % -> risk with a replacement fix', r.worn.ids.includes('battery:risk') && /^Plan a battery replacement/.test(r.worn.findings.filter((f) => f.id === 'battery')[0].fix), r.worn.ids);
+      const sv = r.service.findings.filter((f) => f.id === 'battery')[0];
+      check('mac rules: Service Recommended at 85 % -> battery warn, condition named', sv && sv.severity === 'warn' && /^Battery holds 85 % /.test(sv.title) && /Service Recommended/.test(sv.detail) &&
+        /^Plan a battery replacement/.test(sv.fix) && fact(r.service.facts, 'Battery health') === '85 % (412 cycles), Service Recommended', [sv, r.service.facts]);
+      const st = r.stale.findings.filter((f) => f.id === 'old_report')[0];
+      check('mac rules: a 44-day-old report -> old_report info', st && st.severity === 'info' && st.title === 'This report is 44 days old' && st.fix === '', st);
+      check('mac rules: macOS 15 is still supported', !r.mac15.ids.some((i) => /^old_macos/.test(i)), r.mac15.ids);
+      check('mac rules: no input -> score 100, no facts but the report date', r.empty.score === 100 && r.empty.ids.length === 0 && r.empty.panics30d === null, r.empty);
+      check('mac spx: "8,192 MB" of memory -> 8 GB', r.ram8192 === 8, r.ram8192);
+      const leaks = (s) => plantedValues.filter((v) => s.toLowerCase().indexOf(v) !== -1);
+      const badPath = (s) => /\/Users\//.test(s) || /\/Volumes\/(?!\[volume\])/.test(s);
+      check('mac anonymiser: no planted identifier in summary, facts, findings or PDF text', !leaks(A.shown).length && !leaks(B.shown).length && !badPath(A.shown) && !badPath(B.shown),
+        [leaks(A.shown), leaks(B.shown)]);
+      const fixes = A.findings.concat(B.findings, r.worn.findings, r.service.findings, r.stale.findings).map((f) => f.title + ' ' + f.detail + ' ' + f.fix).join('\n');
+      check('mac rules: no Terminal or shell command in any title, detail or fix', !/Terminal|sudo|csrutil|diskutil|pmset|defaults |system_profiler/.test(fixes), (fixes.match(/.{0,40}(?:Terminal|sudo|csrutil|diskutil|pmset|defaults |system_profiler).{0,20}/) || [])[0]);
+      const x = r.anon;
+      check('mac anonymiser: /Volumes/<name> -> /Volumes/[volume]', x.volume === 'Opening /Volumes/[volume]/x', x.volume);
+      check('mac anonymiser: provisioning UDID -> [id]', /\[id\]/.test(x.udid) && !/[0-9A-F]{6,}/i.test(x.udid), x.udid);
+      check('mac anonymiser: {word} names are whole words, any case', x.word === '[name] said hi' && x.wordInside === 'Janet' && x.wordCase === '[name] and [name], [name].', [x.word, x.wordInside, x.wordCase]);
+      check('mac anonymiser: plain names stay substrings, mixed lists work', x.plain === '[name] and Samsung' && x.mixed === '[name]: [name]' && x.noObjectText === '[object Object] stays', [x.plain, x.mixed, x.noObjectText]);
+      check('mac spx: a generic volume name ("Backup") is not a name', !r.volumeWords.some((n) => typeof n === 'object' && /^backup$/i.test(n.word)), r.volumeWords);
+    }
+    await context.close();
   }
 
   // 8b. System report rules, score, anonymiser and AI summary

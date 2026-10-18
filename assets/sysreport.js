@@ -587,6 +587,14 @@
 
   function letters(s) { return (String(s).match(NAME_LETTER) || []).length; }
 
+  // Volume names macOS or disk makers give out of the box: never personal, and masking them would garble ordinary
+  // words everywhere ("Data" in "Kernel data abort"). Compared lower-case, without a trailing number ("Untitled 2").
+  var GENERIC_VOLUME = toSet(['macintosh hd', 'macintosh', 'untitled', 'usb', 'usb drive', 'usb disk', 'usb stick', 'backup', 'backups',
+    'data', 'disk', 'drive', 'external', 'external drive', 'external disk', 'volume', 'storage', 'no name', 'time machine',
+    'time machine backups', 'recovery', 'preboot', 'update', 'boot camp', 'bootcamp', 'windows', 'shared', 'photos', 'music',
+    'media', 'files', 'documents', 'archive', 'work', 'home', 'samsung', 'sandisk', 'seagate', 'lacie', 'kingston']);
+  function genericKey(name) { return String(name).trim().toLowerCase().replace(/\s+\d+$/, ''); }
+
   // Computer name, user, serials, UUIDs and volume names, kept only so the anonymiser can remove them elsewhere.
   // Plain strings are replaced as substrings; {word} entries only as whole words.
   function spxNames(hw, sw, battery, volumes) {
@@ -626,7 +634,7 @@
     volumes.forEach(function (v) {
       var mount = pstr(v.mount_point) || '';
       var name = pstr(v._name);
-      if (name && mount.indexOf('/System/Volumes/') !== 0 && name !== 'Macintosh HD') addWord(name);
+      if (name && mount.indexOf('/System/Volumes/') !== 0 && letters(name) >= 4 && !GENERIC_VOLUME[genericKey(name)]) addWord(name);
       add(v.volume_uuid);
     });
     return list;
@@ -680,8 +688,10 @@
     var chipType = pstr(hw && hw.chip_type);
     var cpuType = pstr(hw && hw.cpu_type);
     var memText = pstr(hw && hw.physical_memory);
-    var mem = memText ? parseFloat(memText.replace(',', '.')) : NaN;
-    if (!isNaN(mem) && /\bMB\b/i.test(memText)) mem = round1(mem / 1024);
+    var memMb = memText ? /\bMB\b/i.test(memText) : false;
+    // "8,192 MB" / "8.192 MB": in megabytes the separator groups thousands; in gigabytes it is a decimal mark
+    var mem = memText ? parseFloat(memMb ? memText.replace(/[,.\s'](?=\d{3}(?!\d))/g, '') : memText.replace(',', '.')) : NaN;
+    if (!isNaN(mem) && memMb) mem = round1(mem / 1024);
     if (!isNaN(mem) && /\bTB\b/i.test(memText)) mem = mem * 1024;
 
     var battery = { present: false };
@@ -811,7 +821,7 @@
     var head = body.slice(0, 65536);
     var app = pstr(header.app_name) || pstr(header.name);
     if (!app) { var p = /"procName"\s*:\s*"([^"\\]*)"/.exec(head); app = p ? p[1] : ''; }
-    var ex = /"exception"\s*:\s*\{[^}]*"type"\s*:\s*"([A-Z_]+)"/.exec(head);
+    var ex = /"exception"\s*:\s*\{[^}]{0,4096}"type"\s*:\s*"([A-Z_]+)"/.exec(head);
     return { kind: 'crash', time: time, app: app.slice(0, 256), exception: ex ? ex[1] : null };
   }
 
@@ -826,7 +836,7 @@
       var m;
       if (app === null && (m = /^Process:\s+(.+?) \[\d+\]/.exec(line))) app = m[1];
       else if (date === null && (m = /^Date\/Time:\s+(.+)$/.exec(line))) date = m[1];
-      else if (ex === null && (m = /^Exception Type:\s+(\S+)/.exec(line))) ex = m[1];
+      else if (ex === null && (m = /^Exception Type:\s+([A-Z_]+)/.exec(line))) ex = m[1];
     }
     if (app === null || date === null) return { error: 'not_mac_report' };
     return { kind: 'crash', time: macReportTime(date), app: app.slice(0, 256), exception: ex };
@@ -864,24 +874,45 @@
   // At most 300 names (first seen, 3+ characters) go into one alternation, longest first, built once per list:
   // a huge paste with tens of thousands of hostnames must not cost one regex per name per string.
   var ANON_NAME_CAP = 300;
-  var nameReCache = { list: null, length: -1, re: null };
+  var NO_NAMES = { list: null, length: -1, re: null, wordRe: null };
+  var nameReCache = NO_NAMES;
+  // Letters and digits that may not touch a {word} name (no Unicode property escapes: they are ES2018)
+  var WORD_CHARS = 'A-Za-z0-9\u00C0-\u024F';
 
+  function isWordName(n) { return n !== null && typeof n === 'object' && typeof n.word === 'string'; }
+
+  // Plain names (strings) are matched as substrings, exactly as before; {word} names only as whole words.
   function namesRegex(names) {
-    if (!names || !names.length) return null;
-    if (nameReCache.list === names && nameReCache.length === names.length) return nameReCache.re;
+    if (!names || !names.length) return NO_NAMES;
+    if (nameReCache.list === names && nameReCache.length === names.length) return nameReCache;
     var picked = [];
+    var words = [];
     var seen = Object.create(null);
-    for (var i = 0; i < names.length && picked.length < ANON_NAME_CAP; i++) {
+    var wordSeen = Object.create(null);
+    for (var i = 0; i < names.length && (picked.length < ANON_NAME_CAP || words.length < ANON_NAME_CAP); i++) {
+      if (isWordName(names[i])) {
+        var w = names[i].word;
+        var wk = w.toLowerCase();
+        if (w.length < 3 || wordSeen[wk] || words.length >= ANON_NAME_CAP) continue;
+        wordSeen[wk] = true;
+        words.push(w);
+        continue;
+      }
       var n = names[i] === null || names[i] === undefined ? '' : String(names[i]);
       var key = n.toLowerCase();
-      if (n.length < 3 || seen[key]) continue;
+      if (n.length < 3 || seen[key] || picked.length >= ANON_NAME_CAP) continue;
       seen[key] = true;
       picked.push(n);
     }
-    picked.sort(function (a, b) { return b.length - a.length; });
-    var re = picked.length ? new RegExp(picked.map(escapeRe).join('|'), 'gi') : null;
-    nameReCache = { list: names, length: names.length, re: re };
-    return re;
+    var longestFirst = function (a, b) { return b.length - a.length; };
+    picked.sort(longestFirst);
+    words.sort(longestFirst);
+    nameReCache = {
+      list: names, length: names.length,
+      re: picked.length ? new RegExp(picked.map(escapeRe).join('|'), 'gi') : null,
+      wordRe: words.length ? new RegExp('(^|[^' + WORD_CHARS + '])(?:' + words.map(escapeRe).join('|') + ')(?=$|[^' + WORD_CHARS + '])', 'gi') : null
+    };
+    return nameReCache;
   }
 
   function anonymise(value, names) {
@@ -891,9 +922,13 @@
       .replace(/\bssid[ \t]*[=:]?[ \t]*'[^'\r\n]{0,128}'/gi, 'ssid="[wifi]"')
       .replace(/\bssid=(?!["'])[^\s,;]{1,128}/gi, 'ssid="[wifi]"')
       .replace(IPV6_COMPRESSED, function (all, before, ip) { return /\d/.test(ip) ? before + '[ip]' : all; })
+      // Mac: volume names in /Volumes/<name>, and Apple silicon provisioning UDIDs (before HEX_RUN takes half of one)
+      .replace(/(\/Volumes\/)(?!\[volume\])[^\/"\n]+/g, '$1[volume]') // already-masked text passes through unchanged
+      .replace(/\b[0-9A-F]{8}-[0-9A-F]{16}\b/gi, '[id]')
       .replace(HEX_RUN, '$1[id]');
     var nameRe = namesRegex(names);
-    if (nameRe) s = s.replace(nameRe, '[name]');
+    if (nameRe.re) s = s.replace(nameRe.re, '[name]');
+    if (nameRe.wordRe) s = s.replace(nameRe.wordRe, '$1[name]');
     return s
       .replace(/([A-Za-z]:\\Users\\)[^\\\s]+/gi, '$1[user]')
       .replace(/(\/(?:home|Users|run\/media|media)\/)[^\/\s]+/g, '$1[user]')
@@ -1330,6 +1365,174 @@
     return out;
   }
 
+  // Mac fixes point to System Settings, the App Store, Disk Utility, Time Machine, Apple Diagnostics or Apple Support:
+  // never Terminal or a command.
+  var MAC_FIX = {
+    panics: 'Install macOS updates (System Settings > General > Software Update). Update or remove apps that add drivers or extensions (System Settings > General > Login Items & Extensions), and unplug hubs, docks and other accessories to see if the restarts stop. If they continue, run Apple Diagnostics (Apple Support explains how to start it) or contact Apple Support.',
+    crashes: 'Update the app from the App Store or its own updater. If it keeps crashing, quit it, delete it and install it again.',
+    disk_smart: 'Back up now with Time Machine (System Settings > General > Time Machine). Then open Disk Utility, select the disk and run First Aid. A disk that reports a SMART failure should be replaced; contact Apple Support or a repair shop.',
+    disk_full: 'Open System Settings > General > Storage to see what takes space, empty the Trash, and remove large files and apps you don\'t use.',
+    batteryReplace: 'Plan a battery replacement with Apple or an Apple Authorised Service Provider. System Settings > Battery shows Apple\'s own assessment.',
+    batteryWear: 'Normal wear. System Settings > Battery > Battery Health can optimise charging to slow it down.',
+    old_macos: 'Open System Settings > General > Software Update to upgrade. If this Mac can\'t run a newer macOS, avoid using it for banking and keep your browser up to date.'
+  };
+  var MAC_PANIC_CAUSE_ORDER = ['watchdog', 'data_abort', 'cpu_error', 'sleep_wake', 'gpu', 'other'];
+  var MAC_PANIC_CAUSE_TEXT = {
+    watchdog: 'The system stopped responding, often because of a driver, an extension or a connected device.',
+    data_abort: 'A memory access fault inside macOS, usually a driver or kernel extension, sometimes faulty memory.',
+    cpu_error: 'The processor reported a hardware error; on Intel Macs this often points to the logic board, power or overheating.',
+    sleep_wake: 'It failed while going to sleep or waking up, often because of a connected device.',
+    gpu: 'The graphics system failed.',
+    other: 'The cause is not one PC Check recognises.'
+  };
+  var MAC_DISK_WHERE = { startup: 'startup disk', internal: 'internal disk', external: 'external disk' };
+  var UNNAMED_APP = 'An unnamed app';
+
+  function capitalise(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  // input: {spx: parseSpx result, reports: [parseMacReport results]}. Errors and non-crash reports are ignored.
+  function evaluateMac(input, now) {
+    var r = input || {};
+    var at = now || new Date();
+    var findings = [];
+    var facts = [];
+    var spx = usable(r.spx);
+    var given = Array.isArray(r.reports) && r.reports.length > 0;
+    var reports = (given ? r.reports : []).filter(function (x) {
+      return x && !x.error && (x.kind === 'panic' || x.kind === 'crash');
+    });
+    var names = spx && Array.isArray(spx.names) ? spx.names : [];
+
+    // Report date: the .spx's newest time stamp, else the newest diagnostic report, else now
+    var reportDate = spx && spx.reportDate instanceof Date ? spx.reportDate : null;
+    if (!reportDate) {
+      reports.forEach(function (x) {
+        if (x.time instanceof Date && !isNaN(x.time.getTime()) && (!reportDate || x.time.getTime() > reportDate.getTime())) reportDate = x.time;
+      });
+    }
+    if (!reportDate) reportDate = at;
+    var from = reportDate.getTime() - 30 * DAY;
+    var to = reportDate.getTime() + DAY;
+    var inWindow = reports.filter(function (x) {
+      var t = x.time instanceof Date ? x.time.getTime() : NaN;
+      return !isNaN(t) && t >= from && t <= to;
+    });
+    var panics = inWindow.filter(function (x) { return x.kind === 'panic'; })
+      .sort(function (a, b) { return b.time.getTime() - a.time.getTime(); });
+    var crashes = inWindow.filter(function (x) { return x.kind === 'crash'; });
+
+    var causeCount = Object.create(null);
+    var extensions = [];
+    panics.forEach(function (p) {
+      var c = MAC_PANIC_CAUSE_TEXT[p.cause] ? p.cause : 'other';
+      causeCount[c] = (causeCount[c] || 0) + 1;
+      (Array.isArray(p.extensions) ? p.extensions : []).forEach(function (id) {
+        if (extensions.length < 3 && extensions.indexOf(id) === -1) extensions.push(String(id));
+      });
+    });
+    // App names are masked before counting, so two apps that both carry a personal name are one "[name]" entry
+    var appCount = Object.create(null);
+    crashes.forEach(function (c) {
+      var app = anonymise(c.app || '', names).trim() || UNNAMED_APP;
+      appCount[app] = (appCount[app] || 0) + 1;
+    });
+    var apps = countList(appCount);
+
+    var battery = spx && spx.battery ? spx.battery : null;
+    var volumes = spx && Array.isArray(spx.volumes) ? spx.volumes : [];
+    var measured = volumes.filter(function (v) { return typeof v.usedPct === 'number'; });
+    var worst = null;
+    measured.forEach(function (v) { if (!worst || v.usedPct > worst.usedPct) worst = v; });
+    var model = !spx ? null : (spx.modelName && spx.modelId ? spx.modelName + ' (' + spx.modelId + ')' : spx.modelName || spx.modelId || null);
+
+    var out = { platform: 'mac', score: 100, findings: findings, facts: facts, reportDate: reportDate,
+      macos: spx ? spx.macos : null, model: model, chip: spx ? spx.chip : null,
+      ramGb: spx && typeof spx.ramGb === 'number' ? spx.ramGb : null,
+      panics30d: given ? panics.length : null, panicCauses: countList(causeCount),
+      crashes30d: given ? crashes.length : null, topCrashApps: apps.slice(0, 3),
+      diskMaxUsedPct: worst ? worst.usedPct : null,
+      batteryHealthPct: battery && battery.present && typeof battery.healthPct === 'number' ? battery.healthPct : null,
+      batteryCycles: battery && battery.present && typeof battery.cycles === 'number' ? battery.cycles : null,
+      names: names };
+    function add(id, severity, title, detail, fix) { findings.push({ id: id, severity: severity, title: title, detail: detail || '', fix: fix || '' }); }
+
+    if (panics.length) {
+      var last = panics[0];
+      var line = anonymise(last.causeLine || '', names).trim();
+      var detail = 'Most recent: ' + localDate(last.time) + (line ? ': ' + line.replace(/[.\s]+$/, '') : '') + '.';
+      MAC_PANIC_CAUSE_ORDER.forEach(function (c) { if (causeCount[c]) detail += ' ' + MAC_PANIC_CAUSE_TEXT[c]; });
+      if (extensions.length) detail += ' A non-Apple kernel extension was involved: ' + extensions.join(', ') + '.';
+      add('panics', panics.length >= 2 ? 'risk' : 'warn',
+        'Your Mac restarted after a kernel panic ' + plural(panics.length, 'time', 'times') + ' in 30 days', detail, MAC_FIX.panics);
+    }
+    if (crashes.length) {
+      add('crashes', crashes.length >= 3 ? 'warn' : 'info', 'Apps crashed ' + plural(crashes.length, 'time', 'times') + ' in 30 days',
+        'Most crashes: ' + apps.slice(0, 3).map(function (a) { return a.name + ' (' + plural(a.count, 'crash', 'crashes') + ')'; }).join('; ') + '.',
+        MAC_FIX.crashes);
+    }
+    var failing = volumes.filter(function (v) { return typeof v.smart === 'string' && v.smart.trim().toLowerCase() === 'failing'; });
+    if (failing.length) {
+      var wheres = nameSet();
+      failing.forEach(function (v) { addName(wheres, MAC_DISK_WHERE[v.where] || 'disk'); });
+      add('disk_smart', 'risk', 'A disk reports that it is failing',
+        wheres.list.map(function (w) { return capitalise(w) + ': SMART status Failing.'; }).join(' '), MAC_FIX.disk_smart);
+    }
+    if (worst && worst.usedPct >= 90) {
+      var full = measured.filter(function (v) { return v.usedPct >= 90; }).sort(function (a, b) { return b.usedPct - a.usedPct; });
+      add('disk_full', worst.usedPct >= 95 ? 'risk' : 'warn', capitalise(MAC_DISK_WHERE[worst.where] || 'disk') + ' is ' + worst.usedPct + ' % full',
+        'Space used: ' + full.map(function (v) { return (MAC_DISK_WHERE[v.where] || 'disk') + ' (' + v.mount + ') ' + v.usedPct + ' %'; }).join('; ') +
+        '. A full disk can stop updates and apps from saving.', MAC_FIX.disk_full);
+    }
+    if (battery && battery.present) {
+      var h = out.batteryHealthPct;
+      var service = battery.service === true;
+      if ((h !== null && h < 80) || service) {
+        var bDetail = (out.batteryCycles !== null ? plural(out.batteryCycles, 'charge cycle', 'charge cycles') + ' so far. ' : '') +
+          (battery.condition ? 'macOS rates it: ' + battery.condition + '.' : '');
+        add('battery', h !== null && h < 60 ? 'risk' : 'warn',
+          h !== null ? 'Battery holds ' + h + ' % of its original charge' : 'macOS recommends a battery service',
+          bDetail.trim(), (h !== null && h < 60) || service ? MAC_FIX.batteryReplace : MAC_FIX.batteryWear);
+      }
+    }
+    var major = spx && typeof spx.osMajor === 'number' ? spx.osMajor : null;
+    if (major !== null && major < MACOS_MAJORS[MACOS_MAJORS.length - 3]) {
+      add('old_macos', 'warn', 'macOS ' + major + ' is not one of the three latest versions',
+        'Apple gives the full set of security fixes only to current macOS versions.', MAC_FIX.old_macos);
+    }
+    var age = Math.floor((at.getTime() - reportDate.getTime()) / DAY);
+    if (age > 30) add('old_report', 'info', 'This report is ' + age + ' days old', 'Save a new System Information report to see the current state.', '');
+
+    var risks = findings.filter(function (f) { return f.severity === 'risk'; }).length;
+    var warns = findings.filter(function (f) { return f.severity === 'warn'; }).length;
+    out.score = Math.max(0, 100 - 25 * risks - 10 * warns);
+
+    if (out.macos) facts.push({ label: 'System', value: out.macos });
+    if (out.model) facts.push({ label: 'Model', value: out.model });
+    if (out.chip) facts.push({ label: spx.chipKind === 'cpu' ? 'Processor' : 'Chip', value: out.chip });
+    if (out.ramGb !== null) facts.push({ label: 'Memory', value: out.ramGb + ' GB' });
+    var startup = measured.filter(function (v) { return v.where === 'startup'; })[0];
+    if (startup) facts.push({ label: 'Startup disk', value: startup.usedPct + ' % used' });
+    if (battery && !battery.present) facts.push({ label: 'Battery health', value: 'No battery reported' });
+    else if (battery && (out.batteryHealthPct !== null || out.batteryCycles !== null || battery.service)) {
+      var parts = [];
+      if (out.batteryHealthPct !== null) parts.push(out.batteryHealthPct + ' %' + (out.batteryCycles !== null ? ' (' + plural(out.batteryCycles, 'cycle', 'cycles') + ')' : ''));
+      else if (out.batteryCycles !== null) parts.push(plural(out.batteryCycles, 'cycle', 'cycles'));
+      if (battery.service && battery.condition) parts.push(battery.condition);
+      facts.push({ label: 'Battery health', value: parts.join(', ') });
+    }
+    if (given) {
+      facts.push({ label: 'Kernel panics (30 days)', value: String(panics.length) });
+      facts.push({ label: 'App crashes (30 days)', value: String(crashes.length) });
+    }
+    if (spx || given) facts.push({ label: 'Report from', value: localDate(reportDate) });
+
+    // Every text field is anonymised here too (the parsers did not have the .spx names), so no screen or PDF shows a raw value.
+    facts.forEach(function (f) { f.value = anonymise(f.value, names); });
+    findings.forEach(function (f) { f.title = anonymise(f.title, names); f.detail = anonymise(f.detail, names); });
+    ['macos', 'model', 'chip'].forEach(function (k) { if (out[k] !== null && out[k] !== undefined) out[k] = anonymise(out[k], names); });
+    return out;
+  }
+
   // ---------------------------------------------------------------------------
   // The only thing that may ever be sent for an AI explanation: a small, whitelisted summary
   // ---------------------------------------------------------------------------
@@ -1384,7 +1587,38 @@
     };
   }
 
+  // What the server accepts as a macOS version ("macOS 26.0.1 (25A362)", "Mac OS X 10.13.6 (17G66)")
+  var SUMMARY_MACOS = /^(?:macOS|Mac OS X|OS X) [0-9][0-9A-Za-z.() ]{0,63}$/;
+  var SUMMARY_MAC_CAUSES = toSet(MAC_PANIC_CAUSE_ORDER);
+
+  function summaryCount(v) { return typeof v === 'number' && isFinite(v) && v >= 0 && Math.floor(v) === v ? Math.min(v, 100000) : null; }
+
+  function buildMacSummary(e) {
+    var names = e.names || [];
+    var str = function (v) { return v === null || v === undefined ? null : cap(anonymise(v, names)); };
+    var macos = str(e.macos);
+    return {
+      platform: 'mac',
+      macos: macos !== null && SUMMARY_MACOS.test(macos) ? macos : null,
+      model: str(e.model),
+      chip: str(e.chip),
+      ramGb: summaryNumber(e.ramGb, 4096),
+      score: e.score,
+      findings: e.findings.slice(0, 20).map(function (f) { return { id: f.id, severity: f.severity }; }),
+      panics30d: summaryCount(e.panics30d),
+      panicCauses: (e.panicCauses || []).filter(function (c) { return SUMMARY_MAC_CAUSES[c.name]; })
+        .map(function (c) { return { name: c.name, count: summaryCount(c.count) || 0 }; }).sort(byCountThenName).slice(0, 3),
+      crashes30d: summaryCount(e.crashes30d),
+      topCrashApps: (e.topCrashApps || []).map(function (a) { return { name: str(a.name), count: summaryCount(a.count) || 0 }; })
+        .sort(byCountThenName).slice(0, 3),
+      diskMaxUsedPct: summaryNumber(e.diskMaxUsedPct, 100),
+      batteryHealthPct: summaryNumber(e.batteryHealthPct, 200),
+      batteryCycles: summaryCount(e.batteryCycles)
+    };
+  }
+
   function buildSummary(e) {
+    if (e && e.platform === 'mac') return buildMacSummary(e);
     if (e && e.platform === 'linux') return buildLinuxSummary(e);
     var names = e.names || [];
     return {
@@ -1407,6 +1641,7 @@
     LINUX_PASTE_CAP: LINUX_PASTE_CAP, LINUX_MAX_LINES: LINUX_MAX_LINES,
     parseLinuxSystem: parseLinuxSystem, parseJournal: parseJournal, parseBoots: parseBoots,
     parseUpower: parseUpower, parseDisks: parseDisks,
-    MAC_REPORT_HEAD: MAC_REPORT_HEAD, MACOS_MAJORS: MACOS_MAJORS, parseSpx: parseSpx, parseMacReport: parseMacReport
+    MAC_REPORT_HEAD: MAC_REPORT_HEAD, MACOS_MAJORS: MACOS_MAJORS, parseSpx: parseSpx, parseMacReport: parseMacReport,
+    evaluateMac: evaluateMac
   };
 })();
