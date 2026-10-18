@@ -1054,7 +1054,7 @@
   // the model and copy counter after the device word go with it); device host names ("Janes-iPhone.local");
   // international phone numbers with at least 8 digits (a "+0100" time zone or a "+0x1c" offset never matches).
   var IOS_MOBILE_PATH = /(\/var\/mobile\/)[^"\n]*/g;
-  var DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30} ){0,2}[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30}['`\u2018\u2019\u02BC]s?\s+(?:iPhone|iPad|iPod touch|iPod|Apple Watch)(?: (?:[0-9]{1,2}[a-z]?|SE|XR|XS|X))?(?: (?:Pro Max|Pro|Plus|Max|mini|Air|SE))?(?: [0-9]{1,2})?(?: ?\(\d{1,3}\))?(?![A-Za-z0-9])/gi;
+  var DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30} ){0,2}[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30}['`\u2018\u2019\u02BC][sS]?\s+(?:[iI][pP][hH][oO][nN][eE]|[iI][pP][aA][dD]|[iI][pP][oO][dD] [tT][oO][uU][cC][hH]|[iI][pP][oO][dD]|[aA][pP][pP][lL][eE] [wW][aA][tT][cC][hH])(?:(?: [0-9]{1,2}e?)? (?:Pro Max|PRO MAX|Pro|PRO|Plus|PLUS|Max|MAX|mini|MINI|Air|AIR|SE)(?: [0-9]{1,2}(?= ?\(\d{1,3}\)|[)\].,;:!?"'\r\n]|$))?| (?:[0-9]{1,2}e?|SE|XR|XS|X)(?= ?\(\d{1,3}\)|[)\].,;:!?"'\r\n]|$))?(?: ?\(\d{1,3}\))?(?![A-Za-z0-9])/g;
   // Default device names in other languages ("iPhone de Ana Maria Silva", "iPad von Jan van Dijk", "iPhone di Gio"):
   // up to three capitalised name parts, with a lower-case particle between them, so "iPhone de la maison" stays.
   var DEVICE_OF_NAME = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:iPhone|iPad|iPod)\s+(?:de|von|di)\s+[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F.\-]{0,30}(?:\s+(?:(?:da|das|de|del|della|der|den|di|do|dos|du|la|le|van|von|zu)\s+)?[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F.\-]{0,30}){0,2}(?![A-Za-z0-9])/g;

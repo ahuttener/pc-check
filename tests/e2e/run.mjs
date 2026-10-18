@@ -1359,6 +1359,8 @@ try {
           upperPlain: ['your iPhone', 'the iPhone restarted', 'iPad Pro', 'YOUR IPHONE', 'THE IPHONE RESTARTED', 'IPAD PRO', 'Your iPhone 15 Pro restarted'].map((v) => S.anonymise(v)),
           models: ["Mary Ann Smith's iPhone 15 Pro Max (2)", "Jane's iPhone SE", "Jane's iPad mini (3)", "Jane's iPhone 16e", "Jane's iPad Air 2", "Jane's iPhone 15 Pro Max(2)", "James' iPhone 14 Plus"].map((v) => S.anonymise(v)),
           modelTail: ["Mary Ann Smith's iPhone 15 Pro Max (2) restarted", "from Jane's iPhone 15 Pro."].map((v) => S.anonymise(v))
+          , notModels: ["Jane's iPhone 2 times", "Jane's iPhone 12 hours ago", "Jane's iPad Pro 5 minutes", "Jane's iPhone x", "Apple's iPhone 15 launch",
+            "Jane's iPhone X restarted", "Jane's iPhone 15 Pro Max (2)"].map((v) => S.anonymise(v))
         },
         exported: typeof S.uniqueIosReports === 'function' && typeof S.parseIosReport === 'function'
         , goodA: S.evaluateIos({ reports: reps(t.setA), batteryPct: 84 }, now).goodNews, goodB: S.evaluateIos({ reports: reps(t.setB), batteryPct: 58 }, now).goodNews,
@@ -1443,6 +1445,10 @@ try {
       check('ios anonymiser: your / the iPhone, iPad Pro stay in any case', same(x.upperPlain, ['your iPhone', 'the iPhone restarted', 'iPad Pro', 'YOUR IPHONE', 'THE IPHONE RESTARTED', 'IPAD PRO', 'Your iPhone 15 Pro restarted']), x.upperPlain);
       check('ios anonymiser: model and copy-counter suffixes are swallowed', x.models.every((v) => v === '[device]'), x.models);
       check('ios anonymiser: the words after a device name stay', same(x.modelTail, ['[device] restarted', '[device].']), x.modelTail);
+      // A model is swallowed only when it is clearly one (number + variant word, or a bare number / SE / X at the end,
+      // before punctuation or a copy counter); a bare number before an ordinary word stays (it is not personal).
+      check('ios anonymiser: a number or word after a device name that is not a model stays', same(x.notModels,
+        ['[device] 2 times', '[device] 12 hours ago', '[device] 5 minutes', '[device] x', '[device] 15 launch', '[device] X restarted', '[device]']), x.notModels);
       check('ios summary: real iOS versions kept (incl. a Rapid Security Response)', same(r.goodIos, ['iPhone OS 26.0.1 (23A355)', 'iOS 16.5.1 (c) (20F770750d)', 'iPadOS 18.7 (22H20)', 'iPhone OS 27.0 (24A100)', 'iOS 17.6.1']), r.goodIos);
       check('ios summary: a build token that is not an Apple build -> null', r.badIos.every((v) => v === null), r.badIos);
       check('ios summary: score is a whole number from 0 to 100', same(r.scores.map((sm) => sm.score), [100, 0, 0, 0, 0, 65]), r.scores.map((sm) => sm.score));
