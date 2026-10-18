@@ -61,11 +61,14 @@ jobs:
           RC
           ftp() { lftp --env-password -u "$FTP_USERNAME" "$FTP_SERVER" -e "$1; bye"; }
 
-          # The FTP account may start in the domain folder or inside public_html.
+          # The FTP account may start in the account home, the domain folder or public_html.
           root=$(ftp "cls -1" | sed 's:/*$::')
-          if grep -qx 'public_html' <<<"$root"; then dest="public_html/pccheck"
+          doms=""
+          if grep -qx 'domains' <<<"$root"; then doms=$(ftp "cls -1 -B domains" | sed 's:/*$::'); fi
+          if grep -qx 'cybersecinfo.com' <<<"$doms"; then dest="domains/cybersecinfo.com/public_html/pccheck"
+          elif grep -qx 'public_html' <<<"$root"; then dest="public_html/pccheck"
           elif grep -qx 'pccheck' <<<"$root"; then dest="pccheck"
-          else echo "::error::Neither public_html/ nor pccheck/ found at the FTP root."; exit 1; fi
+          else echo "::error::No PC Check folder found from the FTP root."; exit 1; fi
 
           # Safety: only deploy over an existing PC Check folder.
           here=$(ftp "cls -1 -B $dest" | sed 's:/*$::')
