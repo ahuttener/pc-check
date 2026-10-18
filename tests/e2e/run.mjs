@@ -128,6 +128,7 @@ async function newPage(mode, opts = {}, engine = browser) {
       if (speed === 'limit' && bytes >= 10000000) return await r.fulfill({ status: 429, headers: { 'Retry-After': '3574' }, body: 'x' }); // no CORS header, like the real one
       if (speed === 'slowping' && bytes === 0) await new Promise((res) => setTimeout(res, 1500));
       if (speed === 'slow' && kind) await new Promise((res) => setTimeout(res, 3000));
+      if (speed === 'empty' && kind === 'down') return await r.fulfill({ status: 200, contentType: 'application/octet-stream', headers, body: '' });
       await new Promise((res) => setTimeout(res, kind ? 60 : 20)); // long enough for every stream to be in flight at once
       return await r.fulfill({ status: 200, contentType: 'application/octet-stream', headers, body: url.includes('__down') ? Buffer.alloc(Math.min(bytes, 1000000)) : '' }).catch(() => {});
     } finally {
@@ -452,18 +453,41 @@ try {
     check('speed: Cancel stops the test', seen.speed.length === n, [n, seen.speed.length]);
     await context.close();
   }
+  for (const engineName of ['chromium', 'webkit']) {
+    const eng = engineName === 'webkit' ? await webkit.launch() : browser;
+    try {
+      const { page, context, seen } = await newPage('ok', { speed: 'slow' }, eng);
+      await page.click('#speed-go');
+      for (let i = 0; i < 100 && seen.downReq < 6; i++) await page.waitForTimeout(100);
+      const t0 = Date.now();
+      await page.click('#speed-cancel');
+      await page.waitForFunction(() => document.getElementById('check-speed').getAttribute('data-status') !== 'running', null, { timeout: 5000 });
+      const took = Date.now() - t0;
+      const n = seen.speed.length;
+      await page.waitForTimeout(1500);
+      check('speed (' + engineName + '): Cancel during the parallel download stops at once', took < 1000 && (await status(page, 'speed')) === 'info', [took, await status(page, 'speed')]);
+      check('speed (' + engineName + '): Cancel during the parallel download sends nothing more', seen.speed.length === n && seen.downReq >= 6, [n, seen.speed.length, seen.downReq]);
+      await context.close();
+    } finally {
+      if (eng !== browser) await eng.close();
+    }
+  }
   {
-    const { page, context, seen } = await newPage('ok', { speed: 'slow' });
+    // A proxy answering 200 with empty bodies must not make the streams spin: empty counts as a failure.
+    const { page, context, seen } = await newPage('ok', { speed: 'empty' });
     await page.click('#speed-go');
-    for (let i = 0; i < 100 && seen.downReq < 6; i++) await page.waitForTimeout(100);
-    const t0 = Date.now();
-    await page.click('#speed-cancel');
-    await page.waitForFunction(() => document.getElementById('check-speed').getAttribute('data-status') !== 'running', null, { timeout: 5000 });
-    const took = Date.now() - t0;
-    const n = seen.speed.length;
-    await page.waitForTimeout(800);
-    check('speed: Cancel during the parallel download stops at once', took < 1000 && (await status(page, 'speed')) === 'info', [took, await status(page, 'speed')]);
-    check('speed: Cancel during the parallel download sends nothing more', seen.speed.length === n && seen.downReq >= 6, [n, seen.speed.length, seen.downReq]);
+    await page.waitForFunction(() => !['running', 'idle'].includes(document.getElementById('check-speed').getAttribute('data-status')), null, { timeout: 40000 });
+    check('speed: empty 200 bodies are failures, not a fetch storm', seen.downReq <= 30 && (await status(page, 'speed')) === 'error', [seen.downReq, await status(page, 'speed')]);
+    await context.close();
+  }
+  {
+    // No streamed body (old engines): small 1 MB requests instead of waiting for 25 MB in one piece.
+    const { page, context, seen } = await newPage('ok', { initScript: 'Object.defineProperty(Response.prototype, "body", { configurable: true, get() { return null; } });' });
+    await page.click('#speed-go');
+    await page.waitForFunction(() => !['running', 'idle'].includes(document.getElementById('check-speed').getAttribute('data-status')), null, { timeout: 40000 });
+    const big = seen.speed.filter((u) => /bytes=25000000/.test(u)).length;
+    const small = seen.speed.filter((u) => /__down\?bytes=1000000\b/.test(u)).length;
+    check('speed: no readable body -> 1 MB requests, still a result', big <= 6 && small > 0 && (await status(page, 'speed')) === 'ok', [big, small, await status(page, 'speed')]);
     await context.close();
   }
 

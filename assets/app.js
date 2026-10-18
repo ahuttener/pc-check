@@ -1120,7 +1120,9 @@
 
   // One request with its own timeout, also aborted by the outer signal. With onChunk the body is read as it arrives
   // (onChunk(bytes) per chunk) and the timeout restarts on every chunk, so a slow but moving download is not cut off.
-  function speedFetch(url, opts, outer, onChunk) {
+  // With needStream, a response whose body cannot be read as it arrives is dropped (error 'no_stream') instead of
+  // being waited for in one piece.
+  function speedFetch(url, opts, outer, onChunk, needStream) {
     var controller = linkedController(outer);
     var timer = null;
     function arm() { clearTimeout(timer); timer = setTimeout(function () { controller.abort(); }, SPEED.requestTimeoutMs); }
@@ -1133,6 +1135,10 @@
         if (!res.ok) throw new Error('http_' + res.status);
         if (onChunk && res.body && typeof res.body.getReader === 'function') {
           var reader = res.body.getReader();
+          // Some engines keep a body flowing after the fetch is aborted; cancelling the reader stops it.
+          controller.signal.addEventListener('abort', function () {
+            try { var c = reader.cancel(); if (c && c.catch) c.catch(function () {}); } catch (e) { /* already closed */ }
+          });
           var pump = function () {
             return reader.read().then(function (r) {
               if (r.done) return res;
@@ -1145,6 +1151,7 @@
           };
           return pump();
         }
+        if (needStream) { controller.abort(); throw new Error('no_stream'); }
         return res.arrayBuffer().then(function (buf) { bytes = buf.byteLength; if (onChunk) onChunk(bytes); return res; });
       })
       .then(function (res) { clearTimeout(timer); controller.unlink(); return { ms: Math.max(now() - t0, 1), bytes: bytes, res: res }; },
@@ -1224,11 +1231,11 @@
   // Parallel download: every stream loops big requests and adds bytes to one counter as they arrive.
   function downloadPhase(signal, onRate) {
     var ctl = linkedController(signal);
-    var streaming = !!(window.ReadableStream && window.ReadableStream.prototype && window.ReadableStream.prototype.getReader);
-    var size = streaming ? SPEED.downBytes : SPEED.downFallbackBytes;
+    var size = SPEED.downBytes; // drops to downFallbackBytes when big requests cannot be streamed or are refused
     var start = now();
     var total = 0;
     var firstByteT = null;
+    var retries = [];
     var samples = [{ t: 0, b: 0 }];
     var live = SPEED.downStreams;
     var gaveUp = false;
@@ -1242,6 +1249,7 @@
         finished = true;
         clearInterval(ticker);
         clearTimeout(windowTimer);
+        retries.forEach(clearTimeout);
         sample();
         ctl.abort(); // every request still running stops here
         ctl.unlink();
@@ -1252,21 +1260,26 @@
         if (finished) return;
         var mine = size;
         var got = 0;
+        var big = mine > SPEED.downFallbackBytes;
+        function failed() {
+          if (finished) return;
+          // Cloudflare rate-limits big downloads after heavy use from one address (429 without CORS headers, so the
+          // page only sees a failed fetch); small ones still work. A big request that fails before its first byte,
+          // or whose body cannot be streamed, switches the phase to small requests.
+          if (got === 0 && big) { size = SPEED.downFallbackBytes; stream(fails); return; }
+          if (fails + 1 >= SPEED.maxErrors) { gaveUp = true; if (--live === 0) finish(); return; }
+          retries.push(setTimeout(function () { stream(fails + 1); }, SPEED.retryMs));
+        }
         speedFetch(SPEED.base + '__down?bytes=' + mine, {}, ctl.signal, function (n) {
           if (finished) return;
           got += n;
           if (firstByteT === null && n > 0) firstByteT = now() - start;
           total += n;
           if (total >= SPEED.downCapBytes) finish();
-        }).then(function () { stream(0); }, function () {
-          if (finished) return;
-          // Cloudflare rate-limits big downloads after heavy use from one address (429 without CORS headers, so the
-          // page only sees a failed fetch); small ones still work. A big request that fails before its first byte
-          // switches the phase to small requests.
-          if (got === 0 && mine > SPEED.downFallbackBytes) { size = SPEED.downFallbackBytes; stream(fails); return; }
-          if (fails + 1 >= SPEED.maxErrors) { gaveUp = true; if (--live === 0) finish(); return; }
-          setTimeout(function () { stream(fails + 1); }, SPEED.retryMs);
-        });
+        }, big).then(function () {
+          if (got > 0) stream(0);
+          else failed(); // an empty 200 (a proxy, a broken mirror) is a failure, or the streams would spin
+        }, failed);
       }
       ctl.signal.addEventListener('abort', finish);
       ticker = setInterval(function () { sample(); var m = liveRate(samples); if (m !== null) onRate(m); }, SPEED.sampleMs);
@@ -1293,6 +1306,7 @@
     var closing = false;
     var finished = false;
     var windowTimer = null;
+    var retries = [];
     return new Promise(function (resolve) {
       // Windows may not reach past a request that is still running: its bytes are not counted yet.
       function safeEnd() {
@@ -1305,6 +1319,7 @@
         if (finished) return;
         finished = true;
         clearTimeout(windowTimer);
+        retries.forEach(clearTimeout);
         var end = safeEnd();
         ctl.abort();
         ctl.unlink();
@@ -1334,7 +1349,7 @@
           started -= size;
           if (closing) { ended(); return; }
           if (fails + 1 >= SPEED.maxErrors) { gaveUp = true; ended(); return; }
-          setTimeout(function () { stream(0, fails + 1); }, SPEED.retryMs);
+          retries.push(setTimeout(function () { stream(0, fails + 1); }, SPEED.retryMs));
         });
       }
       ctl.signal.addEventListener('abort', finish);
