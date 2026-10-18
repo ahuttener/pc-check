@@ -1344,6 +1344,224 @@ try {
     }
   }
 
+  // 8a-android-rules. Android rules, score, facts, anonymiser additions and the AI summary
+  console.log('Android report rules');
+  {
+    const adir = path.join(here, '..', 'fixtures', 'sys', 'android');
+    const ard = (f) => fs.readFileSync(path.join(adir, f), 'utf8');
+    const planted = JSON.parse(ard('PLANTED.json'));
+    const allPlanted = [].concat(...Object.keys(planted).map((k) => planted[k])).map((v) => String(v).toLowerCase());
+    const notCarriers = [].concat(...Object.keys(planted).filter((k) => k !== 'carriers').map((k) => planted[k])).map((v) => String(v).toLowerCase());
+    // Personal data found by probing the Task 2 scanner: a model, a boot reason and a process name that carry it
+    const PROBES = ['john smith', '353871234567', 'imei=', 'john.doe@gmail.com', 'gmail', '356938035643809'];
+    const { page, context } = await newPage('ok');
+    const r = await page.evaluate((t) => {
+      const S = window.PCSys;
+      if (!S || !S.evaluateAndroid) return null;
+      const now = new Date(t.now);
+      const P = S.parseAndroidBugreport;
+      const brief = (e) => {
+        const summaryObj = S.buildSummary(e);
+        const summary = JSON.stringify(summaryObj);
+        return {
+          platform: e.platform, score: e.score, ids: e.findings.map((f) => f.id + ':' + f.severity), findings: e.findings, facts: e.facts,
+          goodNews: e.goodNews, summary, summaryObj, truncated: e.truncated, patchAgeDays: e.patchAgeDays, reboots30d: e.reboots30d,
+          crashes: e.crashes, anrs: e.anrs, logDays: e.logDays, batteryHealthPct: e.batteryHealthPct, batteryStatus: e.batteryStatus,
+          storageFreePct: e.storageFreePct, android: e.android, model: e.model, securityPatch: e.securityPatch, topAnrApps: e.topAnrApps,
+          texts: e.findings.map((f) => f.title + '\n' + f.detail + '\n' + f.fix).concat(e.facts.map((f) => f.label + ': ' + f.value), (e.goodNews || []).map((g) => g.title)).join('\n'),
+          shown: summary + '\n' + e.facts.map((f) => f.label + ': ' + f.value).join('\n') + '\n' + e.findings.map((f) => f.title + '\n' + f.detail + '\n' + f.fix).join('\n') +
+            '\n' + (e.goodNews || []).map((g) => g.title).join('\n')
+        };
+      };
+      const ev = (text, at, extra) => brief(S.evaluateAndroid(Object.assign({ report: P(text) }, extra || {}), at || now));
+      const rep = (text, pairs) => pairs.reduce((s, p) => { if (s.indexOf(p[0]) < 0 && !(p[0] instanceof RegExp)) throw new Error('edit not found: ' + p[0]); return s.replace(p[0], p[1]); }, text);
+      const DAYMS = 86400000;
+      const pd = (n) => new Date(Date.UTC(2026, 9, 17) - n * DAYMS).toISOString().slice(0, 10);
+      const patchC = (n) => ev(rep(t.c, [['[ro.build.version.security_patch]: [2026-07-05]', '[ro.build.version.security_patch]: [' + (typeof n === 'string' ? n : pd(n)) + ']']]));
+      const storeA = (free, total) => ev(rep(t.a, [['Data-Free: 40000000K / 128000000K total', 'Data-Free: ' + free + 'K / ' + total + 'K total']]));
+      const healthA = (h) => ev(rep(t.a, [['  health: 2\n', '  health: ' + h + '\n']]));
+      const capA = (design, learned) => ev(rep(t.a, [['Estimated battery capacity: 4575 mAh', 'Estimated battery capacity: ' + design + ' mAh'],
+        ['Last learned battery capacity: 3900 mAh', 'Last learned battery capacity: ' + learned + ' mAh']]));
+      const kmsg = /------ LAST KMSG[^\n]*\n[\s\S]*?------ 0\.010s was the duration of 'LAST KMSG' ------\n/;
+      const eventAdd = (lines) => rep(t.a, [['--------- beginning of events\n', '--------- beginning of events\n' + lines.join('\n') + '\n']]);
+      const crashLine = (md, name) => md + ' 10:00:00.000  1000  1712  2290 I am_crash: [0,4242,' + name + ',684211782,E,M,F,1,0]';
+      const longPkg = 'com.' + 'a'.repeat(86);
+      const probe = rep(eventAdd([crashLine('10-17', 'john.doe@gmail.com')]), [['[ro.product.model]: [Pixel 8]', '[ro.product.model]: [John Smith phone 353871234567]'],
+        ['kernel_panic,1791633900', 'kernel_panic,imei=356938035643809,1791633900']]);
+      const anon = (v) => S.anonymise(v);
+      const crafted = ['a'.repeat(8192), "a'".repeat(4096), 'Jane '.repeat(1638), 'a-'.repeat(4096), '-'.repeat(8192), '1'.repeat(8192), "x's ".repeat(2048),
+        'Account {name=' + 'a'.repeat(8178), 'serialno='.repeat(910), 'mLine1Number=' + '1 '.repeat(4089), '/sdcard/'.repeat(1024), "Jane's Pixel 8 ".repeat(546),
+        'a-Pixel'.repeat(1170), "Jane's ".repeat(1170) + 'x', 'a.'.repeat(4096), ('1'.repeat(15) + '.').repeat(512), "Jane Doe's Galaxy A51 Pro Plus Ultra ".repeat(221)];
+      const timed = crafted.map((c) => { const t0 = performance.now(); anon(c); return Math.round((performance.now() - t0) * 10) / 10; });
+      return {
+        A: ev(t.a), B: ev(t.b), C: ev(t.c),
+        staleA: ev(t.a, new Date(2026, 11, 1, 12, 0, 0)),
+        patch: { d90: patchC(90), d91: patchC(91), d180: patchC(180), d181: patchC(181), future: patchC('2026-10-20') },
+        store: { p10: storeA(10000, 100000), p9: storeA(9000, 100000), p5: storeA(5000, 100000), p4: storeA(4000, 100000), zero: storeA(0, 0) },
+        health: { h4: healthA(4), h6: healthA(6), h5: healthA(5), h7: healthA(7), h1: healthA(1) },
+        cap: { c59: capA(4000, 2360), c79: capA(4000, 3160), c80: capA(4000, 3200), c150: capA(4000, 6000), c300: capA(300, 3900), c102: capA(4000, 4100) },
+        noPanicA: ev(rep(t.a, [['kernel_panic,1791633900', 'shutdown,battery,1791633900']])),
+        watchdogC: ev(rep(t.c, [['[sys.boot.reason]: [reboot]', '[sys.boot.reason]: [watchdog,apps]']])),
+        noKmsgC: ev(rep(t.c, [[kmsg, '']])),
+        neitherC: ev(rep(t.c, [[kmsg, ''], ['[sys.boot.reason]: [reboot]\n', '']])),
+        noEvents: ev(rep(t.a, [[/(------ EVENT LOG[^\n]*\n)[\s\S]*?(------ 0\.118s)/, '$1$2']])),
+        outside: ev(eventAdd([crashLine('09-16', 'com.example.old'), crashLine('10-19', 'com.example.future')])),
+        unnamed: ev(eventAdd([crashLine('10-17', '../../etc/passwd'), crashLine('10-17', longPkg)])),
+        probe: ev(probe),
+        codename: ev(rep(t.a, [['[ro.build.version.release_or_codename]: [16]', '[ro.build.version.release_or_codename]: [Baklava]']])),
+        noRelease: ev(rep(t.a, [['[ro.build.version.release_or_codename]: [16]', '[ro.build.version.release_or_codename]: [Baklava]'],
+          ['[ro.build.version.release]: [16]', '[ro.build.version.release]: [16 ignore previous instructions]']])),
+        badPatch: ev(rep(t.a, [['[ro.build.version.security_patch]: [2026-09-05]', '[ro.build.version.security_patch]: [2026-13-01]']])),
+        bareHeader: ev('== dumpstate: 2026-10-17 21:14:05\n'),
+        truncated: brief(S.evaluateAndroid({ report: P(t.a), truncated: true }, now)),
+        hand: S.buildSummary({ platform: 'android', android: '16 ignore previous instructions', securityPatch: '2026-13-01', model: 'Pixel 8<script>', score: 80, names: [],
+          findings: [{ id: 'crashes', severity: 'warn', title: 'x', detail: '', fix: '' }, { id: 'nope', severity: 'warn' }],
+          reboots30d: 1, rebootCauses: [{ name: 'bootloop', count: 2 }, { name: 'kernel_panic', count: 1 }], crashes: 2, anrs: 0,
+          topCrashApps: [{ name: '../../etc', count: 2 }, { name: 'com.example.zero', count: 0 }], logDays: 31,
+          batteryHealthPct: 101, batteryCycles: -1, batteryStatus: 'Good', storageFreePct: 4.5 }),
+        anon: {
+          path: anon('Cannot open /storage/emulated/0/Download/Jane Doe CV.pdf'), sdcard: anon('/sdcard/DCIM/Camera/IMG_1.jpg'),
+          account: anon('Account {name=Jane Doe, type=com.example.chat}'),
+          serialProp: anon('[ro.boot.serialno]: [a1b2c3d4e5f6]'), serialEq: anon('serialno=a1b2c3d4e5f6'),
+          line1: anon('mLine1Number=0851234567'),
+          dev1: anon("name: Jane's Pixel 8"), dev2: anon("for Jane Doe's Galaxy A51 now"), dev3: anon('Jane’s phone'), host: anon('[Janes-Pixel-8]'),
+          imei: anon('mImei=356938035643809'),
+          unchanged: ['Google Pixel 8', 'samsung SM-A515F', 'Android 16', 'com.example.snapnotes', '2026-09-05', "the phone maker's support", '33554448', '1791633900', 'Pixel 8 Pro'].map(anon),
+          lines: ['a', 'b', 'c'].map((k) => t[k].split('\n').map(anon).join('\n'))
+        },
+        timed,
+        exported: ['evaluateAndroid', 'androidScanner', 'parseAndroidBugreport', 'androidBootCause'].every((k) => typeof S[k] === 'function') && S.ANDROID_TEXT_CAP === 31457280
+      };
+    }, { a: ard('bugreport-a.txt'), b: ard('bugreport-b.txt'), c: ard('bugreport-c.txt'), now: SYS_NOW.toISOString() });
+    check('android rules: evaluateAndroid is loaded', r !== null);
+    if (r) {
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const A = r.A, B = r.B, C = r.C;
+      const fnd = (e, id) => e.findings.filter((f) => f.id === id)[0];
+      check('android set A: platform android, score 80, reboots warn, crashes warn, anrs info', A.platform === 'android' && A.score === 80 && A.ids.join(',') === 'reboots:warn,crashes:warn,anrs:info', [A.score, A.ids]);
+      check('android set A: reboots texts', fnd(A, 'reboots').title === 'Your phone restarted by itself 1 time in 30 days' &&
+        fnd(A, 'reboots').detail === 'Most recent: 2026-10-10. The Android system crashed (a kernel panic).' && /^Install the latest software update \(open Settings and search for “Software update”\)/.test(fnd(A, 'reboots').fix), fnd(A, 'reboots'));
+      check('android set A: crashes texts', fnd(A, 'crashes').title === 'Apps crashed 3 times in the last 3 days of logs' &&
+        fnd(A, 'crashes').detail === 'Most crashes: com.example.snapnotes (2 crashes); com.android.chrome (1 crash). Android keeps only a few days of logs, so older crashes are not counted.' &&
+        /^Update the app in the Play Store\./.test(fnd(A, 'crashes').fix), fnd(A, 'crashes'));
+      check('android set A: anrs texts', fnd(A, 'anrs').title === 'Apps stopped responding 1 time in the last 3 days of logs' && fnd(A, 'anrs').detail === 'Most often: com.example.snapnotes (1 time).', fnd(A, 'anrs'));
+      check('android set A: good news holds 85 %', A.goodNews.length === 1 && A.goodNews[0].title.indexOf('85 %') !== -1, A.goodNews);
+      check('android set A: summary JSON is exact', A.summary === '{"platform":"android","android":"16","securityPatch":"2026-09-05","model":"Google Pixel 8","score":80,"findings":[{"id":"reboots","severity":"warn"},{"id":"crashes","severity":"warn"},{"id":"anrs","severity":"info"}],"reboots30d":1,"rebootCauses":[{"name":"kernel_panic","count":1}],"crashes":3,"anrs":1,"topCrashApps":[{"name":"com.example.snapnotes","count":2},{"name":"com.android.chrome","count":1}],"logDays":3,"batteryHealthPct":85,"batteryCycles":null,"batteryStatus":"good","storageFreePct":31}', A.summary);
+      check('android set A: facts in order', same(A.facts.map((f) => f.label + ': ' + f.value), ['System: Android 16', 'Security patch: 2026-09-05', 'Model: Google Pixel 8',
+        'Battery capacity (Android\'s estimate): 85 %', 'Battery status: Good', 'Storage free: 31 %', 'Unexpected restarts (30 days): 1', 'App crashes (last 3 days of logs): 3',
+        'Apps not responding (last 3 days of logs): 1', 'Bug report from: 2026-10-17']), A.facts);
+      check('android set B: score 15, reboots risk, crashes info, battery warn, storage risk, old_patch risk', B.score === 15 &&
+        B.ids.join(',') === 'reboots:risk,crashes:info,battery:warn,storage:risk,old_patch:risk', [B.score, B.ids]);
+      const bb = fnd(B, 'battery');
+      check('android set B: battery overheating, 57 %, 812 charge cycles', bb.title === 'Android reports the battery as overheating' && bb.detail.indexOf('57 %') !== -1 &&
+        bb.detail.indexOf('812 charge cycles') !== -1 && /^Battery status: overheating\./.test(bb.detail) && /^Let the phone cool down/.test(bb.fix), bb);
+      check('android set B: storage and old_patch titles', fnd(B, 'storage').title === 'Only 4 % of storage is free' && fnd(B, 'old_patch').title === 'The security patch is 257 days old' &&
+        /^Security patch level 2026-02-01\./.test(fnd(B, 'old_patch').detail), [fnd(B, 'storage'), fnd(B, 'old_patch')]);
+      check('android set B: reboots detail names forced, kernel panic and thermal in order', /^Most recent: 2026-10-\d\d\. The Android system crashed \(a kernel panic\)\. The phone restarted or switched off because it got too hot\. The power button was held to force a restart, usually because the phone froze\.$/.test(fnd(B, 'reboots').detail) &&
+        fnd(B, 'reboots').title === 'Your phone restarted by itself 3 times in 30 days', fnd(B, 'reboots'));
+      check('android set B: crashes from the system log', fnd(B, 'crashes').title === 'Apps crashed 1 time in the last 1 day of logs', fnd(B, 'crashes'));
+      check('android set B: no good news', B.goodNews.length === 0, B.goodNews);
+      check('android set B: summary JSON is exact', B.summary === '{"platform":"android","android":"13","securityPatch":"2026-02-01","model":"samsung SM-A515F","score":15,"findings":[{"id":"reboots","severity":"risk"},{"id":"crashes","severity":"info"},{"id":"battery","severity":"warn"},{"id":"storage","severity":"risk"},{"id":"old_patch","severity":"risk"}],"reboots30d":3,"rebootCauses":[{"name":"forced","count":1},{"name":"kernel_panic","count":1},{"name":"thermal","count":1}],"crashes":1,"anrs":null,"topCrashApps":[{"name":"com.example.snapnotes","count":1}],"logDays":1,"batteryHealthPct":57,"batteryCycles":812,"batteryStatus":"overheat","storageFreePct":4}', B.summary);
+      check('android set C: score 80, reboots warn, old_patch warn (104 days)', C.score === 80 && C.ids.join(',') === 'reboots:warn,old_patch:warn' &&
+        fnd(C, 'old_patch').title === 'The security patch is 104 days old' && fnd(C, 'reboots').detail === 'Most recent: 2026-10-17. The Android system crashed (a kernel panic).', [C.ids, C.findings]);
+      check('android set C: summary JSON is exact', C.summary === '{"platform":"android","android":"15","securityPatch":"2026-07-05","model":"Example Phone X1","score":80,"findings":[{"id":"reboots","severity":"warn"},{"id":"old_patch","severity":"warn"}],"reboots30d":1,"rebootCauses":[{"name":"kernel_panic","count":1}],"crashes":null,"anrs":null,"topCrashApps":[],"logDays":null,"batteryHealthPct":null,"batteryCycles":null,"batteryStatus":null,"storageFreePct":null}', C.summary);
+      check('android set A on 1 December: same findings plus old_report 44 days, score 80', r.staleA.ids.join(',') === 'reboots:warn,crashes:warn,anrs:info,old_report:info' &&
+        fnd(r.staleA, 'old_report').title === 'The bug report is 44 days old' && fnd(r.staleA, 'old_report').detail === 'Take a new bug report to see the current state.' &&
+        fnd(r.staleA, 'old_report').fix === '' && r.staleA.score === 80, r.staleA.ids);
+      const pat = (e) => (fnd(e, 'old_patch') || {}).severity || null;
+      check('android patch age: 90 -> none, 91 -> warn, 180 -> warn, 181 -> risk', [r.patch.d90, r.patch.d91, r.patch.d180, r.patch.d181].map(pat).join() === ',warn,warn,risk' &&
+        r.patch.d91.patchAgeDays === 91, [r.patch.d90, r.patch.d91, r.patch.d180, r.patch.d181].map(pat));
+      check('android patch after the report -> no old_patch, patch still sent', pat(r.patch.future) === null && r.patch.future.summaryObj.securityPatch === '2026-10-20' && r.patch.future.patchAgeDays === null, r.patch.future.ids);
+      const sto = (e) => (fnd(e, 'storage') || {}).severity || null;
+      check('android storage: 10 % -> none, 9 -> warn, 5 -> warn, 4 -> risk, total 0 -> null', [r.store.p10, r.store.p9, r.store.p5, r.store.p4].map(sto).join() === ',warn,warn,risk' &&
+        r.store.zero.storageFreePct === null && r.store.zero.summaryObj.storageFreePct === null && sto(r.store.zero) === null, [r.store.p10, r.store.p9, r.store.p5, r.store.p4, r.store.zero].map((e) => [e.storageFreePct, sto(e)]));
+      const bat = (e) => { const f = fnd(e, 'battery'); return f ? f.severity : null; };
+      const h = r.health;
+      check('android battery status: 4 and 6 -> risk fault, 5 -> warn, 7 cold and 1 unknown -> none', bat(h.h4) === 'risk' && fnd(h.h4, 'battery').title === 'Android reports a battery fault' &&
+        bat(h.h6) === 'risk' && fnd(h.h6, 'battery').title === 'Android reports a battery fault' && bat(h.h5) === 'warn' && fnd(h.h5, 'battery').title === 'Android reports a battery voltage problem' &&
+        bat(h.h7) === null && h.h7.summaryObj.batteryStatus === 'cold' && bat(h.h1) === null && h.h1.summaryObj.batteryStatus === 'unknown' &&
+        h.h4.summaryObj.batteryStatus === 'dead' && h.h6.summaryObj.batteryStatus === 'failure' && h.h5.summaryObj.batteryStatus === 'over_voltage', [h.h4.ids, h.h6.ids, h.h5.ids, h.h7.ids, h.h1.ids]);
+      check('android battery status: dead and failure both read "Failed"', h.h4.facts.some((f) => f.label === 'Battery status' && f.value === 'Failed') && h.h6.facts.some((f) => f.label === 'Battery status' && f.value === 'Failed'), [h.h4.facts, h.h6.facts]);
+      const c = r.cap;
+      check('android battery estimate: 59 -> warn, 79 -> info, 80 -> none and good news', bat(c.c59) === 'warn' && fnd(c.c59, 'battery').title === 'Battery holds about 59 % of its original capacity (Android\'s estimate)' &&
+        /This is Android's own estimate and can be off by a few percent\.$/.test(fnd(c.c59, 'battery').detail) && /^Open Settings > Battery/.test(fnd(c.c59, 'battery').fix) &&
+        bat(c.c79) === 'info' && /^Nothing to do now\./.test(fnd(c.c79, 'battery').fix) && bat(c.c80) === null && c.c80.goodNews.length === 1 && c.c80.goodNews[0].title.indexOf('80 %') !== -1,
+        [c.c59.findings, c.c79.ids, c.c80.ids, c.c80.goodNews]);
+      check('android battery estimate: 150 % and 300 mAh -> null; 102.5 % -> 100', c.c150.batteryHealthPct === null && c.c150.summaryObj.batteryHealthPct === null &&
+        c.c300.batteryHealthPct === null && c.c102.batteryHealthPct === 100 && c.c102.summaryObj.batteryHealthPct === 100, [c.c150.batteryHealthPct, c.c300.batteryHealthPct, c.c102.batteryHealthPct]);
+      check('android set A: shutdown,battery instead of the panic -> no reboots, 0, no causes', !r.noPanicA.ids.some((i) => /^reboots/.test(i)) &&
+        r.noPanicA.summaryObj.reboots30d === 0 && same(r.noPanicA.summaryObj.rebootCauses, []), r.noPanicA.summaryObj);
+      check('android set C: the boot reason wins over LAST KMSG', same(r.watchdogC.summaryObj.rebootCauses, [{ name: 'watchdog', count: 1 }]) && r.watchdogC.summaryObj.reboots30d === 1 &&
+        fnd(r.watchdogC, 'reboots').detail === 'Most recent: 2026-10-17. The system stopped responding and was restarted automatically.', r.watchdogC.summaryObj);
+      check('android set C without LAST KMSG -> 0; without the reason too -> null', r.noKmsgC.summaryObj.reboots30d === 0 && r.neitherC.summaryObj.reboots30d === null &&
+        !r.noKmsgC.ids.some((i) => /^reboots/.test(i)), [r.noKmsgC.summaryObj.reboots30d, r.neitherC.summaryObj.reboots30d]);
+      check('android set A with an empty EVENT LOG -> crashes 0, anrs 0, logDays null, SYSTEM LOG not used', r.noEvents.summaryObj.crashes === 0 && r.noEvents.summaryObj.anrs === 0 &&
+        r.noEvents.summaryObj.logDays === null && !r.noEvents.ids.some((i) => /^(crashes|anrs)/.test(i)) && same(r.noEvents.summaryObj.topCrashApps, []), r.noEvents.summaryObj);
+      check('android crashes 31 days before or 2 days after the report are not counted', r.outside.crashes === 3 && !/com\.example\.(old|future)/.test(r.outside.shown), [r.outside.crashes, r.outside.summaryObj.topCrashApps]);
+      check('android: "../../etc/passwd" and a 90-character package -> "An unnamed app"', same(r.unnamed.summaryObj.topCrashApps, [{ name: 'An unnamed app', count: 2 },
+        { name: 'com.example.snapnotes', count: 2 }, { name: 'com.android.chrome', count: 1 }]) && fnd(r.unnamed, 'crashes').detail.indexOf('An unnamed app (2 crashes)') !== -1 &&
+        !/passwd|aaaaaaaa/.test(r.unnamed.shown), r.unnamed.summaryObj.topCrashApps);
+      check('android probes: personal model, boot reason and process name never shown or sent', r.probe.model === null && r.probe.summaryObj.model === null &&
+        !PROBES.some((p) => r.probe.shown.toLowerCase().indexOf(p) !== -1) && same(r.probe.summaryObj.rebootCauses, [{ name: 'kernel_panic', count: 1 }]) &&
+        r.probe.summaryObj.topCrashApps.some((a) => a.name === 'An unnamed app'), PROBES.filter((p) => r.probe.shown.toLowerCase().indexOf(p) !== -1));
+      check('android version: a codename falls back to the release; nothing valid -> fingerprint release', r.codename.android === '16' && r.codename.summaryObj.android === '16' &&
+        r.noRelease.android === '16', [r.codename.android, r.noRelease.android]);
+      check('android: an invalid patch date -> null, no old_patch', r.badPatch.securityPatch === null && r.badPatch.summaryObj.securityPatch === null && !r.badPatch.ids.some((i) => /^old_patch/.test(i)), r.badPatch.summaryObj);
+      const bare = r.bareHeader.summaryObj;
+      check('android: only the dumpstate line -> no findings, score 100, counts null, one fact', r.bareHeader.ids.length === 0 && r.bareHeader.score === 100 &&
+        ['android', 'securityPatch', 'model', 'reboots30d', 'crashes', 'anrs', 'logDays', 'batteryHealthPct', 'batteryCycles', 'batteryStatus', 'storageFreePct'].every((k) => bare[k] === null) &&
+        same(r.bareHeader.facts, [{ label: 'Bug report from', value: '2026-10-17' }]), [bare, r.bareHeader.facts]);
+      check('android: truncated is passed through, nothing else changes', r.truncated.truncated === true && A.truncated === false && r.truncated.score === A.score && same(r.truncated.ids, A.ids), [r.truncated.truncated, A.truncated]);
+      const hd = r.hand;
+      check('android summary: hostile values -> null or dropped', hd.android === null && hd.securityPatch === null && hd.model === null && same(hd.topCrashApps, [{ name: 'An unnamed app', count: 2 }]) &&
+        same(hd.rebootCauses, [{ name: 'kernel_panic', count: 1 }]) && hd.batteryStatus === null && hd.batteryHealthPct === null && hd.storageFreePct === null && hd.logDays === null &&
+        hd.batteryCycles === null && same(hd.findings, [{ id: 'crashes', severity: 'warn' }]), hd);
+      const KEYS = ['platform', 'android', 'securityPatch', 'model', 'score', 'findings', 'reboots30d', 'rebootCauses', 'crashes', 'anrs', 'topCrashApps', 'logDays',
+        'batteryHealthPct', 'batteryCycles', 'batteryStatus', 'storageFreePct'];
+      const all = [A, B, C, r.staleA, r.patch.d90, r.patch.d91, r.patch.d180, r.patch.d181, r.patch.future, r.store.p10, r.store.p9, r.store.p5, r.store.p4, r.store.zero,
+        h.h4, h.h6, h.h5, h.h7, h.h1, c.c59, c.c79, c.c80, c.c150, c.c300, c.c102, r.noPanicA, r.watchdogC, r.noKmsgC, r.neitherC, r.noEvents, r.outside, r.unnamed,
+        r.probe, r.codename, r.noRelease, r.badPatch, r.bareHeader, r.truncated];
+      check('android summary: exactly the 16 whitelisted keys, in order', all.every((e) => same(Object.keys(e.summaryObj), KEYS)) && same(Object.keys(hd), KEYS), Object.keys(A.summaryObj));
+      const x = r.anon;
+      check('android anonymiser: shared-storage paths', x.path === 'Cannot open /storage/emulated/0/[path]' && x.sdcard === '/sdcard/[path]', [x.path, x.sdcard]);
+      check('android anonymiser: account names', x.account === 'Account {name=[account], type=com.example.chat}', x.account);
+      check('android anonymiser: key-labelled lower-case serials', /\[serial\]/.test(x.serialProp) && x.serialProp.indexOf('a1b2c3d4e5f6') === -1 && x.serialEq === 'serialno=[serial]', [x.serialProp, x.serialEq]);
+      check('android anonymiser: key-labelled phone numbers', x.line1 === 'mLine1Number=[phone]', x.line1);
+      check('android anonymiser: possessive device names and host names', x.dev1 === 'name: [device]' && (x.dev2 === 'for [device] now' || x.dev2 === '[device] now') &&
+        x.dev3 === '[device]' && x.host === '[[device]]', [x.dev1, x.dev2, x.dev3, x.host]);
+      check('android anonymiser: IMEI-like numbers', x.imei === 'mImei=[id]', x.imei);
+      check('android anonymiser: models, versions, packages and numbers unchanged', same(x.unchanged, ['Google Pixel 8', 'samsung SM-A515F', 'Android 16', 'com.example.snapnotes', '2026-09-05',
+        "the phone maker's support", '33554448', '1791633900', 'Pixel 8 Pro']), x.unchanged);
+      const lineLeaks = x.lines.map((s) => notCarriers.filter((v) => s.toLowerCase().indexOf(v) !== -1));
+      check('android anonymiser: every fixture line, anonymised, holds no planted value (carriers aside)', lineLeaks.every((l) => !l.length), lineLeaks);
+      check('android anonymiser: crafted 8,192-character inputs take under 50 ms each', r.timed.every((ms) => ms < 50), r.timed);
+      const leaks = (s) => allPlanted.concat(['/storage/emulated', 'bugreport-', 'anr_']).filter((v) => s.toLowerCase().indexOf(v) !== -1);
+      check('android anonymiser: no planted identifier in summary, facts, findings or PDF text', all.every((e) => !leaks(e.shown).length), all.map((e) => leaks(e.shown)).filter((l) => l.length));
+      const FORBIDDEN = /computer|\broot|cleaner|booster|antivirus|\badb\b|USB debugging|Terminal|sudo|fastboot|custom ROM|bootloader/i;
+      const texts = all.map((e) => e.texts).join('\n');
+      check('android rules: no computer, root, adb, cleaner, booster, antivirus or Terminal in any title, detail, fix or fact', !FORBIDDEN.test(texts),
+        (texts.match(new RegExp('.{0,40}(?:' + FORBIDDEN.source + ').{0,20}', 'i')) || [])[0]);
+      check('android rules: no possessive right before a device word', !/[A-Za-z]['`‘’ʼ]s?\s+(?:Pixel|Galaxy|OnePlus|Xperia|Redmi|Xiaomi|Moto|Nokia|Phone|phone|Tablet|tablet|Tab)\b/.test(texts));
+      check('android rules: score is 100 - 25 x risks - 10 x warns', all.every((e) => e.score === Math.max(0, 100 - 25 * e.ids.filter((i) => /:risk$/.test(i)).length - 10 * e.ids.filter((i) => /:warn$/.test(i)).length)));
+      check('android: evaluateAndroid, androidScanner, parseAndroidBugreport, androidBootCause and ANDROID_TEXT_CAP are exported', r.exported);
+
+      // The real PHP whitelist judges every Android summary built above, once the server knows the shape (Task 5)
+      const summaries = all.map((e) => e.summaryObj).concat([hd]);
+      const lib = fs.readFileSync(path.join(here, '..', '..', 'api', '_lib.php'), 'utf8');
+      if (lib.indexOf('bsc_validate_android_summary') === -1) {
+        console.log('  skip parity android: the server whitelist for Android summaries is not there yet (' + summaries.length + ' summaries waiting)');
+      } else {
+        let verdicts = null;
+        try {
+          verdicts = JSON.parse(execFileSync('php', [path.join(here, '..', 'tools', 'validate-summaries.php')], { input: JSON.stringify(summaries), encoding: 'utf8' }));
+        } catch (e) { verdicts = String(e); }
+        check('parity android: the server accepts every Android summary the browser builds (' + summaries.length + ')', Array.isArray(verdicts) &&
+          verdicts.length === summaries.length && verdicts.every(Boolean), Array.isArray(verdicts) ? summaries.filter((s, i) => !verdicts[i]) : verdicts);
+      }
+    }
+    await context.close();
+  }
+
   // 8a-mac-rules. Mac rules, score, facts, anonymiser additions and the AI summary
   console.log('Mac report rules');
   {

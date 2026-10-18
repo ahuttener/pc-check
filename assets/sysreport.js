@@ -1017,6 +1017,8 @@
   var A_LEARNED = /^\s*Last learned battery capacity: (\d{1,6}) mAh/;
   var A_DATA_FREE = /^Data-Free: (\d{1,15})K \/ (\d{1,15})K total/;
   var A_SERVICE_PRIORITY = /^(?:CRITICAL|HIGH|NORMAL) /;
+  // What the server accepts as an Android version (api/_lib.php): a codename ("Baklava") or free text is skipped
+  var SUMMARY_ANDROID = /^[0-9]{1,2}(?:\.[0-9]{1,2}){0,2}$/;
 
   // Unexpected restarts (AOSP bootstat canonical reasons); expected and unknown reasons give null
   function androidBootCause(reason) {
@@ -1085,6 +1087,7 @@
     var contKey = null; // a property value spanning lines
     var kmsgPanic = false;
     var kmsgWatchdog = false;
+    var kmsgSeen = false;
     var events = null;
     var fatal = null;
     var fatalPending = null;
@@ -1213,6 +1216,7 @@
       if (section === 'SYSTEM PROPERTIES') seenProps = true;
       else if (section === 'EVENT LOG') { if (events === null) events = logList(); }
       else if (section === 'SYSTEM LOG') { if (fatal === null) fatal = logList(); }
+      else if (section === 'LAST KMSG') kmsgSeen = true;
     }
 
     function handle(line, cut) {
@@ -1287,10 +1291,13 @@
       }
       if (!seenDumpstate && !seenProps) return { error: 'not_bugreport' };
       var sdk = props['ro.build.version.sdk'];
+      // The first of the three that is a plain version number: a codename falls back to the release
+      var android = [props['ro.build.version.release_or_codename'], props['ro.build.version.release'], fingerprint]
+        .filter(function (v) { return typeof v === 'string' && SUMMARY_ANDROID.test(v); })[0] || null;
       return {
         kind: 'android',
         time: time,
-        android: props['ro.build.version.release_or_codename'] || props['ro.build.version.release'] || fingerprint || null,
+        android: android,
         sdk: typeof sdk === 'string' && /^[0-9]{1,3}$/.test(sdk) ? +sdk : null,
         securityPatch: props['ro.build.version.security_patch'] || null,
         manufacturer: props['ro.product.manufacturer'] || null,
@@ -1299,6 +1306,7 @@
         bootReason: props['sys.boot.reason'] || props['ro.boot.bootreason'] || null,
         kmsgPanic: kmsgPanic,
         kmsgWatchdog: kmsgWatchdog,
+        kmsgSeen: kmsgSeen,
         events: events === null ? null : { crashes: events.crashes.slice(), anrs: events.anrs.slice(), first: events.first, last: events.last },
         fatal: fatal === null ? null : { crashes: fatal.crashes.slice(), first: fatal.first, last: fatal.last },
         battery: { health: battery.health, cycles: battery.cycles, designMah: battery.designMah, learnedMah: battery.learnedMah },
@@ -1383,6 +1391,17 @@
   var DEVICE_OF_NAME = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:iPhone|iPad|iPod)\s+(?:de|von|di)\s+[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F.\-]{0,30}(?:\s+(?:(?:da|das|de|del|della|der|den|di|do|dos|du|la|le|van|von|zu)\s+)?[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F.\-]{0,30}){0,2}(?![A-Za-z0-9])/g;
   var DEVICE_HOST = /(^|[^A-Za-z0-9\u00C0-\u024F-])[A-Za-z0-9\u00C0-\u024F-]{1,40}-(?:iPhone|iPad|iPod)(?:-\d{1,3})?(?:\.local)?(?![A-Za-z0-9])/gi;
   var PHONE_INTL = /\+[1-9][0-9 ().-]{6,20}[0-9]/g;
+  // Android: shared-storage and app-data paths up to the end of the quoted value or line; account names
+  // ("Account {name=…, type=…}"); serials and phone numbers labelled by their key (lower-case serials the upper-case
+  // rule misses); possessive device names ("Jane's Pixel 8", "Jane Doe's Galaxy A51", "Jane’s phone"); device host
+  // names ("Janes-Pixel-8"); 15-digit IMEI-like numbers (16+ digit runs are already HEX_RUN).
+  var ANDROID_STORAGE_PATH = /(\/storage\/emulated\/\d{1,3}\/|\/sdcard\/|\/data\/user(?:_de)?\/\d{1,3}\/|\/data\/media\/\d{1,3}\/)[^"\n]*/g;
+  var ANDROID_ACCOUNT = /(\bAccount\s*\{\s*name=)[^,}\n]{1,128}/g;
+  var ANDROID_SERIAL = /(\b(?:ro\.(?:boot\.)?serialno|serialno|serial_?number|androidboot\.serialno)\b["'\]]?\s*[:=]\s*\[?["']?)[A-Za-z0-9._-]{4,64}/gi;
+  var ANDROID_PHONE_KEY = /(\b(?:mLine1Number|line1Number|mMsisdn|msisdn|phoneNumber|phone_number)\b\s*[=:]\s*["']?)\+?[0-9][0-9 ()-]{3,20}[0-9]/gi;
+  var ANDROID_DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9À-ɏ])(?:[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ.\-]{0,30} ){0,2}[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ.\-]{0,30}['`‘’ʼ]s?\s+(?:Pixel|Galaxy|OnePlus|Xperia|Redmi|Xiaomi|Moto|Nokia|Phone|phone|Tablet|tablet|Tab)(?:\s+(?:[0-9][A-Za-z0-9+]{0,5}|[A-Z][0-9][A-Za-z0-9+]{0,5}|Pro|Plus|Ultra|Lite|FE|XL|5G|mini|Fold|Flip)){0,3}(?![A-Za-z0-9])/g;
+  var ANDROID_DEVICE_HOST = /(^|[^A-Za-z0-9À-ɏ-])[A-Za-z0-9À-ɏ-]{1,40}-(?:Pixel|Galaxy|Phone)(?:-[A-Za-z0-9]{1,8}){0,3}(?:\.local|\.lan)?(?![A-Za-z0-9])/g;
+  var ANDROID_IMEI = /(^|[^0-9A-Za-z.])[0-9]{15}(?![0-9A-Za-z])/g;
   var ANON_MAX_CHARS = 8192; // longer than any title, detail, fact or cause line PC Check builds
 
   // Not a phone number: glued to a word, a number or a version ("gcc 12.2.0+20231010"), or starting with a
@@ -1421,7 +1440,13 @@
       .replace(DEVICE_POSSESSIVE, '$1[device]')
       .replace(DEVICE_OF_NAME, '$1[device]')
       .replace(DEVICE_HOST, '$1[device]')
-      .replace(PHONE_INTL, maskPhone);
+      .replace(PHONE_INTL, maskPhone)
+      .replace(ANDROID_STORAGE_PATH, '$1[path]')
+      .replace(ANDROID_ACCOUNT, '$1[account]')
+      .replace(ANDROID_SERIAL, '$1[serial]')
+      .replace(ANDROID_PHONE_KEY, '$1[phone]')
+      .replace(ANDROID_DEVICE_POSSESSIVE, '$1[device]')
+      .replace(ANDROID_DEVICE_HOST, '$1[device]');
     return s
       .replace(/([A-Za-z]:\\Users\\)[^\\\s]+/gi, '$1[user]')
       .replace(/(\/(?:home|Users|run\/media|media)\/)[^\/\s]+/g, '$1[user]')
@@ -1431,6 +1456,7 @@
       .replace(/\b\d{1,3}(\.\d{1,3}){3}\b/g, '[ip]')
       .replace(/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b/gi, '[ip]')
       .replace(/\b(DESKTOP|LAPTOP|PC)-[A-Z0-9]{4,}\b/g, '[pc]')
+      .replace(ANDROID_IMEI, '$1[id]')
       .replace(/\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{10,}\b/g, '[id]');
   }
 
@@ -2255,6 +2281,241 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Android rules (Design decisions 6-13). Fixes point only to the phone's own Settings (reached by the search box,
+  // because menu names vary by maker), the Play Store, a restart, the phone maker's support or an authorised repair
+  // shop: never a computer, a cable, rooting, USB debugging or a cleaner, booster or antivirus app.
+  // ---------------------------------------------------------------------------
+  var ANDROID_FIX = {
+    reboots: 'Install the latest software update (open Settings and search for “Software update”), update your apps in the Play Store and restart the phone. If it keeps restarting by itself, back up the phone (search Settings for “Backup”) and contact the phone maker\'s support or an authorised repair shop: repeated restarts can mean a battery or hardware fault.',
+    crashes: 'Update the app in the Play Store. If it keeps crashing, open Settings > Apps, pick the app, tap Storage and then Clear cache; if that does not help, uninstall it and install it again.',
+    anrs: 'Update the app in the Play Store and restart the phone. If one app keeps freezing, open Settings > Apps, pick the app, tap Storage and then Clear cache.',
+    batteryFault: 'Stop using the phone if the battery is swollen or very hot, and have the battery checked by the phone maker\'s support or an authorised repair shop.',
+    batteryHeat: 'Let the phone cool down, take off a thick case while charging and avoid heavy use while it charges. If it keeps overheating, have the battery checked by the phone maker\'s support or an authorised repair shop.',
+    batteryLow: 'Open Settings > Battery to see which apps use the most power. If the battery runs down quickly, plan a battery replacement with the phone maker\'s support or an authorised repair shop.',
+    batteryInfo: 'Nothing to do now. If the battery starts running down quickly, check Settings > Battery and consider a replacement.',
+    storage: 'Open Settings > Storage to see what takes space, delete files, photos and apps you no longer need, and clear app caches in Settings > Apps.',
+    old_patch: 'Open Settings and search for “Software update”, then install any update offered. If none is offered, this phone may no longer get updates from its maker: keep your apps up to date and avoid using it for banking.'
+  };
+  // Shown once with every Android result (the page and the PDF): the bug report holds personal data
+  var ANDROID_REMINDER = 'When you are done, turn Developer options off again (the switch at the top of the Developer options screen) and delete the bug report from Downloads: it holds personal data.';
+  var ANDROID_REBOOT_CAUSE_ORDER = ['kernel_panic', 'watchdog', 'thermal', 'hardware_reset', 'forced'];
+  var ANDROID_REBOOT_CAUSE_TEXT = {
+    kernel_panic: 'The Android system crashed (a kernel panic).',
+    watchdog: 'The system stopped responding and was restarted automatically.',
+    thermal: 'The phone restarted or switched off because it got too hot.',
+    hardware_reset: 'The hardware reset itself, which can point to a battery or hardware fault.',
+    forced: 'The power button was held to force a restart, usually because the phone froze.'
+  };
+  // BatteryManager health 1..7, as sent in the summary
+  var ANDROID_BATTERY_STATUS = ['unknown', 'good', 'overheat', 'dead', 'over_voltage', 'failure', 'cold'];
+  var ANDROID_STATUS_FACT = { unknown: 'Unknown', good: 'Good', overheat: 'Overheating', dead: 'Failed', over_voltage: 'Over-voltage', failure: 'Failed', cold: 'Cold' };
+  var ANDROID_STATUS_WORD = { overheat: 'overheating', dead: 'dead', over_voltage: 'over-voltage', failure: 'failed' };
+  // Exactly what the server accepts (api/_lib.php, bsc_validate_android_summary)
+  var SUMMARY_PATCH = /^20[0-9]{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$/;
+  var SUMMARY_ANDROID_MODEL = /^[A-Za-z0-9][A-Za-z0-9 ._+()-]{0,47}$/;
+  var SUMMARY_PACKAGE = /^[A-Za-z][A-Za-z0-9_]{0,79}(?:\.[A-Za-z0-9_]{1,79}){0,15}$/;
+  // Client-only extra guard: 7+ digits in a row can be a phone number, an IMEI or a serial; never shown or sent
+  var LONG_DIGITS = /[0-9]{7}/;
+  // One part of the model (ro.product.manufacturer, ro.product.model) before they are joined
+  var ANDROID_MODEL_PART = /^[A-Za-z0-9 ._+()-]{1,40}$/;
+
+  function intIn(v, lo, hi) { return typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= lo && v <= hi ? v : null; }
+
+  function androidModelOk(v) { return typeof v === 'string' && SUMMARY_ANDROID_MODEL.test(v) && !LONG_DIGITS.test(v); }
+
+  // "<manufacturer> <model>" (just the model when it already starts with the manufacturer). A part outside the plain
+  // charset, longer than 40 characters, with an "@" or a long digit run, or one the anonymiser would change, is never
+  // shown: the model is then unknown.
+  function androidModel(manufacturer, model) {
+    var part = function (v) {
+      if (typeof v !== 'string') return null;
+      var x = v.trim();
+      return ANDROID_MODEL_PART.test(x) && !LONG_DIGITS.test(x) ? x : null;
+    };
+    var mo = part(model);
+    if (mo === null) return null;
+    var ma = part(manufacturer);
+    var joined = ma !== null && mo.toLowerCase().indexOf(ma.toLowerCase()) !== 0 ? ma + ' ' + mo : mo;
+    return anonymise(joined) === joined && androidModelOk(joined) ? joined : null;
+  }
+
+  // An app as shown and summarised: only an Android package or process name ("com.example.snapnotes",
+  // "system_server") that the anonymiser leaves alone; anything else (a path, an e-mail, a phone number, a name with
+  // spaces, 80+ characters, an empty name) is "An unnamed app".
+  function androidAppName(raw) {
+    var s = typeof raw === 'string' ? raw : '';
+    return s.length <= 80 && SUMMARY_PACKAGE.test(s) && !LONG_DIGITS.test(s) && anonymise(s) === s ? s : UNNAMED_APP;
+  }
+
+  function validTime(d) { return d instanceof Date && !isNaN(d.getTime()); }
+
+  // input: {report: androidScanner().finish() result, truncated?: boolean}. The window is the 30 days before the report
+  // time (the "== dumpstate:" line, else the analysis time) up to one day after it.
+  function evaluateAndroid(input, now) {
+    var r = input || {};
+    var rep = r.report && r.report.kind === 'android' ? r.report : {};
+    var at = now || new Date();
+    var findings = [];
+    var facts = [];
+    var reportDate = validTime(rep.time) ? rep.time : null;
+    var ref = reportDate || at;
+    var from = ref.getTime() - 30 * DAY;
+    var to = ref.getTime() + DAY;
+    var inWindow = function (d) { return validTime(d) && d.getTime() >= from && d.getTime() <= to; };
+    var android = typeof rep.android === 'string' && SUMMARY_ANDROID.test(rep.android) ? rep.android : null;
+    var securityPatch = typeof rep.securityPatch === 'string' && SUMMARY_PATCH.test(rep.securityPatch) ? rep.securityPatch : null;
+    var model = androidModel(rep.manufacturer, rep.model);
+
+    // Unexpected restarts: the boot-reason history when there is one, else the last boot reason, else LAST KMSG.
+    // The raw reasons are never kept: only the mapped cause and its time.
+    var boots = Array.isArray(rep.boots) ? rep.boots : [];
+    var restarts = [];
+    var reboots30d = null;
+    if (boots.length) {
+      boots.forEach(function (b) {
+        var c = b ? androidBootCause(b.reason) : null;
+        if (c && inWindow(b.time)) restarts.push({ cause: c, time: b.time });
+      });
+      reboots30d = restarts.length;
+    } else if (typeof rep.bootReason === 'string' || rep.kmsgSeen || rep.kmsgPanic || rep.kmsgWatchdog) {
+      var cause = androidBootCause(rep.bootReason);
+      if (!cause && rep.kmsgPanic) cause = 'kernel_panic';
+      else if (!cause && rep.kmsgWatchdog) cause = 'watchdog';
+      if (cause) restarts.push({ cause: cause, time: ref });
+      reboots30d = restarts.length;
+    }
+    restarts.sort(function (a, b) { return b.time.getTime() - a.time.getTime(); });
+    var causeCount = Object.create(null);
+    restarts.forEach(function (x) { causeCount[x.cause] = (causeCount[x.cause] || 0) + 1; });
+
+    // App crashes and "not responding": the EVENT LOG, else crashes from the SYSTEM LOG (ANRs then unknown)
+    var log = rep.events ? rep.events : (rep.fatal ? rep.fatal : null);
+    var crashList = log ? (Array.isArray(log.crashes) ? log.crashes : []).filter(function (x) { return x && inWindow(x.time); }) : null;
+    var anrList = rep.events ? (Array.isArray(rep.events.anrs) ? rep.events.anrs : []).filter(function (x) { return x && inWindow(x.time); }) : null;
+    var logDays = null;
+    if (log && validTime(log.first) && validTime(log.last)) {
+      logDays = Math.min(30, Math.max(1, Math.ceil((log.last.getTime() - log.first.getTime()) / DAY)));
+    }
+    var tally = function (list) {
+      var m = Object.create(null);
+      (list || []).forEach(function (x) { var n = androidAppName(x.app); m[n] = (m[n] || 0) + 1; });
+      return countList(m);
+    };
+    var crashApps = tally(crashList);
+    var anrApps = tally(anrList);
+
+    // Battery: Android's status and its own capacity estimate (learned / design, both 500..20,000 mAh, 1..120 %)
+    var bat = rep.battery || {};
+    var health = intIn(bat.health, 1, 7);
+    var status = health === null ? null : ANDROID_BATTERY_STATUS[health - 1];
+    var cycles = intIn(bat.cycles, 0, 100000);
+    var design = intIn(bat.designMah, 500, 20000);
+    var learned = intIn(bat.learnedMah, 500, 20000);
+    var estimate = null;
+    if (design !== null && learned !== null) {
+      var ratio = learned / design * 100;
+      if (ratio >= 1 && ratio <= 120) estimate = Math.min(100, Math.round(ratio));
+    }
+
+    var st = rep.storage;
+    var storageFreePct = null;
+    if (st && typeof st.freeKb === 'number' && typeof st.totalKb === 'number' && isFinite(st.freeKb) && isFinite(st.totalKb) &&
+      st.totalKb > 0 && st.freeKb >= 0 && st.freeKb <= st.totalKb) {
+      storageFreePct = Math.floor(st.freeKb * 100 / st.totalKb);
+    }
+
+    // Whole calendar days from the patch date to the report's date (UTC arithmetic on the Y-M-D parts)
+    var patchAgeDays = null;
+    if (securityPatch !== null) {
+      var p = securityPatch.split('-');
+      var age = Math.round((Date.UTC(ref.getFullYear(), ref.getMonth(), ref.getDate()) - Date.UTC(+p[0], +p[1] - 1, +p[2])) / DAY);
+      if (age >= 0) patchAgeDays = age;
+    }
+
+    var out = { platform: 'android', score: 100, findings: findings, facts: facts, reportDate: reportDate,
+      android: android, securityPatch: securityPatch, patchAgeDays: patchAgeDays, model: model,
+      reboots30d: reboots30d, rebootCauses: countList(causeCount),
+      crashes: crashList === null ? null : crashList.length, anrs: anrList === null ? null : anrList.length,
+      topCrashApps: crashApps.slice(0, 3), topAnrApps: anrApps.slice(0, 3), logDays: logDays,
+      batteryHealthPct: estimate, batteryCycles: cycles, batteryStatus: status, storageFreePct: storageFreePct,
+      truncated: r.truncated === true, reminder: ANDROID_REMINDER, names: [] };
+    function add(id, severity, title, detail, fix) { findings.push({ id: id, severity: severity, title: title, detail: detail || '', fix: fix || '' }); }
+    var inLogs = function () { return logDays !== null ? ' in the last ' + plural(logDays, 'day', 'days') + ' of logs' : ' in the logs'; };
+
+    if (restarts.length) {
+      var detail = 'Most recent: ' + localDate(restarts[0].time) + '.';
+      ANDROID_REBOOT_CAUSE_ORDER.forEach(function (c) { if (causeCount[c]) detail += ' ' + ANDROID_REBOOT_CAUSE_TEXT[c]; });
+      add('reboots', restarts.length >= 2 ? 'risk' : 'warn',
+        'Your phone restarted by itself ' + plural(restarts.length, 'time', 'times') + ' in 30 days', detail, ANDROID_FIX.reboots);
+    }
+    if (crashList && crashList.length) {
+      add('crashes', crashList.length >= 3 ? 'warn' : 'info', 'Apps crashed ' + plural(crashList.length, 'time', 'times') + inLogs(),
+        'Most crashes: ' + crashApps.slice(0, 3).map(function (a) { return a.name + ' (' + plural(a.count, 'crash', 'crashes') + ')'; }).join('; ') +
+        '. Android keeps only a few days of logs, so older crashes are not counted.', ANDROID_FIX.crashes);
+    }
+    if (anrList && anrList.length) {
+      add('anrs', anrList.length >= 3 ? 'warn' : 'info', 'Apps stopped responding ' + plural(anrList.length, 'time', 'times') + inLogs(),
+        'Most often: ' + anrApps.slice(0, 3).map(function (a) { return a.name + ' (' + plural(a.count, 'time', 'times') + ')'; }).join('; ') + '.', ANDROID_FIX.anrs);
+    }
+    var statusSev = status === 'dead' || status === 'failure' ? 'risk' : (status === 'overheat' || status === 'over_voltage' ? 'warn' : null);
+    var estimateSev = estimate === null ? null : (estimate < 60 ? 'warn' : (estimate < 80 ? 'info' : null));
+    if (statusSev || estimateSev) {
+      var rank = { risk: 3, warn: 2, info: 1 };
+      var sev = !statusSev ? estimateSev : (!estimateSev || rank[statusSev] >= rank[estimateSev] ? statusSev : estimateSev);
+      var title = statusSev === 'risk' ? 'Android reports a battery fault' :
+        status === 'overheat' && statusSev ? 'Android reports the battery as overheating' :
+        status === 'over_voltage' && statusSev ? 'Android reports a battery voltage problem' :
+        'Battery holds about ' + estimate + ' % of its original capacity (Android\'s estimate)';
+      var parts = [];
+      if (statusSev) parts.push('Battery status: ' + ANDROID_STATUS_WORD[status] + '.');
+      if (estimate !== null) {
+        parts.push('Android estimates the battery holds about ' + estimate + ' % of its original capacity' +
+          (cycles !== null ? ' after ' + plural(cycles, 'charge cycle', 'charge cycles') : '') + '.');
+      }
+      if (!statusSev) parts.push('This is Android\'s own estimate and can be off by a few percent.');
+      var fix = statusSev === 'risk' ? ANDROID_FIX.batteryFault : (statusSev === 'warn' ? ANDROID_FIX.batteryHeat : (estimateSev === 'warn' ? ANDROID_FIX.batteryLow : ANDROID_FIX.batteryInfo));
+      if (statusSev === 'warn' && estimateSev === 'warn') fix += ' ' + ANDROID_FIX.batteryLow;
+      add('battery', sev, title, parts.join(' '), fix);
+    }
+    if (storageFreePct !== null && storageFreePct < 10) {
+      add('storage', storageFreePct < 5 ? 'risk' : 'warn', 'Only ' + storageFreePct + ' % of storage is free',
+        'Android needs free space to install updates and to run smoothly.', ANDROID_FIX.storage);
+    }
+    if (patchAgeDays !== null && patchAgeDays > 90) {
+      add('old_patch', patchAgeDays > 180 ? 'risk' : 'warn', 'The security patch is ' + patchAgeDays + ' days old',
+        'Security patch level ' + securityPatch + '. Android phones should get a security update every month or two; an old patch can leave known security holes open.',
+        ANDROID_FIX.old_patch);
+    }
+    if (reportDate) {
+      var reportAge = Math.floor((at.getTime() - reportDate.getTime()) / DAY);
+      if (reportAge > 30) add('old_report', 'info', 'The bug report is ' + reportAge + ' days old', 'Take a new bug report to see the current state.', '');
+    }
+
+    var risks = findings.filter(function (f) { return f.severity === 'risk'; }).length;
+    var warns = findings.filter(function (f) { return f.severity === 'warn'; }).length;
+    out.score = Math.max(0, 100 - 25 * risks - 10 * warns);
+
+    var logLabel = logDays !== null ? ' (last ' + plural(logDays, 'day', 'days') + ' of logs)' : ' (in the logs)';
+    if (android !== null) facts.push({ label: 'System', value: 'Android ' + android });
+    if (securityPatch !== null) facts.push({ label: 'Security patch', value: securityPatch });
+    if (model !== null) facts.push({ label: 'Model', value: model });
+    if (estimate !== null) facts.push({ label: 'Battery capacity (Android\'s estimate)', value: estimate + ' %' });
+    if (status !== null) facts.push({ label: 'Battery status', value: ANDROID_STATUS_FACT[status] });
+    if (cycles !== null) facts.push({ label: 'Battery charge cycles', value: String(cycles) });
+    if (storageFreePct !== null) facts.push({ label: 'Storage free', value: storageFreePct + ' %' });
+    if (reboots30d !== null) facts.push({ label: 'Unexpected restarts (30 days)', value: String(reboots30d) });
+    if (crashList !== null) facts.push({ label: 'App crashes' + logLabel, value: String(crashList.length) });
+    if (anrList !== null) facts.push({ label: 'Apps not responding' + logLabel, value: String(anrList.length) });
+    if (reportDate) facts.push({ label: 'Bug report from', value: localDate(reportDate) });
+
+    facts.forEach(function (f) { f.value = anonymise(f.value); });
+    findings.forEach(function (f) { f.title = anonymise(f.title); f.detail = anonymise(f.detail); });
+    out.goodNews = estimate !== null && estimate >= 80 && !findings.some(function (f) { return f.id === 'battery'; }) ?
+      [{ title: 'Battery looks healthy — Android estimates it holds ' + estimate + ' % of its original capacity.' }] : [];
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
   // The only thing that may ever be sent for an AI explanation: a small, whitelisted summary
   // ---------------------------------------------------------------------------
   // Control (Cc) and format (Cf) characters, which the server rejects: removed rather than sent.
@@ -2378,7 +2639,52 @@
     };
   }
 
+  // Exactly what the server accepts (api/_lib.php, bsc_validate_android_summary): versions, dates and the model by
+  // their regexes, apps as package names (else "An unnamed app"), causes, statuses and finding ids from the fixed
+  // enums, counts of at least 1 in lists, numbers in their ranges. A value the server would reject is sent as null or
+  // left out.
+  var SUMMARY_ANDROID_CAUSES = toSet(ANDROID_REBOOT_CAUSE_ORDER);
+  var SUMMARY_ANDROID_STATUS = toSet(ANDROID_BATTERY_STATUS);
+  var SUMMARY_ANDROID_FINDING_IDS = toSet(['reboots', 'crashes', 'anrs', 'battery', 'storage', 'old_patch', 'old_report']);
+
+  function buildAndroidSummary(e) {
+    var model = typeof e.model === 'string' ? cap(anonymise(e.model)) : null;
+    var score = summaryCount(e.score);
+    // Counts of the same name are added up, so a list never names an entry twice
+    var list = function (items, nameOf) {
+      var m = Object.create(null);
+      (Array.isArray(items) ? items : []).forEach(function (a) {
+        if (!a) return;
+        var name = nameOf(a.name);
+        var n = summaryCount(a.count);
+        if (name === null || !n) return;
+        m[name] = Math.min(100000, (m[name] || 0) + n);
+      });
+      return countList(m).slice(0, 3);
+    };
+    return {
+      platform: 'android',
+      android: typeof e.android === 'string' && SUMMARY_ANDROID.test(e.android) ? e.android : null,
+      securityPatch: typeof e.securityPatch === 'string' && SUMMARY_PATCH.test(e.securityPatch) ? e.securityPatch : null,
+      model: model !== null && model === e.model && androidModelOk(model) ? model : null,
+      score: score === null ? 0 : Math.min(score, 100),
+      findings: (e.findings || []).filter(function (f) { return f && SUMMARY_ANDROID_FINDING_IDS[f.id] && SUMMARY_SEVERITIES[f.severity]; })
+        .slice(0, 20).map(function (f) { return { id: f.id, severity: f.severity }; }),
+      reboots30d: summaryCount(e.reboots30d),
+      rebootCauses: list(e.rebootCauses, function (n) { return typeof n === 'string' && SUMMARY_ANDROID_CAUSES[n] ? n : null; }),
+      crashes: summaryCount(e.crashes),
+      anrs: summaryCount(e.anrs),
+      topCrashApps: list(e.topCrashApps, androidAppName),
+      logDays: intIn(e.logDays, 1, 30),
+      batteryHealthPct: batteryOk(e.batteryHealthPct) ? e.batteryHealthPct : null,
+      batteryCycles: intIn(e.batteryCycles, 0, 100000),
+      batteryStatus: typeof e.batteryStatus === 'string' && SUMMARY_ANDROID_STATUS[e.batteryStatus] ? e.batteryStatus : null,
+      storageFreePct: intIn(e.storageFreePct, 0, 100)
+    };
+  }
+
   function buildSummary(e) {
+    if (e && e.platform === 'android') return buildAndroidSummary(e);
     if (e && e.platform === 'ios') return buildIosSummary(e);
     if (e && e.platform === 'mac') return buildMacSummary(e);
     if (e && e.platform === 'linux') return buildLinuxSummary(e);
@@ -2409,6 +2715,6 @@
     IOS_REPORT_HEAD: IOS_REPORT_HEAD, IOS_MAJORS: IOS_MAJORS, parseIosReport: parseIosReport, uniqueIosReports: uniqueIosReports,
     evaluateIos: evaluateIos,
     ANDROID_TEXT_CAP: ANDROID_TEXT_CAP, androidScanner: androidScanner, parseAndroidBugreport: parseAndroidBugreport,
-    androidBootCause: androidBootCause
+    androidBootCause: androidBootCause, evaluateAndroid: evaluateAndroid, ANDROID_REMINDER: ANDROID_REMINDER
   };
 })();
