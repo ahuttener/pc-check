@@ -25,7 +25,7 @@
       docTitle: 'PC Check | CyberSecInfo',
       skip: 'Skip to the checks',
       title: 'PC Check',
-      lead: 'Four quick checks that run right here in your browser, with nothing to install. Nothing leaves your device until you click, and everything that does is listed in the outbound log.',
+      lead: 'Quick checks that run right here in your browser, with nothing to install, plus a health check of your computer or phone from the reports it already keeps. Nothing leaves your device until you click, and everything that does is listed in the outbound log.',
       run: 'Check now',
       running: 'Checking…',
       runAgain: 'Check again',

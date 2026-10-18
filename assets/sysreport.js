@@ -1474,7 +1474,7 @@
   // ---------------------------------------------------------------------------
   var DAY = 86400000;
   var KNOWN_HELPERS = [
-    { re: /MiracastPowerManager/i, what: 'a wireless-display (Miracast) helper installed by the PC maker' },
+    { re: /MiracastPowerManager/i, what: 'part of Windows for wireless displays (Miracast); its crashes usually point to an old graphics or Wi-Fi driver' },
     { re: /AcerRegistration/i, what: 'Acer’s product-registration helper' },
     { re: /jusched|Java Update Scheduler/i, what: 'Java’s update checker' }
   ];
