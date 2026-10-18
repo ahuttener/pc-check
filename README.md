@@ -22,6 +22,7 @@ PC Check is being built in stages. This first stage checks what a web page can h
 | **WebRTC leak** | Whether WebRTC reveals a real IP past a VPN or proxy | A STUN request to `stun.cloudflare.com`; the public address WebRTC reports is compared with the connection's IP, per address family (no false alarm on dual-stack IPv4/IPv6) |
 | **Trackability** | What any site can read without cookies, and which protections are active | 100 % local: browser, system, time zone, screen, CPU cores, memory, GPU, canvas hash; Global Privacy Control, tracker blocker (bait element), canvas randomisation, Safari's built-in tracking prevention. Stated as an estimate |
 | **Internet speed** | Download, upload, ping and jitter, on an animated gauge | Cloudflare's speed endpoints (`speed.cloudflare.com/__down`, `__up`); runs only from its own GO button (up to ~55 MB), each request has a 10 s timeout and the test can be cancelled |
+| **System report (Windows)** | A health score for the PC, with the findings and how to fix each one | You save the reports Windows already writes (Reliability history via `perfmon /rel`, `powercfg /batteryreport`, `msinfo32` export) and PC Check parses them in the browser. Mac and Linux: coming soon |
 | **PDF report** | Everything above, with the CyberSecInfo logo | Built in the page at click time and printed (“Save as PDF”); never contains the password or its full hash |
 
 The outdated-browser verdict compares against the Chrome version Google is **actually serving** (a published version can sit at 0 % rollout) and says "rolling out" instead of raising an alarm while a release is under 14 days old.
@@ -35,6 +36,7 @@ The page is in English and works in light and dark mode, down to 375 px wide.
 - **k-anonymity for passwords.** The password is hashed in the browser; the Pwned Passwords API receives only a 5-character prefix and returns hundreds of matching suffixes (padded with fake ones, `Add-Padding: true`). The comparison happens locally. The input is cleared right after submit and the full hash is never shown.
 - **No cookies, no analytics, no ads, no third-party scripts, no browser storage.** Cloudflare's speed endpoints set no cookies either, so the page needs no consent banner.
 - **Speed test and WebRTC are opt-in by design.** The speed test only runs from its own button; the STUN request carries no personal data and is listed in the outbound log.
+- **Report files never leave the device.** The Windows reports are parsed in the browser. Only if you click "Explain with AI" is a small anonymised JSON summary (shown to you first) sent to Claude (Anthropic) through cybersecinfo.com. Nothing is stored except rate-limit hashes and a daily counter.
 - **The server keeps nothing personal.** The PHP proxy stores no IPs, no test IDs, no results. The rate limiter keeps only a salted SHA-256 of the IP for a 10-minute window.
 
 ## Architecture
@@ -101,6 +103,12 @@ The end-to-end suite checks that nothing leaves before the click, that the passw
 Requirements: PHP 7.4+ with cURL (falls back to `file_get_contents` with TLS verification), Apache with `mod_headers` for the security headers.
 
 Upload `index.html`, `.htaccess`, `assets/` and `api/` (with `api/cache/.htaccess`) to `public_html/pccheck/`. Leave out `tests/`, `README.md`, `LICENSE` and `HANDOFF.md`. Make sure `api/cache/` is writable by PHP.
+
+### Configuring the AI explanation
+
+`api/explain.php` reads `ANTHROPIC_API_KEY` and, optionally, `LLM_MODEL` (default `claude-haiku-5-5`) from `grcaudit-config.php`, located three directories above `api/` (outside the web root). The file may return an array, or use `define()` or plain variables. Never commit it. Without a key the endpoint answers 503 `not_configured`.
+
+Limits: POST JSON up to 8 KB, same-origin only, 5 requests per hour per IP and 200 per day overall.
 
 ## Credits
 
