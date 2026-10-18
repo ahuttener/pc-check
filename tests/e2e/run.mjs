@@ -898,7 +898,7 @@ try {
       const R = (prefix) => r.rep[Object.keys(r.rep).filter((f) => f.indexOf(prefix) === 0)[0]];
       const w = R('panic-full-2026-10-14');
       check('mac panic: watchdog, time, cause line', w.r.kind === 'panic' && w.r.cause === 'watchdog' && w.time === '2026-10-14T21:41:07.000Z' &&
-        /^watchdog timeout: no checkins from watchdogd/.test(w.r.causeLine) && w.r.causeLine.length <= 120 && same(w.r.extensions, []), w);
+        /^watchdog timeout: no checkins from watchdogd/.test(w.r.causeLine) && w.r.causeLine.length <= 4096 && same(w.r.extensions, []), w);
       check('mac panic: Kernel data abort -> data_abort', R('panic-full-2026-10-02').r.cause === 'data_abort', R('panic-full-2026-10-02'));
       const ca = R('Kernel-2026-10-09');
       check('mac panic: CATERR -> cpu_error with the third-party extension', ca.r.cause === 'cpu_error' && same(ca.r.extensions, ['com.paragon-software.filesystems.ntfs']), ca);
@@ -987,6 +987,16 @@ try {
         stale: brief(S.evaluateMac({ spx: si }, new Date('2026-12-01T12:00:00Z'))),
         mac15: brief(S.evaluateMac({ spx: S.parseSpx(t.silicon.replace('macOS 26.0.1 (25A362)', 'macOS 15.7 (24G222)')) }, now)),
         ram8192: S.parseSpx(t.silicon.replace('<string>16 GB</string>', '<string>8,192 MB</string>')).ramGb,
+        straddle: (() => {
+          // The host name starts at character 106 of the cause line and ends after the 120-character cut
+          const rest = 'watchdog timeout: ' + 'x'.repeat(82) + ' host Janes-MacBook-Air stopped responding';
+          const rep = S.parseMacReport('{"bug_type":"210","timestamp":"2026-10-17 10:00:00.00 +0100"}\n{\n  "panicString" : "panic(cpu 0 caller 0xfffffe0012345678): ' + rest + '"\n}\n');
+          const e = S.evaluateMac({ spx: si, reports: [rep] }, now);
+          return { causeLen: rep.causeLine.length, shown: brief(e).shown, detail: e.findings.filter((f) => f.id === 'panics').map((f) => f.detail)[0] || '' };
+        })(),
+        blankApp: JSON.stringify(S.buildSummary(S.evaluateMac({ reports: [{ kind: 'crash', time: new Date('2026-10-17T10:00:00Z'), app: String.fromCharCode(0x200B, 0x200B, 0xAD), exception: null }] }, now)).topCrashApps),
+        blankSummary: JSON.stringify(S.buildSummary({ platform: 'mac', score: 100, findings: [], names: [], topCrashApps: [{ name: String.fromCharCode(0x200B), count: 1 }] }).topCrashApps),
+        future: brief(S.evaluateMac({ reports: reps(t.setA).concat([{ kind: 'crash', time: new Date('2099-01-01T00:00:00Z'), app: 'Future App', exception: null }]) }, now)),
         empty: brief(S.evaluateMac({}, now)),
         anon: {
           volume: S.anonymise('Opening /Volumes/Jane\u2019s Backup/x'),
@@ -996,7 +1006,9 @@ try {
           wordCase: S.anonymise('JANE and jane, Jane.', [{ word: 'Jane' }]),
           plain: S.anonymise('Sam\u2019s iMac and Samsung', ['Sam\u2019s iMac']),
           mixed: S.anonymise('Jane\u2019s MacBook Air: Jane', ['Jane\u2019s MacBook Air', { word: 'Jane' }]),
-          noObjectText: S.anonymise('[object Object] stays', [{ word: 'Jane' }])
+          noObjectText: S.anonymise('[object Object] stays', [{ word: 'Jane' }]),
+          volumePrefixed: S.anonymise('/Volumes/[volume]Jane/x'),
+          volumeKept: S.anonymise('x (/Volumes/[volume]) 92 % /Volumes/[volume]')
         },
         volumeWords: S.parseSpx(t.silicon.replace('<string>Jane\u2019s Backup</string>', '<string>Backup</string>')).names
       };
@@ -1058,6 +1070,19 @@ try {
       check('mac anonymiser: {word} names are whole words, any case', x.word === '[name] said hi' && x.wordInside === 'Janet' && x.wordCase === '[name] and [name], [name].', [x.word, x.wordInside, x.wordCase]);
       check('mac anonymiser: plain names stay substrings, mixed lists work', x.plain === '[name] and Samsung' && x.mixed === '[name]: [name]' && x.noObjectText === '[object Object] stays', [x.plain, x.mixed, x.noObjectText]);
       check('mac spx: a generic volume name ("Backup") is not a name', !r.volumeWords.some((n) => typeof n === 'object' && /^backup$/i.test(n.word)), r.volumeWords);
+      // Fragments: given names, host-name prefixes, and every 8-character piece of each serial
+      const fragments = ['jane', 'priya', 'janes', 'priyas'].concat(...planted.serials.map((sn) => {
+        const out = [];
+        for (let i = 0; i + 8 <= sn.length; i++) out.push(sn.slice(i, i + 8).toLowerCase());
+        return out;
+      }));
+      const frag = (s) => fragments.filter((v) => s.toLowerCase().indexOf(v) !== -1);
+      check('mac anonymiser: no name or serial fragment in Sets A and B', !frag(A.shown).length && !frag(B.shown).length, [frag(A.shown), frag(B.shown)]);
+      check('mac anonymiser: a host name straddling the 120-character cut leaves no fragment', r.straddle.causeLen > 120 && r.straddle.detail !== '' &&
+        !frag(r.straddle.shown).length && !leaks(r.straddle.shown).length && !/MacBook-/.test(r.straddle.detail), [r.straddle.causeLen, r.straddle.detail]);
+      check('mac summary: an app name of only format characters -> "An unnamed app"', r.blankApp === '[{"name":"An unnamed app","count":1}]' && r.blankSummary === '[{"name":"An unnamed app","count":1}]', [r.blankApp, r.blankSummary]);
+      check('mac rules: a report dated 2099 does not move the report date', r.future.reportDate === '2026-10-16' && r.future.crashes30d === 2, [r.future.reportDate, r.future.crashes30d]);
+      check('mac anonymiser: a volume name starting with "[volume]" is still masked; masked text unchanged', x.volumePrefixed === '/Volumes/[volume]/x' && x.volumeKept === 'x (/Volumes/[volume]) 92 % /Volumes/[volume]', [x.volumePrefixed, x.volumeKept]);
     }
     await context.close();
   }

@@ -812,7 +812,9 @@
     var rest = first.replace(/^panic\(cpu \d+ caller 0x[0-9a-fA-F]+\):\s*/, '');
     return {
       kind: 'panic', time: time, cause: panicCause(rest),
-      causeLine: anonymise(rest).slice(0, 120).trim(),
+      // Kept whole (at most LINE_CHARS): evaluateMac cuts it to 120 only after masking the .spx names, so a name
+      // straddling the cut can never leave a fragment behind.
+      causeLine: anonymise(rest).trim(),
       extensions: panicExtensions(panicText)
     };
   }
@@ -923,7 +925,7 @@
       .replace(/\bssid=(?!["'])[^\s,;]{1,128}/gi, 'ssid="[wifi]"')
       .replace(IPV6_COMPRESSED, function (all, before, ip) { return /\d/.test(ip) ? before + '[ip]' : all; })
       // Mac: volume names in /Volumes/<name>, and Apple silicon provisioning UDIDs (before HEX_RUN takes half of one)
-      .replace(/(\/Volumes\/)(?!\[volume\])[^\/"\n]+/g, '$1[volume]') // already-masked text passes through unchanged
+      .replace(/(\/Volumes\/)(?!\[volume\](?:[\/"\n)]|$))[^\/"\n]+/g, '$1[volume]') // already-masked text passes through unchanged
       .replace(/\b[0-9A-F]{8}-[0-9A-F]{16}\b/gi, '[id]')
       .replace(HEX_RUN, '$1[id]');
     var nameRe = namesRegex(names);
@@ -1407,7 +1409,9 @@
     var reportDate = spx && spx.reportDate instanceof Date ? spx.reportDate : null;
     if (!reportDate) {
       reports.forEach(function (x) {
-        if (x.time instanceof Date && !isNaN(x.time.getTime()) && (!reportDate || x.time.getTime() > reportDate.getTime())) reportDate = x.time;
+        // A time after tomorrow is a wrong clock or a forged file: it must not move the window away from the real reports
+        if (x.time instanceof Date && !isNaN(x.time.getTime()) && x.time.getTime() <= at.getTime() + DAY &&
+          (!reportDate || x.time.getTime() > reportDate.getTime())) reportDate = x.time;
       });
     }
     if (!reportDate) reportDate = at;
@@ -1433,7 +1437,7 @@
     // App names are masked before counting, so two apps that both carry a personal name are one "[name]" entry
     var appCount = Object.create(null);
     crashes.forEach(function (c) {
-      var app = anonymise(c.app || '', names).trim() || UNNAMED_APP;
+      var app = anonymise(c.app || '', names).replace(CONTROL_FORMAT_RE, '').trim() || UNNAMED_APP;
       appCount[app] = (appCount[app] || 0) + 1;
     });
     var apps = countList(appCount);
@@ -1458,7 +1462,7 @@
 
     if (panics.length) {
       var last = panics[0];
-      var line = anonymise(last.causeLine || '', names).trim();
+      var line = anonymise(last.causeLine || '', names).slice(0, 120).trim();
       var detail = 'Most recent: ' + localDate(last.time) + (line ? ': ' + line.replace(/[.\s]+$/, '') : '') + '.';
       MAC_PANIC_CAUSE_ORDER.forEach(function (c) { if (causeCount[c]) detail += ' ' + MAC_PANIC_CAUSE_TEXT[c]; });
       if (extensions.length) detail += ' A non-Apple kernel extension was involved: ' + extensions.join(', ') + '.';
@@ -1609,7 +1613,7 @@
       panicCauses: (e.panicCauses || []).filter(function (c) { return SUMMARY_MAC_CAUSES[c.name]; })
         .map(function (c) { return { name: c.name, count: summaryCount(c.count) || 0 }; }).sort(byCountThenName).slice(0, 3),
       crashes30d: summaryCount(e.crashes30d),
-      topCrashApps: (e.topCrashApps || []).map(function (a) { return { name: str(a.name), count: summaryCount(a.count) || 0 }; })
+      topCrashApps: (e.topCrashApps || []).map(function (a) { return { name: (str(a.name) || '').trim() || UNNAMED_APP, count: summaryCount(a.count) || 0 }; })
         .sort(byCountThenName).slice(0, 3),
       diskMaxUsedPct: summaryNumber(e.diskMaxUsedPct, 100),
       batteryHealthPct: summaryNumber(e.batteryHealthPct, 200),
