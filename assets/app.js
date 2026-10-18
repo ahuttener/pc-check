@@ -405,6 +405,26 @@
       sev_warn: 'Attention',
       sev_info: 'For your info',
 
+      // Explain with AI (optional; sends only the anonymised summary, after the disclosure)
+      sysAiTitle: 'Explain with AI',
+      sysAiOpen: 'Explain with AI',
+      sysAiDisclosure: 'Optional: send this anonymised summary to Claude (Anthropic) through cybersecinfo.com to get a plain-English explanation. Only the summary below is sent — not your files. Nothing is stored.',
+      sysAiSummaryLabel: 'This is everything that would be sent:',
+      sysAiSend: 'Send',
+      sysAiSending: 'Sending…',
+      sysAiCancel: 'Cancel',
+      sysAiBy: function (model) { return 'Written by Claude (Anthropic' + (model ? ', ' + model : '') + ') from the summary above. AI can be wrong: check before you change anything.'; },
+      sysAiRate: 'You have reached the limit of AI explanations for now. Try again in an hour — the results above are complete without it.',
+      sysAiDaily: 'Today’s limit of AI explanations has been reached. Try again tomorrow — the results above are complete without it.',
+      sysAiOff: 'AI explanations are not available right now. The results above are complete without it.',
+      sysAiUpstream: 'The AI service did not answer. Try again in a minute.',
+      sysAiFail: 'The explanation could not be fetched. Check your connection and try again.',
+      lpExplain: 'AI explanation of the system report (this site, passed to Claude by Anthropic)',
+      reportSysTitle: 'System report',
+      reportSysScore: function (n) { return 'Health score: ' + n + ' / 100'; },
+      reportAiTitle: 'AI explanation',
+      reportFootAi: 'Generated locally in your browser. Only what is listed under “What left your device” was sent, including the anonymised system summary for the AI explanation. cybersecinfo.com/pccheck',
+
       aboutTitle: 'How it works',
       aboutPw: 'Password: your browser turns the password into a code (SHA-1 hash) and sends only the first 5 characters. Pwned Passwords returns hundreds of codes that start the same way, and the comparison happens here. Not even the service knows which password you checked.',
       aboutDns: 'DNS: your browser looks up 20 test addresses that exist only for you. The bash.ws service records which DNS servers made those lookups and compares them with your connection’s network.',
@@ -448,9 +468,15 @@
       files: { reliability: null, battery: null, msinfo: null },
       steps: { reliability: null, battery: null, msinfo: null },
       status: null,
-      evaluation: null
+      evaluation: null,
+      // Explain with AI: open = disclosure shown; busy = request in flight; text/model = the answer
+      ai: blankAi()
     }
   };
+
+  function blankAi() {
+    return { open: false, busy: false, summary: null, text: null, model: null, error: null };
+  }
 
   function blankCheck() {
     return { status: 'idle', verdict: null, facts: [], note: null, fix: null, link: null };
@@ -497,9 +523,11 @@
 
   function request(url, options) {
     var opts = Object.assign({ cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error' }, options || {});
+    var ms = opts.timeoutMs || CONFIG.timeoutMs;
+    delete opts.timeoutMs;
     var controller = typeof AbortController === 'function' ? new AbortController() : null;
     if (controller) opts.signal = controller.signal;
-    var timer = setTimeout(function () { if (controller) controller.abort(); }, CONFIG.timeoutMs);
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, ms);
     return fetch(url, opts).then(function (res) {
       clearTimeout(timer);
       return res;
@@ -1436,7 +1464,9 @@
     state.sys.files[kind] = null;
     state.sys.evaluation = null;
     state.sys.status = null;
+    state.sys.ai = blankAi();
     renderSysResults();
+    renderPdfButton();
     if (!window.PCSys) { setSysStep(kind, 'error', ['sysReadError']); return Promise.resolve(); }
     if (file.size > SYS_MAX_BYTES) { setSysStep(kind, 'error', ['sysTooBig']); return Promise.resolve(); }
     setSysStep(kind, 'reading', ['sysReading']);
@@ -1473,7 +1503,9 @@
         state.sys.evaluation = window.PCSys.evaluateWindows({ reliability: f.reliability, battery: f.battery, msinfo: f.msinfo }, new Date());
         state.sys.status = f.reliability ? ['sysDone'] : ['sysNoCrash'];
       }
+      state.sys.ai = blankAi();
       renderSysResults();
+      renderPdfButton();
       var heading = $('#sys-results h3');
       if (state.sys.evaluation && heading) heading.focus();
     });
@@ -1585,6 +1617,131 @@
       });
       root.appendChild(tiles);
     }
+
+    var ai = el('div', 'sys-ai');
+    ai.id = 'sys-ai';
+    root.appendChild(ai);
+    renderSysAi();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Explain with AI: only after the click, the disclosure and "Send"; only PCSys.buildSummary() leaves.
+  // The answer is model output: shown as text nodes only, never as HTML.
+  // ---------------------------------------------------------------------------
+  var AI_ERRORS = { rate_limited: 'sysAiRate', daily_limit: 'sysAiDaily' };
+
+  function aiParagraphs(text) {
+    return String(text).split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  function renderSysAi() {
+    var box = $('#sys-ai');
+    if (!box) return;
+    var ai = state.sys.ai;
+    box.textContent = '';
+    box.setAttribute('data-state', ai.text ? 'done' : (ai.open ? 'open' : 'closed'));
+    box.appendChild(el('h4', 'sys-subtitle', t('sysAiTitle')));
+
+    if (!ai.open && !ai.text) {
+      var open = el('button', 'btn btn-ghost sys-ai-open', t('sysAiOpen'));
+      open.type = 'button';
+      open.id = 'sys-ai-open';
+      open.addEventListener('click', openSysAi);
+      box.appendChild(open);
+      return;
+    }
+
+    var disc = el('p', 'sys-ai-disclosure', t('sysAiDisclosure'));
+    disc.id = 'sys-ai-disclosure';
+    box.appendChild(disc);
+    box.appendChild(el('p', 'sys-ai-label', t('sysAiSummaryLabel')));
+    var pre = el('pre', 'sys-ai-summary', JSON.stringify(ai.summary, null, 2));
+    pre.id = 'sys-ai-summary';
+    pre.tabIndex = 0;
+    box.appendChild(pre);
+
+    if (ai.text) {
+      var out = el('div', 'sys-ai-text');
+      out.id = 'sys-ai-text';
+      aiParagraphs(ai.text).forEach(function (p) { out.appendChild(el('p', null, p)); });
+      box.appendChild(out);
+      box.appendChild(el('p', 'sys-ai-by', t('sysAiBy', ai.model)));
+      return;
+    }
+
+    var actions = el('div', 'sys-ai-actions');
+    var send = el('button', 'btn btn-primary', t(ai.busy ? 'sysAiSending' : 'sysAiSend'));
+    send.type = 'button';
+    send.id = 'sys-ai-send';
+    send.disabled = ai.busy;
+    send.addEventListener('click', sendSysAi);
+    actions.appendChild(send);
+    var cancel = el('button', 'btn btn-ghost', t('sysAiCancel'));
+    cancel.type = 'button';
+    cancel.id = 'sys-ai-cancel';
+    cancel.disabled = ai.busy;
+    cancel.addEventListener('click', function () {
+      state.sys.ai = blankAi();
+      renderSysAi();
+      var again = $('#sys-ai-open');
+      if (again) again.focus();
+    });
+    actions.appendChild(cancel);
+    box.appendChild(actions);
+    var err = el('p', 'sys-ai-error', ai.error ? t(ai.error) : '');
+    err.id = 'sys-ai-error';
+    err.setAttribute('role', 'alert');
+    box.appendChild(err);
+  }
+
+  function openSysAi() {
+    var e = state.sys.evaluation;
+    if (!e || !window.PCSys) return;
+    state.sys.ai = blankAi();
+    state.sys.ai.open = true;
+    state.sys.ai.summary = window.PCSys.buildSummary(e);
+    renderSysAi();
+    var disc = $('#sys-ai-disclosure');
+    if (disc) { disc.tabIndex = -1; disc.focus(); }
+  }
+
+  function sendSysAi() {
+    var ai = state.sys.ai;
+    if (!ai.open || ai.busy || ai.text || !ai.summary) return Promise.resolve();
+    ai.busy = true;
+    ai.error = null;
+    renderSysAi();
+    logOutbound(location.host, ['lpExplain'], ['anonymised summary']);
+    // The summary shown is exactly what is sent. "same-origin" keeps a real Origin header (the server checks it);
+    // "no-referrer" would turn it into "null".
+    return request('api/explain.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ summary: ai.summary }),
+      referrerPolicy: 'same-origin',
+      timeoutMs: 45000
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (res.ok && body && typeof body.explanation === 'string' && body.explanation.trim()) {
+          return { text: body.explanation, model: typeof body.model === 'string' ? body.model : null };
+        }
+        var code = body && typeof body.error === 'string' ? body.error : '';
+        if (res.status === 429) return { error: AI_ERRORS[code] || 'sysAiRate' };
+        if (res.status === 503) return { error: 'sysAiOff' };
+        if (res.status === 502) return { error: 'sysAiUpstream' };
+        return { error: 'sysAiFail' };
+      });
+    }, function () {
+      return { error: 'sysAiFail' };
+    }).then(function (r) {
+      if (state.sys.ai !== ai) return; // new files were analyzed meanwhile
+      ai.busy = false;
+      if (r.text) { ai.text = r.text; ai.model = r.model; } else { ai.error = r.error; }
+      renderSysAi();
+      renderPdfButton();
+      var focus = $(r.text ? '#sys-ai-text' : '#sys-ai-send');
+      if (focus) { if (r.text) focus.tabIndex = -1; focus.focus(); }
+    });
   }
 
   function renderSys() {
@@ -1665,7 +1822,7 @@
   }
 
   function renderPdfButton() {
-    var show = REPORT_ORDER.some(hasResult);
+    var show = REPORT_ORDER.some(hasResult) || !!state.sys.evaluation;
     if ($('#pdf')) $('#pdf').hidden = !show;
     if ($('#pdf-hint')) $('#pdf-hint').hidden = !show;
   }
@@ -1707,6 +1864,50 @@
       root.appendChild(box);
     });
 
+    var sysEval = state.sys.evaluation;
+    if (sysEval) {
+      var sb = el('section', 'report-check report-sys');
+      sb.setAttribute('data-status', bandOf(sysEval.score));
+      var sh = el('h2');
+      sh.appendChild(el('span', null, t('reportSysTitle')));
+      sh.appendChild(el('span', 'report-pill', t('reportSysScore', sysEval.score)));
+      sb.appendChild(sh);
+      var sysDate = isoDate(sysEval.reportDate);
+      if (sysDate) sb.appendChild(el('p', null, t('sysReportFrom', sysDate)));
+      sb.appendChild(el('h3', null, t('sysFindingsTitle')));
+      var sysFindings = sysEval.findings.slice().sort(function (a, b) {
+        return SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity);
+      });
+      if (!sysFindings.length) {
+        sb.appendChild(el('p', null, t('sysNoFindings')));
+      } else {
+        var ul = el('ul', 'report-findings');
+        sysFindings.forEach(function (f) {
+          var li = el('li');
+          li.appendChild(el('strong', null, t('sev_' + f.severity) + ': ' + f.title));
+          if (f.detail) li.appendChild(el('p', null, f.detail));
+          if (f.fix) li.appendChild(el('p', 'report-fix', t('sysFix') + f.fix));
+          ul.appendChild(li);
+        });
+        sb.appendChild(ul);
+      }
+      if (sysEval.facts.length) {
+        sb.appendChild(el('h3', null, t('sysFactsTitle')));
+        var sdl = el('dl');
+        sysEval.facts.forEach(function (f) {
+          sdl.appendChild(el('dt', null, f.label));
+          sdl.appendChild(el('dd', null, f.value));
+        });
+        sb.appendChild(sdl);
+      }
+      if (state.sys.ai.text) {
+        sb.appendChild(el('h3', null, t('reportAiTitle')));
+        aiParagraphs(state.sys.ai.text).forEach(function (p) { sb.appendChild(el('p', null, p)); });
+        sb.appendChild(el('p', 'report-fix', t('sysAiBy', state.sys.ai.model)));
+      }
+      root.appendChild(sb);
+    }
+
     if (state.ledger.length) {
       var lg = el('section', 'report-check');
       var lh = el('h2');
@@ -1720,7 +1921,7 @@
       lg.appendChild(ol);
       root.appendChild(lg);
     }
-    root.appendChild(el('p', 'report-foot', t('reportFoot')));
+    root.appendChild(el('p', 'report-foot', t(state.ledger.some(function (item) { return item.purpose[0] === 'lpExplain'; }) ? 'reportFootAi' : 'reportFoot')));
   }
 
   function printReport() {

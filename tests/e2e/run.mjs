@@ -575,7 +575,17 @@ try {
         win10: ids(S.evaluateWindows({ msinfo: { os: 'Microsoft Windows 10 Home', ramGb: 8, problemDevices: [] } }, now)),
         devices: ids(S.evaluateWindows({ msinfo: { os: 'Microsoft Windows 11 Home', ramGb: 8, problemDevices: ['Unknown device'] } }, now)),
         planted: JSON.stringify(planted),
-        keys: Object.keys(S.buildSummary(real)).sort()
+        keys: Object.keys(S.buildSummary(real)).sort(),
+        // An emoji straddling the 80-character cut, plus control and format characters the server rejects
+        capped: (() => {
+          const base = S.evaluateWindows({ msinfo: { os: 'Microsoft Windows 11 Home', ramGb: 8, problemDevices: [] } }, now);
+          base.model = 'M'.repeat(79) + '\u{1F600}tail';
+          base.os = 'Win\u0007dows​ 11‮ Home﻿';
+          const sm = S.buildSummary(base);
+          base.model = 'x'.repeat(78) + '\u{1F600}\u{1F600}\u{1F600}';
+          const sm2 = S.buildSummary(base);
+          return { model: sm.model, os: sm.os, model2: sm2.model };
+        })()
       };
     }, files);
     check('PCSys.evaluateWindows exists', r !== null);
@@ -593,7 +603,12 @@ try {
       check('problem devices -> warn', r.devices.includes('devices:warn'), r.devices);
       check('anonymiser: planted name/path/serial/MAC/email never appear in summary JSON',
         !/JohnDoe|john@x\.com|AA:BB:CC:DD:EE:FF|PF3ABC1234XY|DESKTOP-JD123/i.test(r.planted), r.planted);
-      check('summary has only whitelisted fields', JSON.stringify(r.keys) === JSON.stringify(['batteryHealthPct', 'findings', 'hardwareErrors30d', 'model', 'os', 'ramGb', 'score', 'shutdowns30d', 'stabilityNow', 'topCrashApps']), r.keys);
+      const lone = (s) => /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+      const cps = (s) => Array.from(s).length;
+      check('summary cap: emoji at the cut leaves no lone surrogate', !lone(r.capped.model) && cps(r.capped.model) <= 80 && r.capped.model.startsWith('M'.repeat(79)), [r.capped.model.length, r.capped.model.slice(-3)]);
+      check('summary cap: counts code points like the server (80 max), keeps whole emoji', !lone(r.capped.model2) && cps(r.capped.model2) === 80 && r.capped.model2.endsWith('\u{1F600}\u{1F600}'), [r.capped.model2.length, cps(r.capped.model2)]);
+      check('summary cap: control and format characters removed', r.capped.os === 'Windows 11 Home', JSON.stringify(r.capped.os));
+      check('summary has only whitelisted fields',JSON.stringify(r.keys) === JSON.stringify(['batteryHealthPct', 'findings', 'hardwareErrors30d', 'model', 'os', 'ramGb', 'score', 'shutdowns30d', 'stabilityNow', 'topCrashApps']), r.keys);
     }
     await context.close();
   }
@@ -692,6 +707,157 @@ try {
         check('system: no horizontal scroll at ' + label, overflow <= 0, overflow);
         check('system: no page errors at ' + label, seen.errors.length === 0, seen.errors);
         await page.locator('#system').screenshot({ path: path.join(shots, engineName === 'webkit' ? 'system-iphone.png' : 'system-375.png') }).catch(() => {});
+        await context.close();
+      } finally {
+        if (eng !== browser) await eng.close();
+      }
+    }
+  }
+
+  // 8d. Explain with AI: disclosure first, exact summary sent, ledger entry, text-only rendering, errors, PDF
+  console.log('Explain with AI');
+  {
+    const FX = (f) => path.join(here, '..', 'fixtures', 'sys', f);
+    const WIN_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + fullVersion + ' Safari/537.36';
+    const DISCLOSURE = 'Optional: send this anonymised summary to Claude (Anthropic) through cybersecinfo.com to get a plain-English explanation. Only the summary below is sent — not your files. Nothing is stored.';
+    // Planted personal data: computer and user name, plus a model name whose emoji straddles the 80-character cut.
+    const LONG_MODEL = 'Predator PTN16-51 ' + 'z'.repeat(61) + '\u{1F600} edition';
+    const msiPlanted = {
+      name: 'msinfo.txt', mimeType: 'text/plain',
+      buffer: Buffer.from(fs.readFileSync(FX('msinfo32-head.txt')).toString('utf16le')
+        .split('PC-NAME\\USER').join('DESKTOP-JD123\\JohnDoe').split('PC-NAME').join('DESKTOP-JD123')
+        .replace('Predator PTN16-51', LONG_MODEL), 'utf16le')
+    };
+    const PERSONAL = /PC-NAME|DESKTOP-JD123|JohnDoe|C:\\{1,2}Users/i;
+    const lone = (s) => /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+    const EXPLANATION = 'Your PC is mostly fine. <b>bold</b> <img src=x onerror="window.__xss=1">\n\nSecond paragraph: update the drivers.';
+
+    async function analyzed(opts = {}, engine = browser) {
+      const made = await newPage('ok', Object.assign({ userAgent: WIN_UA, viewport: { width: 1280, height: 900 } }, opts), engine);
+      const { page } = made;
+      await page.setInputFiles('#sys-file-reliability', FX('reliability.xml'), { timeout: 3000 });
+      await page.setInputFiles('#sys-file-battery', FX('battery-report.html'), { timeout: 3000 });
+      await page.setInputFiles('#sys-file-msinfo', msiPlanted, { timeout: 3000 });
+      await page.click('#sys-analyze', { timeout: 3000 });
+      await page.waitForSelector('#sys-results:not([hidden])', { timeout: 10000 });
+      return made;
+    }
+    // mock.mode: 'ok' | 429 | 'daily' | 503 | 502 | 500 | 'abort'
+    async function mockExplain(page, mock) {
+      mock.bodies = [];
+      mock.headers = [];
+      await page.route(/\/api\/explain\.php/, async (r) => {
+        mock.bodies.push(r.request().postData());
+        mock.headers.push(await r.request().allHeaders());
+        await new Promise((res) => setTimeout(res, mock.delay || 0));
+        const json = (status, body) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+        if (mock.mode === 'ok') return json(200, { explanation: EXPLANATION, model: 'claude-haiku-5-5' });
+        if (mock.mode === 429) return json(429, { error: 'rate_limited' });
+        if (mock.mode === 'daily') return json(429, { error: 'daily_limit' });
+        if (mock.mode === 503) return json(503, { error: 'not_configured' });
+        if (mock.mode === 502) return json(502, { error: 'upstream' });
+        if (mock.mode === 500) return r.fulfill({ status: 500, contentType: 'text/html', body: '<h1>oops</h1>' });
+        return r.abort();
+      });
+    }
+    const errText = (page) => page.locator('#sys-ai-error').innerText({ timeout: 2000 }).catch(() => '');
+    const waitErr = (page) => page.waitForFunction(() => { const e = document.getElementById('sys-ai-error'); return e && e.textContent.trim(); }, null, { timeout: 5000 }).catch(() => {});
+
+    {
+      let ok = true;
+      let made;
+      try { made = await analyzed(); } catch (e) { ok = false; }
+      check('ai: setup (fixtures analyzed)', ok);
+      if (made) {
+        const { page, context, seen } = made;
+        const mock = { mode: 'ok', delay: 400 };
+        await mockExplain(page, mock);
+        check('ai: "Explain with AI" button appears after Analyze', await page.locator('#sys-ai-open').isVisible().catch(() => false));
+        check('ai: PDF button available after Analyze alone', await page.locator('#pdf').isVisible().catch(() => false));
+        check('ai: disclosure not shown before the click', !(await page.locator('#sys-ai-disclosure').isVisible().catch(() => false)));
+        const before = await page.locator('#ledger-list li').count();
+        await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
+        const disc = await page.locator('#sys-ai-disclosure').innerText({ timeout: 2000 }).catch(() => '');
+        check('ai: exact disclosure shown before sending', disc.trim() === DISCLOSURE, disc);
+        const shownText = await page.locator('#sys-ai-summary').innerText({ timeout: 2000 }).catch(() => '');
+        let shown = null;
+        try { shown = JSON.parse(shownText); } catch (e) { /* stays null */ }
+        check('ai: the summary JSON is shown before sending', shown !== null && typeof shown.score === 'number', shownText.slice(0, 200));
+        check('ai: nothing sent and nothing logged before Send', mock.bodies.length === 0 && (await page.locator('#ledger-list li').count()) === before);
+        await page.click('#sys-ai-send', { timeout: 2000 }).catch(() => {});
+        await page.waitForTimeout(100);
+        check('ai: Send disabled while in flight', await page.locator('#sys-ai-send').isDisabled().catch(() => false));
+        await page.locator('#sys-ai-send').click({ force: true, timeout: 500 }).catch(() => {});
+        await page.evaluate(() => { const b = document.getElementById('sys-ai-send'); if (b) b.click(); });
+        await page.waitForSelector('#sys-ai-text p', { timeout: 5000 }).catch(() => {});
+        check('ai: exactly one request despite repeated clicks', mock.bodies.length === 1, mock.bodies.length);
+        let body = null;
+        try { body = JSON.parse(mock.bodies[0]); } catch (e) { /* stays null */ }
+        check('ai: request body is exactly {summary}', body !== null && JSON.stringify(Object.keys(body)) === '["summary"]', mock.bodies[0]);
+        check('ai: request body equals the summary shown', body !== null && JSON.stringify(body.summary) === JSON.stringify(shown), [mock.bodies[0], shownText]);
+        check('ai: no planted personal data in the request', !!mock.bodies[0] && !PERSONAL.test(mock.bodies[0]) && !PERSONAL.test(shownText), mock.bodies[0]);
+        check('ai: no lone surrogate in the summary (emoji at the cut)', body !== null && !lone(String(body.summary.model)), body && body.summary.model);
+        const hdr = mock.headers[0] || {};
+        check('ai: sent as application/json, same-origin (Origin is not "null")', /^application\/json/.test(hdr['content-type'] || '') && (hdr.origin === undefined || hdr.origin === BASE.replace(/\/$/, '')), hdr);
+        const ledger = await page.locator('#ledger-list').innerText();
+        check('ai: outbound log has the entry', (await page.locator('#ledger-list li').count()) === before + 1 && /anonymised summary/.test(ledger) && ledger.includes('127.0.0.1:' + PORT), ledger.slice(-300));
+        const paras = await page.locator('#sys-ai-text p').allInnerTexts();
+        check('ai: explanation renders as text paragraphs', paras.length === 2 && paras[0].includes('Your PC is mostly fine') && paras[1].includes('Second paragraph'), paras);
+        check('ai: model output never parsed as HTML', paras.join(' ').includes('<b>bold</b>') && (await page.locator('#sys-ai-text b, #sys-ai-text img').count()) === 0 && !(await page.evaluate(() => window.__xss)));
+        check('ai: no page errors', seen.errors.length === 0, seen.errors);
+        check('ai: no outside requests', seen.external.length === 0, seen.external);
+
+        await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+        const report = await page.locator('#report').innerText();
+        const score = (await page.locator('#sys-score').innerText()).trim();
+        check('pdf: includes "System report"', report.includes('System report'), report.slice(0, 300));
+        check('pdf: includes the health score', new RegExp('\\b' + score + ' ?/ ?100').test(report), [score, report.slice(0, 400)]);
+        check('pdf: includes findings and fact tiles', /MiracastPowerManager/.test(report) && /Battery health/.test(report), report.slice(0, 600));
+        check('pdf: includes the AI explanation as text', report.includes('Second paragraph: update the drivers.') && report.includes('<b>bold</b>') && (await page.locator('#report b, #report img:not([src*="emblem.png"])').count()) === 0);
+        check('pdf: no planted personal data', !PERSONAL.test(report), report.match(/.{0,20}(PC-NAME|DESKTOP-JD123|JohnDoe).{0,20}/));
+        check('pdf: footer no longer says nothing was sent', !/nothing was sent/i.test(report), report.slice(-300));
+        await context.close();
+      }
+    }
+    {
+      // Errors: friendly messages, Send usable again after each one
+      const { page, context, seen } = await analyzed();
+      const mock = { mode: 429 };
+      await mockExplain(page, mock);
+      await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
+      const results = {};
+      for (const mode of [429, 'daily', 503, 502, 500, 'abort']) {
+        mock.mode = mode;
+        await page.click('#sys-ai-send', { timeout: 3000 }).catch(() => {});
+        await waitErr(page);
+        results[mode] = await errText(page);
+        await page.waitForFunction(() => { const b = document.getElementById('sys-ai-send'); return b && !b.disabled; }, null, { timeout: 3000 }).catch(() => {});
+      }
+      check('ai: 429 says "limit"', /limit/i.test(results[429]), results[429]);
+      check('ai: daily cap says "limit"', /limit/i.test(results.daily), results.daily);
+      check('ai: 503 has its own friendly message', !!results[503] && results[503] !== results[429] && results[503] !== results[500], results[503]);
+      check('ai: 502 has its own friendly message', !!results[502] && results[502] !== results[503] && results[502] !== results[500], results[502]);
+      check('ai: other errors and network failure get a generic message', !!results[500] && results[500] === results.abort, [results[500], results.abort]);
+      check('ai: every attempt logged, no explanation shown', mock.bodies.length === 6 && (await page.locator('#sys-ai-text p').count()) === 0, mock.bodies.length);
+      check('ai: errors cause no page error', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    // Not mocked: the real local endpoint (php -S, no key) must get past Content-Type, Origin and the summary
+    // whitelist and stop at "not configured" (503). The paid upstream is never reached.
+    for (const [label, engineName] of [['Chromium', 'chromium'], ['WebKit', 'webkit']]) {
+      const eng = engineName === 'webkit' ? await webkit.launch() : browser;
+      try {
+        const { page, context, seen } = await analyzed({}, eng);
+        await page.click('#sys-ai-open', { timeout: 2000 }).catch(() => {});
+        const res = page.waitForResponse(/\/api\/explain\.php/, { timeout: 8000 }).catch(() => null);
+        await page.click('#sys-ai-send', { timeout: 2000 }).catch(() => {});
+        const resp = await res;
+        const st = resp ? resp.status() : null;
+        const body = resp ? await resp.text().catch(() => '') : '';
+        check('ai (' + label + '): real endpoint accepts the request and answers 503 not_configured', st === 503 && /not_configured/.test(body), [st, body]);
+        await waitErr(page);
+        check('ai (' + label + '): 503 shown as a friendly message', /not available/i.test(await errText(page)), await errText(page));
+        check('ai (' + label + '): no page errors', seen.errors.length === 0, seen.errors);
         await context.close();
       } finally {
         if (eng !== browser) await eng.close();
