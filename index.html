@@ -23,10 +23,10 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/fonts/roboto-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/orbitron-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/styles.css?v=11">
+  <link rel="stylesheet" href="assets/styles.css?v=12">
   <script src="assets/gauge.js?v=3" defer></script>
-  <script src="assets/sysreport.js?v=17" defer></script>
-  <script src="assets/app.js?v=19" defer></script>
+  <script src="assets/sysreport.js?v=18" defer></script>
+  <script src="assets/app.js?v=20" defer></script>
 </head>
 <body>
   <svg class="sprite" aria-hidden="true" focusable="false">
@@ -289,9 +289,9 @@
             <h3><span class="sys-step-no" aria-hidden="true">2</span>Battery <span class="sys-optional">(optional, laptops)</span></h3>
             <ol class="sys-how">
               <li>Press <kbd>Win</kbd> + <kbd>R</kbd>, paste this command and press Enter:
-                <span class="sys-cmd"><code id="sys-cmd-battery">powercfg /batteryreport /output "%USERPROFILE%\Desktop\battery-report.html"</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-cmd-battery">Copy</button></span>
+                <span class="sys-cmd"><code id="sys-cmd-battery">powercfg /batteryreport /output "%USERPROFILE%\Downloads\battery-report.html"</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-cmd-battery">Copy</button></span>
               </li>
-              <li>It creates a battery report file on your Desktop; it changes nothing.</li>
+              <li>It saves battery-report.html in your Downloads folder; it changes nothing.</li>
             </ol>
             <input id="sys-file-battery" class="sys-file" type="file" accept=".html,.htm,text/html">
             <label class="sys-drop" for="sys-file-battery"><span class="sys-drop-main">Choose battery-report.html</span><span class="sys-drop-sub">or drop it here</span></label>

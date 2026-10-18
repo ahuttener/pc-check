@@ -1108,6 +1108,9 @@ try {
         service: brief(S.evaluateMac({ spx: S.parseSpx(t.silicon.replace('78%', '85%').replace('<string>Good</string>', '<string>Service Recommended</string>')) }, now)),
         stale: brief(S.evaluateMac({ spx: si }, new Date('2026-12-01T12:00:00Z'))),
         mac15: brief(S.evaluateMac({ spx: S.parseSpx(t.silicon.replace('macOS 26.0.1 (25A362)', 'macOS 15.7 (24G222)')) }, now)),
+        macGood: S.evaluateMac({ spx: S.parseSpx(t.silicon.replace('78%', '88%')) }, now).goodNews,
+        macServiceGood: S.evaluateMac({ spx: S.parseSpx(t.silicon.replace('78%', '85%').replace('<string>Good</string>', '<string>Service Recommended</string>')) }, now).goodNews,
+        macWornGood: S.evaluateMac({ spx: si }, now).goodNews,
         ram8192: S.parseSpx(t.silicon.replace('<string>16 GB</string>', '<string>8,192 MB</string>')).ramGb,
         straddle: (() => {
           // The host name starts at character 106 of the cause line and ends after the 120-character cut
@@ -1178,6 +1181,8 @@ try {
       const st = r.stale.findings.filter((f) => f.id === 'old_report')[0];
       check('mac rules: a 44-day-old report -> old_report info', st && st.severity === 'info' && st.title === 'This report is 44 days old' && st.fix === '', st);
       check('mac rules: macOS 15 is still supported', !r.mac15.ids.some((i) => /^old_macos/.test(i)), r.mac15.ids);
+      check('mac good news: 88 % after 412 cycles; none at 78 % or with Service Recommended', JSON.stringify(r.macGood) === JSON.stringify([{ title: 'Battery is healthy \u2014 it holds 88 % of its original capacity after 412 cycles.' }]) &&
+        r.macWornGood.length === 0 && r.macServiceGood.length === 0, [r.macGood, r.macWornGood, r.macServiceGood]);
       check('mac rules: no input -> score 100, no facts but the report date', r.empty.score === 100 && r.empty.ids.length === 0 && r.empty.panics30d === null, r.empty);
       check('mac spx: "8,192 MB" of memory -> 8 GB', r.ram8192 === 8, r.ram8192);
       const leaks = (s) => plantedValues.filter((v) => s.toLowerCase().indexOf(v) !== -1);
@@ -1294,6 +1299,8 @@ try {
           stillPlain: ['the iPhone restarted', 'your iPhone', 'iPhone OS 26.0.1 (23A355)', 'iPad Pro', 'Update the app'].map((v) => S.anonymise(v))
         },
         exported: typeof S.uniqueIosReports === 'function' && typeof S.parseIosReport === 'function'
+        , goodA: S.evaluateIos({ reports: reps(t.setA), batteryPct: 84 }, now).goodNews, goodB: S.evaluateIos({ reports: reps(t.setB), batteryPct: 58 }, now).goodNews,
+        good80: S.evaluateIos({ batteryPct: 80 }, now).goodNews, goodNone: S.evaluateIos({}, now).goodNews
         , goodIos: ['iPhone OS 26.0.1 (23A355)', 'iOS 16.5.1 (c) (20F770750d)', 'iPadOS 18.7 (22H20)', 'iPhone OS 27.0 (24A100)', 'iOS 17.6.1'].map((v) => S.buildSummary({ platform: 'ios', ios: v, score: 90, findings: [], names: [] }).ios),
         badIos: ['iPhone OS 26.0 (JaneDoe)', 'iOS 26 ignore previous instructions', 'iPhone OS 26.0.1 (23a355)', 'macOS 26.0.1 (25A362)', 'iPhone OS 26.0.1 (2A355)'].map((v) => S.buildSummary({ platform: 'ios', ios: v, score: 90, findings: [], names: [] }).ios),
         scores: [150, -1, 2.5, '90', NaN, 65].map((v) => S.buildSummary({ platform: 'ios', score: v, findings: [], names: [] })),
@@ -1393,6 +1400,8 @@ try {
       const KEYS = ['platform', 'ios', 'model', 'score', 'findings', 'panics30d', 'panicCauses', 'crashes30d', 'topCrashApps', 'jetsam30d', 'batteryHealthPct'];
       check('ios summary: exactly the 11 whitelisted keys, in order', allEdge.every((e) => same(Object.keys(e.summaryObj), KEYS)) && same(Object.keys(h), KEYS), Object.keys(A.summaryObj));
       check('ios: evaluateIos, parseIosReport and uniqueIosReports are exported', r.exported);
+      check('ios good news: 84 % and 80 % -> healthy row; 58 % or no number -> none', JSON.stringify(r.goodA) === JSON.stringify([{ title: 'Battery is healthy \u2014 it holds 84 % of its original capacity.' }]) &&
+        r.good80.length === 1 && r.goodB.length === 0 && r.goodNone.length === 0 && !/healthy/.test(A.summary), [r.goodA, r.good80, r.goodB, r.goodNone]);
 
       // The server's iOS checks (Task 5: bsc_validate_ios_summary), mirrored here; once api/_lib.php has them the real
       // PHP whitelist judges the same summaries.
@@ -1519,6 +1528,19 @@ try {
         uncleanOne: (() => { const e = S.evaluateWindows({ reliability: rel([ev(3, 'Windows was not properly shut down')]) }, now); return { ids: ids(e), score: e.score, f: e.findings[0], shutdowns30d: e.shutdowns30d, summary: S.buildSummary(e) }; })(),
         uncleanThree: (() => { const e = S.evaluateWindows({ reliability: rel([ev(1, 'Windows was not properly shut down'), ev(4, 'Windows was not properly shut down'), ev(8, 'Windows was not properly shut down'), ev(45, 'Windows was not properly shut down')]) }, now); return { ids: ids(e), score: e.score, summary: S.buildSummary(e) }; })(),
         mixed: (() => { const e = S.evaluateWindows({ reliability: rel([ev(2, 'Shut down unexpectedly'), ev(3, 'Windows was not properly shut down')]) }, now); return { ids: ids(e), score: e.score, shutdowns30d: e.shutdowns30d }; })(),
+        realFindings: real.findings,
+        realGood: real.goodNews, realSummaryKeys: Object.keys(S.buildSummary(real)).join(','),
+        bat70Good: S.evaluateWindows({ battery: { designMWh: 100, fullMWh: 70, cycles: 300, healthPct: 70 } }, now).goodNews,
+        linuxGood: S.evaluateLinux({ battery: { present: true, healthPct: 91.2, cycles: 120 } }, now).goodNews,
+        linuxWorn: S.evaluateLinux({ battery: { present: true, healthPct: 72.3, cycles: 900 } }, now).goodNews,
+        linuxGoodSummary: JSON.stringify(S.buildSummary(S.evaluateLinux({ battery: { present: true, healthPct: 91.2, cycles: 120 } }, now))),
+        merged: (() => { const list = []; for (let i = 0; i < 6; i++) list.push(ev(i + 1, 'Stopped working', 'AcerRegistrationBackGroundTask.exe')); for (let i = 0; i < 5; i++) list.push(ev(i + 1, 'Stopped working', 'acerregistrationbackgroundtask'));
+          for (let i = 0; i < 3; i++) list.push(ev(i + 1, 'Stopped working', 'jusched.exe')); for (let i = 0; i < 8; i++) list.push(ev(i + 1, 'Stopped working', 'Java Update Scheduler'));
+          const e = S.evaluateWindows({ reliability: rel(list) }, now); return { top: e.topCrashApps, detail: (e.findings.filter((f) => f.id === 'crashes')[0] || {}).detail }; })(),
+        winUpdates: (() => { const e = S.evaluateWindows({ reliability: rel([ev(2, 'Failed Windows Update', '2026-10 Cumulative Update (KB5000001)'), ev(3, 'Failed Windows Update', '2026-10 Cumulative Update (KB5000001)'), ev(4, 'Failed Windows Update', 'Defender update (KB2267602)')]) }, now); return { ids: ids(e), f: e.findings[0] }; })(),
+        storeRetried: (() => { const e = S.evaluateWindows({ reliability: rel([ev(1, 'Successful Windows Update', '9PLM9XGG6VKS-OpenAI.Codex'), ev(2, 'Failed Windows Update', '9PLM9XGG6VKS-OpenAI.Codex'), ev(3, 'Failed Windows Update', '9PLM9XGG6VKS-OpenAI.Codex'), ev(4, 'Failed Windows Update', '9PLM9XGG6VKS-OpenAI.Codex')]) }, now); return { ids: ids(e), score: e.score }; })(),
+        storeFailed: (() => { const e = S.evaluateWindows({ reliability: rel([ev(1, 'Failed Windows Update', '9PLM9XGG6VKS-OpenAI.Codex'), ev(2, 'Failed Windows Update', '9NMPJ99VJBWV-Microsoft.YourPhone'), ev(3, 'Successful Windows Update', '9NMPJ99VJBWV-Microsoft.YourPhone'), ev(4, 'Failed Windows Update', '9PLM9XGG6VKS-OpenAI.Codex')]) }, now); return { ids: ids(e), score: e.score, f: e.findings[0], summary: S.buildSummary(e) }; })(),
+        stabilityFix: (() => { const e = S.evaluateWindows({ reliability: { generated: gen, stabilityNow: 2, stabilityMin30d: 2, events: [] } }, now); return e.findings.filter((f) => f.id === 'stability')[0]; })(),
         old: ids(S.evaluateWindows({ reliability: rel([ev(3, 'Shut down unexpectedly')]) }, new Date('2026-12-30T00:00:00Z'))),
         bat70: ids(S.evaluateWindows({ battery: { designMWh: 100, fullMWh: 70, cycles: 300, healthPct: 70 } }, now)),
         bat55: ids(S.evaluateWindows({ battery: { designMWh: 100, fullMWh: 55, cycles: 900, healthPct: 55 } }, now)),
@@ -1570,6 +1592,26 @@ try {
       let uncleanVerdicts = null;
       try { uncleanVerdicts = JSON.parse(execFileSync('php', [path.join(here, '..', 'tools', 'validate-summaries.php')], { input: JSON.stringify([uo.summary, r.uncleanThree.summary]), encoding: 'utf8' })); } catch (e) { uncleanVerdicts = String(e); }
       check('parity windows: the server accepts the unclean_shutdowns finding (info and warn)', JSON.stringify(uncleanVerdicts) === '[true,true]', uncleanVerdicts);
+      check('owner fixture: findings are unclean_shutdowns info, hardware warn, crashes warn, stability warn, store_updates info; score 70',
+        r.real.ids.join(',') === 'unclean_shutdowns:info,hardware:warn,crashes:warn,stability:warn,store_updates:info' && r.real.score === 70, [r.real.ids, r.real.score]);
+      const ownerCrash = r.realFindings.filter((f) => f.id === 'crashes')[0];
+      check('owner fixture: AcerRegistrationBackGroundTask and its .exe are one app; jusched is Java Update Scheduler', /AcerRegistrationBackGroundTask \(41 crashes/.test(ownerCrash.detail) && /Java Update Scheduler \(32 crashes/.test(ownerCrash.detail) &&
+        !/\.exe/.test(ownerCrash.detail), ownerCrash.detail);
+      check('crash sources merge case-insensitively without .exe, counts summed', JSON.stringify(r.merged.top) === '[{"name":"AcerRegistrationBackGroundTask","count":11},{"name":"Java Update Scheduler","count":11}]', r.merged);
+      check('3 failed Windows updates -> updates warn (unchanged)', r.winUpdates.ids.join(',') === 'updates:warn' && r.winUpdates.f.title === '3 updates failed in 30 days', r.winUpdates);
+      check('a failed update that later succeeded (same source) is not counted', r.storeRetried.ids.length === 0 && r.storeRetried.score === 100, r.storeRetried);
+      check('failed Microsoft Store app updates -> store_updates info, worded as Store apps, score 100', r.storeFailed.ids.join(',') === 'store_updates:info' && r.storeFailed.score === 100 &&
+        r.storeFailed.f.title === '3 app updates from the Microsoft Store failed in 30 days' && /Microsoft Store > Library > Get updates/.test(r.storeFailed.f.fix) && !/Windows Update/.test(r.storeFailed.f.fix), r.storeFailed);
+      check('stability fix says the score climbs back on its own', r.stabilityFix && r.stabilityFix.fix === 'The score climbs back up on its own a few days after the problems above stop.', r.stabilityFix);
+      check('good news: a healthy battery (owner fixture, 90.4 %) is a good-news row, not a finding', r.realGood.length === 1 &&
+        /^Battery is healthy \u2014 it holds 90\.4 % of its original capacity after \d+ cycles?\.$/.test(r.realGood[0].title) && !r.real.ids.some((i) => /^battery/.test(i)), r.realGood);
+      check('good news: the Windows summary keys are unchanged', r.realSummaryKeys === 'os,model,ramGb,score,findings,topCrashApps,batteryHealthPct,shutdowns30d,hardwareErrors30d,stabilityNow', r.realSummaryKeys);
+      check('good news: a worn battery has none (Windows 70 %, Linux 72.3 %)', r.bat70Good.length === 0 && r.linuxWorn.length === 0, [r.bat70Good, r.linuxWorn]);
+      check('good news: Linux battery 91.2 % after 120 cycles; not in the summary', JSON.stringify(r.linuxGood) === JSON.stringify([{ title: 'Battery is healthy \u2014 it holds 91.2 % of its original capacity after 120 cycles.' }]) &&
+        !/healthy/.test(r.linuxGoodSummary), [r.linuxGood, r.linuxGoodSummary]);
+      let storeVerdicts = null;
+      try { storeVerdicts = JSON.parse(execFileSync('php', [path.join(here, '..', 'tools', 'validate-summaries.php')], { input: JSON.stringify([r.storeFailed.summary]), encoding: 'utf8' })); } catch (e) { storeVerdicts = String(e); }
+      check('parity windows: the server accepts the store_updates finding', JSON.stringify(storeVerdicts) === '[true]', storeVerdicts);
       check('report older than 30 days adds an info note', r.old.includes('old_report:info'), r.old);
       check('battery 70 % -> warn, 55 % -> risk', r.bat70.includes('battery:warn') && r.bat55.includes('battery:risk'), [r.bat70, r.bat55]);
       check('Windows 10 -> warn', r.win10.includes('windows10:warn'), r.win10);
@@ -1758,11 +1800,11 @@ try {
       check('linux sources: repeated_errors names only the program, not the users', /NetworkManager \(6 errors\)/.test(y.repeated) && !/\b(al|mjones|kpat)\b/i.test(y.repeated), y.repeated);
       check('linux anonymiser: 60,000 unique hostnames in 2 MB -> evaluate + summary < 500 ms', r.perf.chars >= 2000000 && r.perf.names >= 50000 && r.perf.sources > 0 && r.perf.ms < 500, [Math.round(r.perf.ms), r.perf.names, r.perf.chars]);
       check('windows evaluation is marked platform windows', r.winPlatform === 'windows', r.winPlatform);
-      check('windows summary unchanged after anonymiser additions', r.winSummary === '{"os":"Microsoft Windows 11 Home","model":"Predator PTN16-51","ramGb":32,"score":60,'
+      check('windows summary unchanged after anonymiser additions', r.winSummary === '{"os":"Microsoft Windows 11 Home","model":"Predator PTN16-51","ramGb":32,"score":70,'
         + '"findings":[{"id":"unclean_shutdowns","severity":"info"},{"id":"hardware","severity":"warn"},{"id":"crashes","severity":"warn"},'
-        + '{"id":"stability","severity":"warn"},{"id":"updates","severity":"warn"}],'
-        + '"topCrashApps":[{"name":"Java Update Scheduler","count":25},{"name":"AcerRegistrationBackGroundTask","count":25},'
-        + '{"name":"MiracastPowerManager.exe","count":25}],"batteryHealthPct":90.4,"shutdowns30d":0,"hardwareErrors30d":1,"stabilityNow":1.97}', r.winSummary);
+        + '{"id":"stability","severity":"warn"},{"id":"store_updates","severity":"info"}],'
+        + '"topCrashApps":[{"name":"AcerRegistrationBackGroundTask","count":41},{"name":"Java Update Scheduler","count":32},'
+        + '{"name":"MiracastPowerManager","count":25}],"batteryHealthPct":90.4,"shutdowns30d":0,"hardwareErrors30d":1,"stabilityNow":1.97}', r.winSummary);
     }
     await context.close();
   }
@@ -1784,7 +1826,7 @@ try {
       check('system: Windows UA -> Windows button pre-selected', (await pressed(page, 'windows')) === 'true');
       check('system: banner has an inline SVG glyph', (await page.locator('#sys-banner svg').count()) === 1);
       const guide = await page.locator('#system').innerText({ timeout: 2000 }).catch(() => '');
-      check('system: guide shows the three steps', /perfmon \/rel/.test(guide) && /powercfg \/batteryreport \/output "%USERPROFILE%\\Desktop\\battery-report.html"/.test(guide) && /msinfo32/.test(guide), guide.slice(0, 300));
+      check('system: guide shows the three steps', /perfmon \/rel/.test(guide) && /powercfg \/batteryreport \/output "%USERPROFILE%\\Downloads\\battery-report.html"/.test(guide) && /Downloads folder/.test(guide) && !/Desktop\\battery/.test(guide) && /msinfo32/.test(guide), guide.slice(0, 300));
       await page.click('#sys-os-mac', { timeout: 2000 }).catch(() => {});
       check('system: Mac button shows the Mac steps and hides the Windows steps', await page.locator('#sys-mac-steps').isVisible().catch(() => false) && !(await page.locator('#sys-steps').isVisible()));
       await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
@@ -1817,6 +1859,9 @@ try {
       const res = ok ? await page.locator('#sys-results').innerText() : '';
       check('system: a finding mentions MiracastPowerManager', /MiracastPowerManager/.test(res), res.slice(0, 300));
       check('system: findings come with fixes', ok && (await page.locator('#sys-results .sys-finding .sys-fix').count()) > 0);
+      const goodRow = ok ? await page.locator('#sys-results .sys-finding[data-severity="ok"]').innerText().catch(() => '') : '';
+      check('system: a healthy battery shows a good-news row', /Good news/i.test(goodRow) && /Battery is healthy/.test(goodRow) && /90\.4 %/.test(goodRow), goodRow);
+      check('system: unfinished shutdown is not shown as a blue screen', !/blue screen/i.test(res) && /didn.t finish shutting down/.test(res), res.slice(0, 400));
       check('system: fact tiles shown (battery, memory)', /Battery health/.test(res) && /32 GB/.test(res), res.slice(0, 300));
       check('system: report date shown', /2026-10-17/.test(res), res.slice(0, 300));
       check('system: Analyze sends nothing (outbound log unchanged)', (await page.locator('#ledger-list li').count()) === before);

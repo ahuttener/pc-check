@@ -1113,7 +1113,24 @@
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   }
 
+  var STORE_PACKAGE = /^9[A-Z0-9]{11}-/;
+  // Crash source as shown: without a trailing .exe; Java's updater appears under both names
+  var CRASH_ALIASES = { jusched: 'Java Update Scheduler' };
+  function crashAppName(source) {
+    var name = String(source === null || source === undefined ? '' : source).replace(/\.exe$/i, '');
+    var k = name.toLowerCase();
+    return Object.prototype.hasOwnProperty.call(CRASH_ALIASES, k) ? CRASH_ALIASES[k] : name;
+  }
+
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
+  // Good news shown on screen and in the PDF only (never scored, never summarised): a battery read at 80 % or more
+  // with no battery finding. A list of {title}.
+  function batteryGoodNews(pct, cycles, findings) {
+    if (typeof pct !== 'number' || !isFinite(pct) || pct < 80 || findings.some(function (f) { return f.id === 'battery'; })) return [];
+    return [{ title: 'Battery is healthy \u2014 it holds ' + pct + ' % of its original capacity' +
+      (typeof cycles === 'number' && isFinite(cycles) ? ' after ' + plural(cycles, 'cycle', 'cycles') : '') + '.' }];
+  }
 
   function evaluateWindows(reports, now) {
     var r = reports || {};
@@ -1154,9 +1171,18 @@
           'Update the BIOS and drivers from your PC maker. If the errors keep appearing, run Windows Memory Diagnostic (Win + R, mdsched) and check the disk’s health.');
       }
 
-      var bySource = {};
-      recent.forEach(function (e) { if (CRASH_PROBLEMS.indexOf(e.problem) !== -1) bySource[e.source] = (bySource[e.source] || 0) + 1; });
-      var top = Object.keys(bySource).map(function (k) { return { name: k, count: bySource[k] }; })
+      // One app, one entry: "AcerRegistrationBackGroundTask" and "AcerRegistrationBackGroundTask.exe" are merged
+      // (case-insensitive, without .exe), and a known alias joins its display name.
+      var bySource = Object.create(null);
+      var order = [];
+      recent.forEach(function (e) {
+        if (CRASH_PROBLEMS.indexOf(e.problem) === -1) return;
+        var name = crashAppName(e.source);
+        var key = name.toLowerCase();
+        if (!bySource[key]) { bySource[key] = { name: name, count: 0 }; order.push(key); }
+        bySource[key].count++;
+      });
+      var top = order.map(function (k) { return bySource[k]; })
         .sort(function (a, b) { return b.count - a.count; }).slice(0, 3);
       out.topCrashApps = top;
       if (top.length && top[0].count >= 10) {
@@ -1171,12 +1197,25 @@
       out.stabilityNow = rel.stabilityNow;
       if (rel.stabilityNow !== null && rel.stabilityNow < 5) {
         add('stability', 'warn', 'Windows stability index is ' + rel.stabilityNow + ' out of 10',
-          'Windows scores stability from 1 to 10 using the crashes and failures above.', 'Fixing the items above raises it again within days.');
+          'Windows scores stability from 1 to 10 using the crashes and failures above.', 'The score climbs back up on its own a few days after the problems above stop.');
       }
-      var failedUpdates = count(['Failed Windows Update']);
+      // A failed update that later installed (a "Successful Windows Update" with the same source, anywhere in the
+      // report) is not counted. Microsoft Store app packages ("9PLM9XGG6VKS-OpenAI.Codex") are counted apart.
+      var failed = recent.filter(function (e) {
+        return e.problem === 'Failed Windows Update' && !rel.events.some(function (o) {
+          return o.problem === 'Successful Windows Update' && o.source === e.source && o.time.getTime() > e.time.getTime();
+        });
+      });
+      var storeFailed = failed.filter(function (e) { return STORE_PACKAGE.test(e.source || ''); }).length;
+      var failedUpdates = failed.length - storeFailed;
       if (failedUpdates >= 3) {
         add('updates', 'warn', plural(failedUpdates, 'update failed', 'updates failed') + ' in 30 days', '',
           'Open Settings > Windows Update and retry. If one keeps failing, run Settings > System > Troubleshoot > Windows Update.');
+      }
+      if (storeFailed >= 3) {
+        add('store_updates', 'info', plural(storeFailed, 'app update', 'app updates') + ' from the Microsoft Store failed in 30 days',
+          'These are updates of apps installed from the Microsoft Store, not Windows updates. The Store retries them by itself.',
+          'Open Microsoft Store > Library > Get updates. If an app keeps failing, update or reinstall it from the Store.');
       }
       if (at.getTime() - gen.getTime() > 30 * DAY) {
         add('old_report', 'info', 'This report is ' + Math.round((at.getTime() - gen.getTime()) / DAY) + ' days old',
@@ -1193,6 +1232,8 @@
           bat.healthPct < 60 ? 'Plan a battery replacement with your PC maker or a repair shop.' : 'Normal wear. Avoid keeping it at 100 % and hot for long periods; many laptops have a battery-care mode in the maker’s app.');
       }
     }
+
+    out.goodNews = batteryGoodNews(out.batteryHealthPct, bat ? bat.cycles : null, findings);
 
     var msi = r.msinfo && !r.msinfo.error && !r.msinfo.unsupportedLanguage ? r.msinfo : null;
     if (msi) {
@@ -1513,6 +1554,7 @@
     facts.forEach(function (f) { f.value = anonymise(f.value, out.names); });
     findings.forEach(function (f) { f.title = anonymise(f.title, out.names); f.detail = anonymise(f.detail, out.names); });
     // Every text field of the evaluation is anonymised here too, so no screen or PDF can show a raw value by mistake.
+    out.goodNews = batteryGoodNews(out.batteryHealthPct, bat ? bat.cycles : null, findings);
     out.distro = out.distro === null ? null : anonymise(out.distro, out.names);
     out.kernel = out.kernel === null ? null : anonymise(out.kernel, out.names);
     var anonList = function (items) {
@@ -1689,6 +1731,7 @@
     // Every text field is anonymised here too (the parsers did not have the .spx names), so no screen or PDF shows a raw value.
     facts.forEach(function (f) { f.value = anonymise(f.value, names); });
     findings.forEach(function (f) { f.title = anonymise(f.title, names); f.detail = anonymise(f.detail, names); });
+    out.goodNews = batteryGoodNews(out.batteryHealthPct, out.batteryCycles, findings);
     ['macos', 'model', 'chip'].forEach(function (k) { if (out[k] !== null && out[k] !== undefined) out[k] = anonymise(out[k], names); });
     return out;
   }
@@ -1848,6 +1891,7 @@
 
     facts.forEach(function (f) { f.value = anonymise(f.value, names); });
     findings.forEach(function (f) { f.title = anonymise(f.title, names); f.detail = anonymise(f.detail, names); });
+    out.goodNews = batteryGoodNews(batteryPct, null, findings);
     return out;
   }
 

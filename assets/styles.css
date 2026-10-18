@@ -457,6 +457,8 @@ h1 {
 .sys-finding { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; padding: 14px 16px; border-radius: 12px; background: var(--paper); border: 1px solid var(--line); border-left: 4px solid var(--info); }
 .sys-finding[data-severity="warn"] { border-left-color: var(--warn); }
 .sys-finding[data-severity="risk"] { border-left-color: var(--risk); }
+.sys-finding[data-severity="ok"] { border-left-color: var(--ok); }
+.sys-finding[data-severity="ok"] .sys-mark, .sys-finding[data-severity="ok"] .sys-sev { color: var(--ok); }
 .sys-mark { width: 24px; height: 24px; margin-top: 2px; color: var(--info); }
 .sys-finding[data-severity="warn"] .sys-mark { color: var(--warn); }
 .sys-finding[data-severity="risk"] .sys-mark { color: var(--risk); }

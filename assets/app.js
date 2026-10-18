@@ -237,7 +237,7 @@
       sysReadBattery: 'Read: battery report.',
       sysReadMsinfo: 'Read: system information.',
       sysNotReliability: 'This doesn’t look like a Reliability history file. In Reliability Monitor, use “Save reliability history…” and pick the .xml file.',
-      sysNotBattery: 'This doesn’t look like a battery report. Pick the battery-report.html file the command saved on your Desktop.',
+      sysNotBattery: 'This doesn’t look like a battery report. Pick the battery-report.html file the command saved in your Downloads folder.',
       sysNotMsinfo: 'This doesn’t look like a System Information export. In msinfo32, use File > Export and pick the .txt file.',
       sysLooksLike: function (step) { return ' It looks like the file for step ' + step + '.'; },
       sysLanguage: 'This report is not in English. PC Check reads English Windows reports only, so it is left out of the results. Any other report you add still counts.',
@@ -295,6 +295,7 @@
       sev_risk: 'Risk',
       sev_warn: 'Attention',
       sev_info: 'For your info',
+      sev_ok: 'Good news',
 
       // Explain with AI (optional; sends only the anonymised summary, after the disclosure)
       sysAiTitle: 'Explain with AI',
@@ -2089,9 +2090,9 @@
     var findings = e.findings.slice().sort(function (a, b) {
       return SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity);
     });
-    if (!findings.length) {
-      root.appendChild(el('p', 'sys-none', t('sysNoFindings')));
-    } else {
+    var good = Array.isArray(e.goodNews) ? e.goodNews : [];
+    if (!findings.length) root.appendChild(el('p', 'sys-none', t('sysNoFindings')));
+    if (findings.length || good.length) {
       var list = el('ul', 'sys-findings');
       findings.forEach(function (f) {
         var li = el('li', 'sys-finding');
@@ -2109,6 +2110,19 @@
           fix.appendChild(document.createTextNode(f.fix));
           body.appendChild(fix);
         }
+        li.appendChild(body);
+        list.appendChild(li);
+      });
+      // Good news: shown, never scored or summarised
+      good.forEach(function (g) {
+        var li = el('li', 'sys-finding sys-good');
+        li.setAttribute('data-severity', 'ok');
+        li.appendChild(svgUse('i-ok', 'sys-mark'));
+        var body = el('div', 'sys-finding-body');
+        var title = el('p', 'sys-finding-title');
+        title.appendChild(el('span', 'sys-sev', t('sev_ok')));
+        title.appendChild(el('span', null, g.title));
+        body.appendChild(title);
         li.appendChild(body);
         list.appendChild(li);
       });
@@ -2419,9 +2433,9 @@
       var sysFindings = sysEval.findings.slice().sort(function (a, b) {
         return SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity);
       });
-      if (!sysFindings.length) {
-        sb.appendChild(el('p', null, t('sysNoFindings')));
-      } else {
+      var sysGood = Array.isArray(sysEval.goodNews) ? sysEval.goodNews : [];
+      if (!sysFindings.length) sb.appendChild(el('p', null, t('sysNoFindings')));
+      if (sysFindings.length || sysGood.length) {
         var ul = el('ul', 'report-findings');
         sysFindings.forEach(function (f) {
           var li = el('li');
@@ -2430,6 +2444,7 @@
           if (f.fix) li.appendChild(el('p', 'report-fix', t('sysFix') + f.fix));
           ul.appendChild(li);
         });
+        sysGood.forEach(function (g) { var li = el('li'); li.appendChild(el('strong', null, t('sev_ok') + ': ' + g.title)); ul.appendChild(li); });
         sb.appendChild(ul);
       }
       if (sysEval.facts.length) {
