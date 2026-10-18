@@ -63,12 +63,19 @@ const RTC_STUB = `(() => {
   };
 })();`;
 
+// Set for the system-report sections (8a to 8d) and cleared afterwards; see newPage.
+let FIXED_NOW = null;
+const SYS_NOW = new Date('2026-10-18T09:00:00Z');
+
 async function newPage(mode, opts = {}, engine = browser) {
-  const { initScript, speed = 'ok', colo = 'DUB', ...contextOpts } = opts;
+  const { initScript, speed = 'ok', colo = 'DUB', fixedNow = FIXED_NOW, ...contextOpts } = opts;
   const context = await engine.newContext(Object.assign({ locale: 'en-IE' }, contextOpts));
   if (initScript) await context.addInitScript(initScript);
   await context.addInitScript(RTC_STUB);
   const page = await context.newPage();
+  // The system-report fixtures are dated October 2026: those sections run with a fixed page clock (Date only;
+  // timers and performance.now keep running), so they do not depend on the day the suite runs.
+  if (fixedNow) await page.clock.setFixedTime(fixedNow);
   const seen = { external: [], hibp: [], errors: [], consoleErrors: [], speed: [] };
   page.on('pageerror', (e) => seen.errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') seen.consoleErrors.push(m.text()); });
@@ -637,6 +644,13 @@ try {
     await context.close();
   }
 
+  FIXED_NOW = SYS_NOW;
+  {
+    const { page, context } = await newPage('ok');
+    const nowIso = await page.evaluate(() => new Date().toISOString());
+    check('system sections run with a fixed page clock (2026-10-18T09:00Z)', nowIso === '2026-10-18T09:00:00.000Z', nowIso);
+    await context.close();
+  }
   // 8a. System report parsers (Windows), on anonymised real reports
   console.log('System report parsers');
   {
@@ -1530,6 +1544,15 @@ try {
         mixed: (() => { const e = S.evaluateWindows({ reliability: rel([ev(2, 'Shut down unexpectedly'), ev(3, 'Windows was not properly shut down')]) }, now); return { ids: ids(e), score: e.score, shutdowns30d: e.shutdowns30d }; })(),
         realFindings: real.findings,
         realGood: real.goodNews, realSummaryKeys: Object.keys(S.buildSummary(real)).join(','),
+        realFacts: real.facts,
+        defender: (() => { const d = (v) => 'Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.439.' + v + '.0)';
+          const e = S.evaluateWindows({ reliability: rel([ev(1, 'Successful Windows Update', d(103)), ev(2, 'Failed Windows Update', d(102)), ev(3, 'Failed Windows Update', d(101)), ev(4, 'Failed Windows Update', d(100))]) }, now); return ids(e); })(),
+        versioned: ids(S.evaluateWindows({ reliability: rel([ev(1, 'Successful Windows Update', 'Contoso Driver Update (2.1.4)'), ev(2, 'Failed Windows Update', 'Contoso Driver Update (2.1.3)'), ev(3, 'Failed Windows Update', 'Contoso Driver Update (2.1.2)'), ev(4, 'Failed Windows Update', 'Contoso Driver Update (Version 2.1.1)')]) }, now)),
+        otherKb: ids(S.evaluateWindows({ reliability: rel([ev(1, 'Successful Windows Update', '2026-10 Cumulative Update (KB5000002)'), ev(2, 'Failed Windows Update', '2026-10 Cumulative Update (KB5000001)'), ev(3, 'Failed Windows Update', '2026-10 Cumulative Update (KB5000001)'), ev(4, 'Failed Windows Update', '2026-10 Cumulative Update (KB5000001)')]) }, now)),
+        lowerFirst: (() => { const list = []; for (let i = 0; i < 6; i++) list.push(ev(i + 1, 'Stopped working', 'acerregistrationbackgroundtask')); for (let i = 0; i < 5; i++) list.push(ev(i + 1, 'Stopped working', 'AcerRegistrationBackGroundTask.exe'));
+          return S.evaluateWindows({ reliability: rel(list) }, now).topCrashApps; })(),
+        storeDetail: S.evaluateWindows({ reliability: rel([ev(1, 'Failed Windows Update', '9PLM9XGG6VKS-OpenAI.Codex'), ev(2, 'Failed Windows Update', '9PLM9XGG6VKS-OpenAI.Codex'), ev(3, 'Failed Windows Update', '9PLM9XGG6VKS-OpenAI.Codex')]) }, now).findings[0].detail,
+        noUncleanFacts: S.evaluateWindows({ reliability: rel([ev(2, 'Shut down unexpectedly')]) }, now).facts,
         bat70Good: S.evaluateWindows({ battery: { designMWh: 100, fullMWh: 70, cycles: 300, healthPct: 70 } }, now).goodNews,
         linuxGood: S.evaluateLinux({ battery: { present: true, healthPct: 91.2, cycles: 120 } }, now).goodNews,
         linuxWorn: S.evaluateLinux({ battery: { present: true, healthPct: 72.3, cycles: 900 } }, now).goodNews,
@@ -1603,6 +1626,13 @@ try {
       check('failed Microsoft Store app updates -> store_updates info, worded as Store apps, score 100', r.storeFailed.ids.join(',') === 'store_updates:info' && r.storeFailed.score === 100 &&
         r.storeFailed.f.title === '3 app updates from the Microsoft Store failed in 30 days' && /Microsoft Store > Library > Get updates/.test(r.storeFailed.f.fix) && !/Windows Update/.test(r.storeFailed.f.fix), r.storeFailed);
       check('stability fix says the score climbs back on its own', r.stabilityFix && r.stabilityFix.fix === 'The score climbs back up on its own a few days after the problems above stop.', r.stabilityFix);
+      check('failed Defender updates with other versions, then a later success (same KB) -> no updates finding', r.defender.length === 0, r.defender);
+      check('without a KB, a later success of the same update with another version clears it', r.versioned.length === 0, r.versioned);
+      check('a later success of a different KB does not clear the failures', r.otherKb.join(',') === 'updates:warn', r.otherKb);
+      check('merged crash sources show the mixed-case name', JSON.stringify(r.lowerFirst) === '[{"name":"AcerRegistrationBackGroundTask","count":11}]', r.lowerFirst);
+      check('store_updates detail says the Store usually retries them', /The Store usually retries them by itself/.test(r.storeDetail), r.storeDetail);
+      const uf = r.realFacts.filter((f) => f.label === 'Unfinished shutdowns (30 days)')[0];
+      check('fact: unfinished shutdowns (30 days) shown when > 0 (owner fixture: 1), absent when 0', uf && uf.value === '1' && !r.noUncleanFacts.some((f) => /Unfinished/.test(f.label)), [uf, r.noUncleanFacts]);
       check('good news: a healthy battery (owner fixture, 90.4 %) is a good-news row, not a finding', r.realGood.length === 1 &&
         /^Battery is healthy \u2014 it holds 90\.4 % of its original capacity after \d+ cycles?\.$/.test(r.realGood[0].title) && !r.real.ids.some((i) => /^battery/.test(i)), r.realGood);
       check('good news: the Windows summary keys are unchanged', r.realSummaryKeys === 'os,model,ramGb,score,findings,topCrashApps,batteryHealthPct,shutdowns30d,hardwareErrors30d,stabilityNow', r.realSummaryKeys);
@@ -3014,6 +3044,8 @@ try {
       }
     }
   }
+
+  FIXED_NOW = null;
 
   // 6c1. Link previews (WhatsApp, LinkedIn, Instagram read Open Graph tags)
   console.log('Link preview');

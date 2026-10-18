@@ -1125,6 +1125,17 @@
   var STORE_PACKAGE = /^9[A-Z0-9]{11}-/;
   // Crash source as shown: without a trailing .exe; Java's updater appears under both names
   var CRASH_ALIASES = { jusched: 'Java Update Scheduler' };
+  // The same update across versions: its KB number when it has one, else the source without a trailing
+  // "(Version …)" or "(1.2.3)" ("… KB2267602 (Version 1.439.100.0)" and "… (Version 1.439.103.0)" are one update).
+  function updateKey(source) {
+    var src = String(source === null || source === undefined ? '' : source);
+    var kb = /\bKB\d{6,8}\b/i.exec(src);
+    if (kb) return kb[0].toUpperCase();
+    return src.replace(/\s*\((?:Version[^)]*|\d+(?:\.\d+)+)\)\s*$/i, '').trim().toLowerCase();
+  }
+
+  function mixedCase(s) { return /[a-z]/.test(s) && /[A-Z]/.test(s); }
+
   function crashAppName(source) {
     var name = String(source === null || source === undefined ? '' : source).replace(/\.exe$/i, '');
     var k = name.toLowerCase();
@@ -1167,6 +1178,7 @@
           'Install pending Windows updates, then update the graphics, chipset and storage drivers from your PC maker’s support page. If it happens under heavy load, check that the fans and vents are clean.');
       }
       var unclean = count(UNCLEAN_SHUTDOWN_PROBLEMS);
+      out.uncleanShutdowns30d = unclean;
       if (unclean >= 1) {
         add('unclean_shutdowns', unclean >= 3 ? 'warn' : 'info', "Windows didn't finish shutting down " + plural(unclean, 'time', 'times') + ' in 30 days',
           "A shutdown or restart didn't complete \u2014 often because an update or app hung while shutting down, the battery ran out, or the PC was switched off before it finished. This is usually harmless on its own.",
@@ -1189,6 +1201,8 @@
         var name = crashAppName(e.source);
         var key = name.toLowerCase();
         if (!bySource[key]) { bySource[key] = { name: name, count: 0 }; order.push(key); }
+        // Prefer the mixed-case spelling ("AcerRegistrationBackGroundTask" over "acerregistrationbackgroundtask")
+        else if (!mixedCase(bySource[key].name) && mixedCase(name)) bySource[key].name = name;
         bySource[key].count++;
       });
       var top = order.map(function (k) { return bySource[k]; })
@@ -1212,7 +1226,7 @@
       // report) is not counted. Microsoft Store app packages ("9PLM9XGG6VKS-OpenAI.Codex") are counted apart.
       var failed = recent.filter(function (e) {
         return e.problem === 'Failed Windows Update' && !rel.events.some(function (o) {
-          return o.problem === 'Successful Windows Update' && o.source === e.source && o.time.getTime() > e.time.getTime();
+          return o.problem === 'Successful Windows Update' && o.time.getTime() > e.time.getTime() && updateKey(o.source) === updateKey(e.source);
         });
       });
       var storeFailed = failed.filter(function (e) { return STORE_PACKAGE.test(e.source || ''); }).length;
@@ -1223,7 +1237,7 @@
       }
       if (storeFailed >= 3) {
         add('store_updates', 'info', plural(storeFailed, 'app update', 'app updates') + ' from the Microsoft Store failed in 30 days',
-          'These are updates of apps installed from the Microsoft Store, not Windows updates. The Store retries them by itself.',
+          'These are updates of apps installed from the Microsoft Store, not Windows updates. The Store usually retries them by itself.',
           'Open Microsoft Store > Library > Get updates. If an app keeps failing, update or reinstall it from the Store.');
       }
       if (at.getTime() - gen.getTime() > 30 * DAY) {
@@ -1268,6 +1282,7 @@
     if (bat) facts.push({ label: 'Battery health', value: bat.healthPct + ' %' + (bat.cycles !== null ? ' (' + plural(bat.cycles, 'cycle', 'cycles') + ')' : '') });
     if (out.stabilityNow !== null) facts.push({ label: 'Stability index', value: out.stabilityNow + ' / 10' });
     if (out.shutdowns30d !== null) facts.push({ label: 'Unexpected shutdowns (30 days)', value: String(out.shutdowns30d) });
+    if (out.uncleanShutdowns30d) facts.push({ label: 'Unfinished shutdowns (30 days)', value: String(out.uncleanShutdowns30d) });
     if (out.reportDate) facts.push({ label: 'Report from', value: localDate(out.reportDate) });
     facts.forEach(function (f) { f.value = anonymise(f.value, out.names); });
     findings.forEach(function (f) { f.title = anonymise(f.title, out.names); f.detail = anonymise(f.detail, out.names); });
