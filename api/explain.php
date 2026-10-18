@@ -1,7 +1,7 @@
 <?php
 /**
  * POST api/explain.php   body: {"summary": <exactly what PCSys.buildSummary() returns>}
- * Asks Claude (Anthropic) for a plain-English explanation of an anonymised Windows or Linux report summary.
+ * Asks Claude (Anthropic) for a plain-English explanation of an anonymised Windows, Linux or Mac report summary.
  * The API key lives in grcaudit-config.php OUTSIDE public_html and is never sent to the browser.
  * Nothing is stored except the per-IP rate-limit hashes and the daily counter; bodies are never logged.
  */
@@ -86,7 +86,10 @@ if (!bsc_daily_cap('explain', BSC_EXPLAIN_DAILY_CAP)) {
 }
 
 // 7. Upstream
-$system = bsc_explain_system_prompt(isset($summary['platform']) ? 'linux' : 'windows');
+$system = bsc_explain_system_prompt(isset($summary['platform']) ? $summary['platform'] : 'windows');
+if ($system === '') {
+    bsc_json(500, array('error' => 'server_error'));
+}
 
 $request = array(
     'model' => $model,
