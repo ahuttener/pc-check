@@ -23,10 +23,10 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/fonts/roboto-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/orbitron-latin-900-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/styles.css?v=10">
+  <link rel="stylesheet" href="assets/styles.css?v=11">
   <script src="assets/gauge.js?v=3" defer></script>
   <script src="assets/sysreport.js?v=12" defer></script>
-  <script src="assets/app.js?v=17" defer></script>
+  <script src="assets/app.js?v=18" defer></script>
 </head>
 <body>
   <svg class="sprite" aria-hidden="true" focusable="false">
@@ -270,11 +270,9 @@
       <p id="sys-banner" class="sys-banner" aria-live="polite"></p>
       <div class="sys-os" role="group" aria-label="Which computer are you checking?">
         <button id="sys-os-windows" class="sys-os-btn" type="button" data-os="windows" aria-pressed="true"><svg aria-hidden="true" focusable="false"><use href="#os-windows"></use></svg><span>Windows</span></button>
-        <button id="sys-os-mac" class="sys-os-btn" type="button" data-os="mac" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-mac"></use></svg><span>Mac</span><span class="sys-soon-tag">Coming soon</span></button>
+        <button id="sys-os-mac" class="sys-os-btn" type="button" data-os="mac" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-mac"></use></svg><span>Mac</span></button>
         <button id="sys-os-linux" class="sys-os-btn" type="button" data-os="linux" aria-pressed="false"><svg aria-hidden="true" focusable="false"><use href="#os-linux"></use></svg><span>Linux</span></button>
       </div>
-      <p id="sys-soon" class="sys-soon" hidden></p>
-
       <div id="sys-steps" class="sys-steps">
         <ol class="sys-step-list">
           <li id="sys-step-reliability" class="sys-step" data-state="empty">
@@ -372,6 +370,44 @@
           <p id="sys-linux-status" class="sys-status" role="status" aria-live="polite"></p>
         </div>
         <p class="sys-privacy">Analyze runs on this device. Nothing you paste is uploaded, so nothing is added to the outbound log.</p>
+      </div>
+
+      <div id="sys-mac-steps" class="sys-steps sys-mac" hidden>
+        <ol class="sys-step-list">
+          <li id="sys-step-mac-spx" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">1</span>System Information</h3>
+            <ol class="sys-how">
+              <li>Hold the Option key and click the Apple menu at the top-left of the screen, then choose System Information. (Or open Finder &gt; Applications &gt; Utilities &gt; System Information.)</li>
+              <li>Choose File &gt; Save… and save the report to your Desktop. It ends in .spx and can take a minute.</li>
+              <li>Choose that .spx file below, or drop it here.</li>
+            </ol>
+            <p class="sys-note">The file also lists your Mac’s serial number and network names. PC Check reads only the model, macOS version, memory, disks and battery, and keeps none of the rest.</p>
+            <input id="sys-file-mac-spx" class="sys-file" type="file" accept=".spx,application/xml,text/xml">
+            <label class="sys-drop" for="sys-file-mac-spx"><span class="sys-drop-main">Choose the .spx file</span><span class="sys-drop-sub">or drop it here</span></label>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+          <li id="sys-step-mac-crash" class="sys-step" data-state="empty">
+            <h3><span class="sys-step-no" aria-hidden="true">2</span>Crash and panic reports <span class="sys-optional">(optional)</span></h3>
+            <ol class="sys-how">
+              <li>In Finder choose Go &gt; Go to Folder…, enter <span class="sys-cmd sys-path"><code id="sys-path-mac-system">/Library/Logs/DiagnosticReports</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-path-mac-system">Copy</button></span> and press Return.</li>
+              <li>Sort by Date Modified and select the files from the last 30 days whose names end in .panic, .ips or .crash (hold Command to select several). Drag them onto the box below.</li>
+              <li>Do the same with <span class="sys-cmd sys-path"><code id="sys-path-mac-user">~/Library/Logs/DiagnosticReports</code><button class="btn btn-ghost sys-copy" type="button" aria-controls="sys-path-mac-user">Copy</button></span> for crashes of your own apps.</li>
+            </ol>
+            <p class="sys-note">Go to Folder is a Finder window, not a command line.</p>
+            <p class="sys-note">You can also open the Console app (Applications &gt; Utilities), choose Crash Reports, Control-click a report and choose Reveal in Finder.</p>
+            <p class="sys-note">An empty folder means no crashes were recorded. That’s good news; skip this step.</p>
+            <input id="sys-file-mac-crash" class="sys-file" type="file" multiple accept=".ips,.panic,.crash">
+            <label class="sys-drop" for="sys-file-mac-crash"><span class="sys-drop-main">Choose the report files</span><span class="sys-drop-sub">or drop them here</span></label>
+            <p class="sys-msg" data-role="msg" aria-live="polite"></p>
+          </li>
+        </ol>
+        <p id="sys-mac-phone" class="sys-note sys-mac-phone" hidden>Do these steps on the Mac. You can read them here and open this page on the Mac later.</p>
+        <div class="sys-actions">
+          <button id="sys-mac-analyze" class="btn btn-primary" type="button">Analyze</button>
+          <button id="sys-mac-clear" class="btn btn-ghost" type="button">Clear chosen files</button>
+          <p id="sys-mac-status" class="sys-status" role="status" aria-live="polite"></p>
+        </div>
+        <p class="sys-privacy">Analyze runs on this device. Nothing is uploaded, so nothing is added to the outbound log.</p>
       </div>
 
       <div id="sys-results" class="sys-results" aria-live="polite" hidden></div>

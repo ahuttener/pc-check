@@ -222,16 +222,16 @@
       sysBanner: function (family, label) {
         switch (family) {
           case 'windows': return 'You’re on ' + label + '. Follow the three steps below to check this PC.';
-          case 'mac': return 'You’re on macOS. Mac reports are coming soon; for now PC Check reads Windows and Linux reports.';
+          case 'mac': return 'You’re on ' + label + '. Save the reports with apps already on your Mac and choose them below. No Terminal needed.';
           case 'linux': return 'You’re on ' + label + '. Run the five read-only commands below in a terminal and paste what they print.';
           case 'android': return 'You’re on Android. These steps are done on a computer: open this page there, or follow them on the computer and come back with the files.';
           case 'ios': return 'You’re on an iPhone or iPad. These steps are done on a computer: open this page there, or follow them on the computer and come back with the files.';
           default: return 'Pick the system of the computer you want to check.';
         }
       },
-      sysSoon: function (name) { return name + ' reports are coming soon. For now PC Check reads Windows and Linux reports; the browser checks above work on any system.'; },
       sysLeadWindows: 'Windows already keeps a crash history, a battery report and a system summary. Save them with the steps below and PC Check reads them right here in your browser. The files never leave your device.',
       sysLeadLinux: 'Linux already keeps an error journal and knows your battery and disks. Five read-only commands print it; paste their output below and PC Check reads it right here in your browser. Nothing you paste leaves your device.',
+      sysLeadMac: 'Your Mac already keeps a system profile and a record of crashes and unexpected restarts. Save them with System Information and Finder, then choose the files below: PC Check reads them right here in your browser. Nothing leaves your device.',
       sysReading: 'Reading the file on this device…',
       sysReadReliability: function (date, n) { return 'Read: reliability history' + (date ? ' saved ' + date : '') + ', ' + n + (n === 1 ? ' event.' : ' events.'); },
       sysReadBattery: 'Read: battery report.',
@@ -252,7 +252,10 @@
       sysVerdictOk: 'No serious problems in these reports.',
       sysVerdictWarn: 'A few things need attention.',
       sysVerdictRisk: 'This PC has problems worth fixing soon.',
-      sysReportFrom: function (date, platform) { return (platform === 'linux' ? 'Logs from ' : 'Reliability history from ') + date + ' · read on this device, nothing uploaded'; },
+      sysReportFrom: function (date, platform, fromSpx) {
+        var what = platform === 'linux' ? 'Logs from ' : (platform === 'mac' ? (fromSpx ? 'System Information from ' : 'Newest report from ') : 'Reliability history from ');
+        return what + date + ' · read on this device, nothing uploaded';
+      },
       // Linux: text pasted from five read-only commands
       sysLinuxNotOutput: 'This doesn’t look like the output of this command.',
       sysLinuxLooksLike: function (step) { return ' It looks like the output for step ' + step + '.'; },
@@ -266,7 +269,24 @@
       sysLinuxReadBattery: 'Read: battery details.',
       sysLinuxReadDisks: function (n) { return 'Read: ' + n + (n === 1 ? ' filesystem.' : ' filesystems.'); },
       sysLinuxNeedPaste: 'Paste at least one output first. Step 2 tells the most.',
-      sysLinuxNothingRead: 'Nothing could be read. See the message under each box.',
+      sysNothingRead: 'Nothing could be read. See the message under each box.',
+      // Mac: a System Information .spx file and diagnostic reports, chosen by the visitor and read on this device.
+      // File names are never shown: macOS puts the computer name in them.
+      sysMacReadSpx: function (date) { return 'Read: System Information' + (date ? ' from ' + date : '') + '.'; },
+      sysMacNotSpx: 'This doesn’t look like a System Information (.spx) file.',
+      sysMacCrashInSpx: ' It looks like a crash report; use step 2.',
+      sysMacSpxText: 'This is the text version. In System Information choose File > Save… instead; it saves a .spx file.',
+      sysMacReadReports: function (n, p, c) {
+        return 'Read ' + n + (n === 1 ? ' report: ' : ' reports: ') + p + (p === 1 ? ' panic, ' : ' panics, ') + c + (c === 1 ? ' app crash.' : ' app crashes.');
+      },
+      sysMacSkipped: function (n) { return ' ' + n + (n === 1 ? ' file was skipped' : ' files were skipped') + ' (not a crash or panic report).'; },
+      sysMacCapped: function (n) { return ' Only the first ' + n + ' files were read.'; },
+      sysMacUnreadable: function (n) {
+        return ' macOS didn’t let the browser read ' + n + (n === 1 ? ' file. Copy it to your Desktop first, then choose the copy.' : ' files. Copy them to your Desktop first, then choose the copies.');
+      },
+      sysMacNoReports: 'None of these files is a crash or panic report. Look for names ending in .panic, .ips or .crash.',
+      sysMacSpxInReports: ' One of them looks like the System Information file; use step 1.',
+      sysMacNeedFile: 'Choose at least one file first. Step 1 tells the most.',
       sysLocalOnly: 'Read on this device, nothing uploaded',
       sysFindingsTitle: 'What we found',
       sysNoFindings: 'Nothing to fix in these reports.',
@@ -294,7 +314,7 @@
       sysAiUpstream: 'The AI service did not answer. Try again in a minute.',
       sysAiFail: 'The explanation could not be fetched. Check your connection and try again.',
       lpExplain: 'AI explanation of the system report (this site, passed to Claude by Anthropic)',
-      reportSysTitle: function (platform) { return 'System report (' + (platform === 'linux' ? 'Linux' : 'Windows') + ')'; },
+      reportSysTitle: function (platform) { return 'System report (' + (platform === 'linux' ? 'Linux' : (platform === 'mac' ? 'Mac' : 'Windows')) + ')'; },
       reportSysScore: function (n) { return 'Health score: ' + n + ' / 100'; },
       reportAiTitle: 'AI explanation',
       reportFootAi: 'Generated locally in your browser. Only what is listed under “What left your device” was sent, including the anonymised system summary for the AI explanation. cybersecinfo.com/pccheck',
@@ -343,6 +363,8 @@
       status: null,
       // Linux: texts = what was pasted (cut at the cap), parsed = parser results, steps = per-box message
       linux: blankLinux(),
+      // Mac: spx = parsed System Information, reports = parsed crash/panic reports (no file names), steps = per-step message
+      mac: blankMac(),
       evaluation: null,
       // Explain with AI: open = disclosure shown; busy = request in flight; text/model = the answer
       ai: blankAi()
@@ -356,6 +378,11 @@
       steps: { system: null, journal: null, boots: null, battery: null, disks: null },
       status: null
     };
+  }
+
+  // fromSpx: whether the shown Mac evaluation had a .spx (for its date line)
+  function blankMac() {
+    return { spx: null, reports: [], steps: { spx: null, crash: null }, status: null, fromSpx: false };
   }
 
   function blankAi() {
@@ -1528,7 +1555,6 @@
   var SYS_PARSER = { reliability: 'parseReliability', battery: 'parseBattery', msinfo: 'parseMsinfo' };
   var SYS_WRONG = { reliability: 'sysNotReliability', battery: 'sysNotBattery', msinfo: 'sysNotMsinfo' };
   var SYS_STEP_NO = { reliability: 1, battery: 2, msinfo: 3 };
-  var SYS_OS_NAMES = { windows: 'Windows', mac: 'Mac', linux: 'Linux' };
   var SYS_GLYPH = { windows: 'os-windows', mac: 'os-mac', linux: 'os-linux', android: 'os-phone', ios: 'os-phone', other: 'os-windows' };
   var SEVERITY_ORDER = ['risk', 'warn', 'info'];
   var sysReads = {};
@@ -1549,6 +1575,15 @@
     if (family === 'linux') {
       var distro = /Ubuntu|Fedora|Debian/.exec(ua);
       if (distro) info.label = 'Linux (' + distro[0] + ')';
+    }
+    // macOS: the user-agent string is frozen at 10_15_7, so only Chromium's userAgentData tells the version.
+    if (family === 'mac') {
+      if (!uad || uad.platform !== 'macOS' || typeof uad.getHighEntropyValues !== 'function') return Promise.resolve(info);
+      return Promise.resolve().then(function () { return uad.getHighEntropyValues(['platformVersion']); }).then(function (h) {
+        var major = parseInt(String((h && h.platformVersion) || ''), 10);
+        if (major >= 11 && major < 100) info.label = 'macOS ' + major;
+        return info;
+      }).catch(function () { return info; });
     }
     if (family !== 'windows' || !uad || uad.platform !== 'Windows' || typeof uad.getHighEntropyValues !== 'function') return Promise.resolve(info);
     // Windows 11 reports platformVersion 13 or higher; Windows 10 reports 1 to 10.
@@ -1757,7 +1792,7 @@
       lx.status = ['sysDone'];
     } else {
       if (state.sys.evaluation && state.sys.evaluation.platform === 'linux') state.sys.evaluation = null;
-      lx.status = ['sysLinuxNothingRead'];
+      lx.status = ['sysNothingRead'];
     }
     state.sys.linux = lx;
     state.sys.ai = blankAi();
@@ -1795,6 +1830,167 @@
     if (status) status.textContent = state.sys.linux.status ? resolve(state.sys.linux.status) : '';
   }
 
+  // ---------------------------------------------------------------------------
+  // Mac: a System Information .spx file (step 1) and up to 100 crash/panic reports (step 2), read on this device only.
+  // File names are never read, shown or stored: macOS puts the computer name in them.
+  // ---------------------------------------------------------------------------
+  var MAC_MAX_REPORTS = 100;
+  var MAC_STEPS = ['spx', 'crash'];
+  var macReads = {};
+  var macToken = { spx: 0, crash: 0 };
+
+  function isMacReport(r) { return !!r && !r.error && (r.kind === 'panic' || r.kind === 'crash'); }
+
+  // A System Information plist (possibly cut at the 1 MB read limit, so not always parseable whole).
+  function looksLikeSpx(text) {
+    var head = String(text).slice(0, 4000);
+    return head.indexOf('<plist') !== -1 && String(text).indexOf('<key>_dataType</key>') !== -1;
+  }
+
+  // A new choice makes the shown Mac results stale.
+  function dropMacEvaluation() {
+    if (state.sys.evaluation && state.sys.evaluation.platform === 'mac') {
+      state.sys.evaluation = null;
+      state.sys.ai = blankAi();
+    }
+    state.sys.mac.status = null;
+  }
+
+  function setMacStep(kind, status, msg) {
+    state.sys.mac.steps[kind] = status ? { status: status, msg: msg } : null;
+    renderMacSteps();
+  }
+
+  function loadMacSpx(file) {
+    if (!file) return Promise.resolve();
+    var token = ++macToken.spx;
+    state.sys.mac.spx = null;
+    dropMacEvaluation();
+    renderSysResults();
+    renderPdfButton();
+    var S = window.PCSys;
+    if (!S) { setMacStep('spx', 'error', ['sysReadError']); return Promise.resolve(); }
+    if (file.size > SYS_MAX_BYTES) { setMacStep('spx', 'error', ['sysTooBig']); macReads.spx = null; return Promise.resolve(); }
+    setMacStep('spx', 'reading', ['sysReading']);
+    var job = readBuffer(file).then(function (buffer) {
+      if (token !== macToken.spx) return;
+      var text = S.decode(buffer);
+      var parsed = S.parseSpx(text);
+      if (parsed && parsed.error === 'spx_text') {
+        setMacStep('spx', 'error', ['sysMacSpxText']);
+      } else if (!parsed || parsed.error) {
+        setMacStep('spx', 'error', t('sysMacNotSpx') + (isMacReport(S.parseMacReport(text)) ? t('sysMacCrashInSpx') : ''));
+      } else {
+        state.sys.mac.spx = parsed;
+        setMacStep('spx', 'ok', ['sysMacReadSpx', isoDate(parsed.reportDate)]);
+      }
+    }).catch(function () {
+      if (token === macToken.spx) setMacStep('spx', 'error', ['sysReadError']);
+    });
+    macReads.spx = job;
+    return job;
+  }
+
+  function loadMacReports(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    if (!files.length) return Promise.resolve();
+    var token = ++macToken.crash;
+    var capped = files.length > MAC_MAX_REPORTS;
+    files = files.slice(0, MAC_MAX_REPORTS);
+    state.sys.mac.reports = [];
+    dropMacEvaluation();
+    renderSysResults();
+    renderPdfButton();
+    var S = window.PCSys;
+    if (!S) { setMacStep('crash', 'error', ['sysReadError']); return Promise.resolve(); }
+    setMacStep('crash', 'reading', ['sysReading']);
+    // Only the first MAC_REPORT_HEAD bytes of each file are read, whatever its size; the name is never passed on.
+    var job = Promise.all(files.map(function (file) {
+      return readBuffer(file.slice(0, S.MAC_REPORT_HEAD)).then(function (buffer) {
+        var text = S.decode(buffer);
+        var parsed = S.parseMacReport(text);
+        if (isMacReport(parsed)) return { report: parsed };
+        var spx = looksLikeSpx(text) && (file.size > S.MAC_REPORT_HEAD || !S.parseSpx(text).error);
+        return { skipped: true, spx: spx };
+      }, function () { return { unreadable: true }; });
+    })).then(function (results) {
+      if (token !== macToken.crash) return;
+      var reports = [];
+      var panics = 0;
+      var skipped = 0;
+      var unreadable = 0;
+      var spxSeen = false;
+      results.forEach(function (r) {
+        if (r.report) { reports.push(r.report); if (r.report.kind === 'panic') panics++; }
+        else if (r.unreadable) unreadable++;
+        else { skipped++; if (r.spx) spxSeen = true; }
+      });
+      state.sys.mac.reports = reports;
+      var msg;
+      if (reports.length) {
+        msg = t('sysMacReadReports', reports.length, panics, reports.length - panics) + (skipped ? t('sysMacSkipped', skipped) : '');
+      } else {
+        msg = t('sysMacNoReports') + (spxSeen ? t('sysMacSpxInReports') : '');
+      }
+      msg += (capped ? t('sysMacCapped', MAC_MAX_REPORTS) : '') + (unreadable ? t('sysMacUnreadable', unreadable) : '');
+      setMacStep('crash', reports.length ? 'ok' : 'error', msg);
+    });
+    macReads.crash = job;
+    return job;
+  }
+
+  function analyzeMac() {
+    var pending = MAC_STEPS.map(function (k) { return macReads[k] || Promise.resolve(); });
+    return Promise.all(pending).then(function () {
+      var mac = state.sys.mac;
+      var S = window.PCSys;
+      var chosen = !!(mac.steps.spx || mac.steps.crash);
+      var usable = !!mac.spx || mac.reports.length > 0;
+      dropMacEvaluation();
+      if (!S || !chosen) {
+        mac.status = ['sysMacNeedFile'];
+      } else if (!usable) {
+        mac.status = ['sysNothingRead'];
+      } else {
+        state.sys.evaluation = S.evaluateMac({ spx: mac.spx, reports: mac.reports }, new Date());
+        state.sys.ai = blankAi();
+        mac.fromSpx = !!mac.spx;
+        mac.status = ['sysDone'];
+      }
+      renderMacSteps();
+      renderSysResults();
+      renderPdfButton();
+      var heading = $('#sys-results h3');
+      if (state.sys.evaluation && state.sys.evaluation.platform === 'mac' && heading) heading.focus();
+    });
+  }
+
+  function clearMac() {
+    MAC_STEPS.forEach(function (k) {
+      macToken[k]++;
+      var input = document.getElementById('sys-file-mac-' + k);
+      if (input) input.value = '';
+    });
+    macReads = {};
+    dropMacEvaluation();
+    state.sys.mac = blankMac();
+    renderMacSteps();
+    renderSysResults();
+    renderPdfButton();
+  }
+
+  function renderMacSteps() {
+    MAC_STEPS.forEach(function (k) {
+      var root = document.getElementById('sys-step-mac-' + k);
+      if (!root) return;
+      var step = state.sys.mac.steps[k];
+      root.setAttribute('data-state', step ? step.status : 'empty');
+      $('[data-role="msg"]', root).textContent = step ? resolve(step.msg) : '';
+    });
+    var status = $('#sys-mac-status');
+    if (status) status.textContent = state.sys.mac.status ? resolve(state.sys.mac.status) : '';
+  }
+
   function selectSysOs(os) {
     state.sys.selected = os;
     renderSysOs();
@@ -1817,12 +2013,14 @@
     });
     var windows = state.sys.selected === 'windows';
     var linux = state.sys.selected === 'linux';
+    var mac = state.sys.selected === 'mac';
     $('#sys-steps').hidden = !windows;
     if ($('#sys-linux-steps')) $('#sys-linux-steps').hidden = !linux;
-    if ($('#sys-lead')) $('#sys-lead').textContent = t(linux ? 'sysLeadLinux' : 'sysLeadWindows');
-    var soon = $('#sys-soon');
-    soon.hidden = windows || linux;
-    soon.textContent = windows || linux ? '' : t('sysSoon', SYS_OS_NAMES[state.sys.selected]);
+    if ($('#sys-mac-steps')) $('#sys-mac-steps').hidden = !mac;
+    if ($('#sys-lead')) $('#sys-lead').textContent = t(linux ? 'sysLeadLinux' : (mac ? 'sysLeadMac' : 'sysLeadWindows'));
+    // On a phone or tablet the Mac steps are read here and done on the Mac.
+    var family = state.sys.os && state.sys.os.family;
+    if ($('#sys-mac-phone')) $('#sys-mac-phone').hidden = !(family === 'ios' || family === 'android');
   }
 
   function renderSysStep(kind) {
@@ -1863,7 +2061,7 @@
     words.appendChild(h);
     words.appendChild(el('p', 'sys-verdict', t(band === 'ok' ? 'sysVerdictOk' : (band === 'warn' ? 'sysVerdictWarn' : 'sysVerdictRisk'))));
     var date = isoDate(e.reportDate);
-    words.appendChild(el('p', 'sys-date', date ? t('sysReportFrom', date, e.platform) : t('sysLocalOnly')));
+    words.appendChild(el('p', 'sys-date', date ? t('sysReportFrom', date, e.platform, state.sys.mac.fromSpx) : t('sysLocalOnly')));
     top.appendChild(words);
     root.appendChild(top);
 
@@ -1909,6 +2107,8 @@
       root.appendChild(tiles);
     }
 
+    // The AI explanation is offered for Windows and Linux only until the server has a Mac prompt.
+    if (e.platform === 'mac') return;
     var ai = el('div', 'sys-ai');
     ai.id = 'sys-ai';
     root.appendChild(ai);
@@ -1987,7 +2187,7 @@
 
   function openSysAi() {
     var e = state.sys.evaluation;
-    if (!e || !window.PCSys) return;
+    if (!e || !window.PCSys || e.platform === 'mac') return;
     state.sys.ai = blankAi();
     state.sys.ai.open = true;
     state.sys.ai.summary = window.PCSys.buildSummary(e);
@@ -2041,6 +2241,7 @@
     renderSysOs();
     SYS_KINDS.forEach(renderSysStep);
     renderLinuxSteps();
+    renderMacSteps();
     renderSysResults();
   }
 
@@ -2100,6 +2301,25 @@
     $('#sys-analyze').addEventListener('click', analyzeSys);
     if ($('#sys-linux-analyze')) $('#sys-linux-analyze').addEventListener('click', analyzeLinux);
     if ($('#sys-linux-clear')) $('#sys-linux-clear').addEventListener('click', clearLinux);
+    MAC_STEPS.forEach(function (k) {
+      var input = document.getElementById('sys-file-mac-' + k);
+      var zone = $('#sys-step-mac-' + k + ' .sys-drop');
+      if (!input || !zone) return;
+      var load = function (files) { return k === 'spx' ? loadMacSpx(files && files[0]) : loadMacReports(files); };
+      input.addEventListener('change', function () {
+        load(input.files).then(function () { input.value = ''; });
+      });
+      zone.addEventListener('dragover', function (ev) { ev.preventDefault(); zone.classList.add('is-over'); });
+      zone.addEventListener('dragleave', function () { zone.classList.remove('is-over'); });
+      zone.addEventListener('drop', function (ev) {
+        ev.preventDefault();
+        zone.classList.remove('is-over');
+        var files = ev.dataTransfer && ev.dataTransfer.files;
+        if (files && files.length) load(files);
+      });
+    });
+    if ($('#sys-mac-analyze')) $('#sys-mac-analyze').addEventListener('click', analyzeMac);
+    if ($('#sys-mac-clear')) $('#sys-mac-clear').addEventListener('click', clearMac);
 
     detectOs().then(function (os) {
       state.sys.os = os;
@@ -2176,7 +2396,7 @@
       sh.appendChild(el('span', 'report-pill', t('reportSysScore', sysEval.score)));
       sb.appendChild(sh);
       var sysDate = isoDate(sysEval.reportDate);
-      if (sysDate) sb.appendChild(el('p', null, t('sysReportFrom', sysDate, sysEval.platform)));
+      if (sysDate) sb.appendChild(el('p', null, t('sysReportFrom', sysDate, sysEval.platform, state.sys.mac.fromSpx)));
       sb.appendChild(el('h3', null, t('sysFindingsTitle')));
       var sysFindings = sysEval.findings.slice().sort(function (a, b) {
         return SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity);

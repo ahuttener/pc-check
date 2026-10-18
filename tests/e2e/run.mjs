@@ -1378,9 +1378,9 @@ try {
       const guide = await page.locator('#system').innerText({ timeout: 2000 }).catch(() => '');
       check('system: guide shows the three steps', /perfmon \/rel/.test(guide) && /powercfg \/batteryreport \/output "%USERPROFILE%\\Desktop\\battery-report.html"/.test(guide) && /msinfo32/.test(guide), guide.slice(0, 300));
       await page.click('#sys-os-mac', { timeout: 2000 }).catch(() => {});
-      check('system: Mac button shows Coming soon and hides the Windows steps', /Coming soon/i.test(await page.locator('#sys-soon').innerText({ timeout: 2000 }).catch(() => '')) && !(await page.locator('#sys-steps').isVisible()));
+      check('system: Mac button shows the Mac steps and hides the Windows steps', await page.locator('#sys-mac-steps').isVisible().catch(() => false) && !(await page.locator('#sys-steps').isVisible()));
       await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
-      check('system: back to Windows hides Coming soon', await page.locator('#sys-steps').isVisible().catch(() => false));
+      check('system: back to Windows hides the Mac steps', await page.locator('#sys-steps').isVisible().catch(() => false) && !(await page.locator('#sys-mac-steps').isVisible().catch(() => true)));
       await context.close();
     }
     {
@@ -1389,7 +1389,7 @@ try {
       const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
       check('system: macOS UA -> Mac banner', /You.re on macOS/.test(banner), banner);
       check('system: macOS UA -> Mac pre-selected', (await pressed(page, 'mac')) === 'true');
-      check('system: macOS UA -> Coming soon', /Coming soon/i.test(await page.locator('#sys-soon').innerText({ timeout: 2000 }).catch(() => '')));
+      check('system: macOS UA -> Mac steps, no Coming soon', await page.locator('#sys-mac-steps').isVisible().catch(() => false) && (await page.locator('.sys-soon-tag').count()) === 0);
       await context.close();
     }
     {
@@ -1520,9 +1520,9 @@ try {
       check('linux ui: Linux UA -> banner says Linux (Ubuntu) and five read-only commands', /You.re on Linux \(Ubuntu\)\. Run the five read-only commands below in a terminal and paste what they print\./.test(banner), banner);
       check('linux ui: Linux UA -> Linux button pre-selected', (await pressed(page, 'linux')) === 'true');
       check('linux ui: Linux button has no "Coming soon"', !/Coming soon/i.test(await page.locator('#sys-os-linux').innerText().catch(() => 'Coming soon')));
-      check('linux ui: Mac button keeps "Coming soon"', /Coming soon/i.test(await page.locator('#sys-os-mac').innerText().catch(() => '')));
-      check('linux ui: Linux steps shown, Windows steps and Coming soon hidden', await page.locator('#sys-linux-steps').isVisible().catch(() => false) &&
-        !(await page.locator('#sys-steps').isVisible().catch(() => true)) && !(await page.locator('#sys-soon').isVisible().catch(() => true)));
+      check('linux ui: no button says "Coming soon"', !/Coming soon/i.test(await page.locator('.sys-os').innerText().catch(() => 'Coming soon')));
+      check('linux ui: Linux steps shown, Windows and Mac steps hidden', await page.locator('#sys-linux-steps').isVisible().catch(() => false) &&
+        !(await page.locator('#sys-steps').isVisible().catch(() => true)) && !(await page.locator('#sys-mac-steps').isVisible().catch(() => true)));
       const lead = await page.locator('#sys-lead').innerText().catch(() => '');
       check('linux ui: lead explains the Linux steps', /^Linux already keeps an error journal and knows your battery and disks\. Five read-only commands print it; paste their output below and PC Check reads it right here in your browser\. Nothing you paste leaves your device\.$/.test(lead.trim()), lead);
       const codes = await page.locator('#sys-linux-steps code').allInnerTexts();
@@ -1655,7 +1655,7 @@ try {
     {
       const { page, context } = await newPage('ok', { userAgent: MAC_UA });
       await waitBanner(page);
-      check('linux ui: Mac UA still shows Coming soon', /Coming soon/i.test(await page.locator('#sys-soon').innerText({ timeout: 2000 }).catch(() => '')) && !(await page.locator('#sys-linux-steps').isVisible().catch(() => true)));
+      check('linux ui: Mac UA shows the Mac steps, not the Linux ones', await page.locator('#sys-mac-steps').isVisible().catch(() => false) && !(await page.locator('#sys-linux-steps').isVisible().catch(() => true)));
       await context.close();
     }
     for (const [label, opts, engineName] of [['375 px', { userAgent: LINUX_UA, viewport: { width: 375, height: 812 } }, 'chromium'], ['iPhone', devices['iPhone 14'], 'webkit']]) {
@@ -1679,6 +1679,207 @@ try {
         check('linux ui: no horizontal scroll at ' + label + ' with a 2.5 MB paste', overflow <= 0, overflow);
         check('linux ui: no page errors at ' + label, seen.errors.length === 0, seen.errors);
         await page.locator('#system').screenshot({ path: path.join(shots, engineName === 'webkit' ? 'system-linux-iphone.png' : 'system-linux-375.png') }).catch(() => {});
+        await context.close();
+      } finally {
+        if (eng !== browser) await eng.close();
+      }
+    }
+  }
+
+  // 8c-mac. Mac file steps in the System report panel: GUI-only guide (no Terminal), files read on this device only
+  console.log('System report panel (Mac)');
+  {
+    const MFX = (f) => path.join(here, '..', 'fixtures', 'sys', 'mac', f);
+    const MAC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15';
+    const SET_A = { spx: 'silicon.spx', reports: ['panic-full-2026-10-02-081533.0001.panic', 'panic-full-2026-10-14-224107.0002.panic',
+      'Google Chrome Helper (Renderer)-2026-10-15-091244.ips', 'Google Chrome Helper (Renderer)-2026-10-16-200103.ips', 'JetsamEvent-2026-10-17-130512.ips'] };
+    const SET_B = { spx: 'intel.spx', reports: ['Kernel-2026-08-20-101500.panic', 'Kernel-2026-10-09-213301.panic',
+      'Microsoft Word-2026-10-12-110204.ips', 'Microsoft Word-2026-10-16-153012.ips', 'Safari_2026-10-01-090909_Priyas-iMac.crash'] };
+    const planted = JSON.parse(fs.readFileSync(MFX('PLANTED.json'), 'utf8'));
+    const PLANTED = [].concat(...Object.values(planted)).map((p) => String(p).toLowerCase());
+    const FILE_BITS = ['panic-full-', 'kernel-2026', 'google chrome helper (renderer)-', 'priyas-imac', '.ips', '.spx'];
+    const leaks = (s) => { const l = String(s).toLowerCase(); return PLANTED.concat(FILE_BITS).filter((p) => l.includes(p)); };
+    const FORBIDDEN = /sudo|system_profiler|csrutil|diskutil|pmset|defaults |log show|ioreg/;
+    const pressed = (page, os) => page.getAttribute('#sys-os-' + os, 'aria-pressed', { timeout: 2000 }).catch(() => null);
+    const waitBanner = (page) => page.waitForFunction(() => (document.getElementById('sys-banner') || {}).textContent, null, { timeout: 5000 }).catch(() => {});
+    const msg = (page, k) => page.locator('#sys-step-mac-' + k + ' [data-role="msg"]').innerText({ timeout: 2000 }).catch(() => '');
+    // A step is done reading once its state is "ok" or "error".
+    const settled = (page, k) => page.waitForFunction((k) => /^(ok|error)$/.test((document.getElementById('sys-step-mac-' + k) || { getAttribute: () => '' }).getAttribute('data-state') || ''), k, { timeout: 10000 }).catch(() => {});
+    const choose = async (page, set) => {
+      if (set.spx) { await page.setInputFiles('#sys-file-mac-spx', MFX(set.spx), { timeout: 3000 }); await settled(page, 'spx'); }
+      if (set.reports) { await page.setInputFiles('#sys-file-mac-crash', set.reports.map(MFX), { timeout: 3000 }); await settled(page, 'crash'); }
+    };
+    const analyze = async (page) => {
+      await page.click('#sys-mac-analyze', { timeout: 3000 });
+      await page.waitForSelector('#sys-results:not([hidden])', { timeout: 10000 });
+    };
+    const shownText = (page) => page.evaluate(() => ['#sys-results', '#sys-banner', '#sys-status', '#sys-mac-status'].map((s) => (document.querySelector(s) || {}).innerText || '')
+      .concat(Array.from(document.querySelectorAll('#system [data-role="msg"]')).map((n) => n.innerText)).join('\n'));
+
+    {
+      const { page, context, seen } = await newPage('ok', { userAgent: MAC_UA, viewport: { width: 1280, height: 900 } });
+      await waitBanner(page);
+      const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
+      check('mac ui: Mac UA -> banner says macOS, no Terminal needed', /^You.re on macOS\. Save the reports with apps already on your Mac and choose them below\. No Terminal needed\.$/.test(banner.trim()), banner);
+      check('mac ui: Mac UA -> Mac button pre-selected', (await pressed(page, 'mac')) === 'true');
+      check('mac ui: no "Coming soon" tag or box is left', (await page.locator('.sys-soon-tag').count()) === 0 && (await page.locator('#sys-soon').count()) === 0 &&
+        !/Coming soon/i.test(await page.locator('#system').innerText().catch(() => 'Coming soon')));
+      check('mac ui: Mac steps shown, Windows and Linux steps hidden', await page.locator('#sys-mac-steps').isVisible().catch(() => false) &&
+        !(await page.locator('#sys-steps').isVisible().catch(() => true)) && !(await page.locator('#sys-linux-steps').isVisible().catch(() => true)));
+      const lead = await page.locator('#sys-lead').innerText().catch(() => '');
+      check('mac ui: lead explains the Mac steps', /^Your Mac already keeps a system profile and a record of crashes and unexpected restarts\. Save them with System Information and Finder, then choose the files below: PC Check reads them right here in your browser\. Nothing leaves your device\.$/.test(lead.trim()), lead);
+      const codes = await page.locator('#sys-mac-steps code').allInnerTexts();
+      check('mac ui: the only <code> elements are the two folder paths', codes.length === 2 && codes[0] === '/Library/Logs/DiagnosticReports' && codes[1] === '~/Library/Logs/DiagnosticReports', codes);
+      const guide = await page.locator('#sys-mac-steps').innerText().catch(() => '');
+      const all = [guide, lead, banner].join('\n');
+      check('mac ui: no Terminal command anywhere in the Mac guide, lead or banner', !FORBIDDEN.test(all), all.match(FORBIDDEN));
+      check('mac ui: "Terminal" appears only in "No Terminal needed"', !/Terminal/i.test(all.replace(/No Terminal needed/g, '')), (all.replace(/No Terminal needed/g, '').match(/.{0,30}Terminal.{0,30}/i) || [])[0]);
+      check('mac ui: GUI-only steps (System Information, File > Save, Go to Folder, Console)', /Hold the Option key and click the Apple menu/.test(guide) && /File > Save/.test(guide) &&
+        /Go > Go to Folder/.test(guide) && /Go to Folder is a Finder window, not a command line\./.test(guide) && /open the Console app \(Applications > Utilities\), choose Crash Reports/.test(guide) &&
+        /An empty folder means no crashes were recorded\./.test(guide) && /keeps none of the rest/.test(guide), guide.slice(0, 400));
+      const html = await page.content();
+      check('mac ui: no Apple-logo character on the page', !/\uF8FF/.test(html));
+      const inputs = await page.evaluate(() => {
+        const a = document.getElementById('sys-file-mac-spx'); const b = document.getElementById('sys-file-mac-crash');
+        return a && b ? [a.type, a.accept, a.multiple, b.type, b.accept, b.multiple] : null;
+      });
+      check('mac ui: .spx input and a multi-file report input', !!inputs && inputs[0] === 'file' && inputs[1] === '.spx,application/xml,text/xml' && inputs[2] === false &&
+        inputs[3] === 'file' && inputs[4] === '.ips,.panic,.crash' && inputs[5] === true, inputs);
+      check('mac ui: each step has one message line; two copy buttons for the two paths', (await page.locator('#sys-step-mac-spx [data-role="msg"]').count()) === 1 &&
+        (await page.locator('#sys-step-mac-crash [data-role="msg"]').count()) === 1 &&
+        (await page.locator('#sys-step-mac-crash .sys-copy[aria-controls="sys-path-mac-system"]').count()) === 1 &&
+        (await page.locator('#sys-step-mac-crash .sys-copy[aria-controls="sys-path-mac-user"]').count()) === 1);
+      check('mac ui: the phone line is hidden on a Mac', (await page.locator('#sys-mac-phone').count()) === 1 && !(await page.locator('#sys-mac-phone').isVisible().catch(() => true)));
+
+      await page.click('#sys-mac-analyze', { timeout: 3000 }).catch(() => {});
+      const need = await page.locator('#sys-mac-status').innerText({ timeout: 2000 }).catch(() => '');
+      check('mac ui: nothing chosen -> asks for a file', /^Choose at least one file first\. Step 1 tells the most\.$/.test(need.trim()) && !(await page.locator('#sys-results').isVisible()), need);
+
+      const before = await page.locator('#ledger-list li').count();
+      let ok = true;
+      try { await choose(page, SET_A); await analyze(page); } catch (e) { ok = false; }
+      check('mac ui: Set A chosen and analyzed', ok);
+      const m1 = await msg(page, 'spx');
+      check('mac ui: step 1 says Read: System Information from <date>', /^Read: System Information from \d{4}-\d\d-\d\d\.$/.test(m1.trim()), m1);
+      const m2 = await msg(page, 'crash');
+      check('mac ui: step 2 counts 2 panics, 2 app crashes, 1 skipped', m2.trim() === 'Read 4 reports: 2 panics, 2 app crashes. 1 file was skipped (not a crash or panic report).', m2);
+      const score = ok ? (await page.locator('#sys-score').innerText()).trim() : '';
+      check('mac ui: Set A score 55', score === '55', score);
+      const res = ok ? await page.locator('#sys-results').innerText() : '';
+      check('mac ui: Set A findings mention kernel panic and 91.9 %', /kernel panic/i.test(res) && /91\.9 %/.test(res), res.slice(0, 400));
+      check('mac ui: date line says System Information, read on this device', /System Information from \d{4}-\d\d-\d\d · read on this device, nothing uploaded/.test(res), res.slice(0, 300));
+      const shownA = await shownText(page);
+      check('mac ui: file names are never shown (Set A)', leaks(shownA).length === 0, leaks(shownA));
+      check('mac ui: Analyze sends nothing (outbound log unchanged)', (await page.locator('#ledger-list li').count()) === before);
+      check('mac ui: Analyze makes no outside requests', seen.external.length === 0, seen.external);
+      check('mac ui: "Explain with AI" not offered for Mac yet', (await page.locator('#sys-ai-open').count()) === 0);
+      check('mac ui: PDF button shown for the Mac results', await page.locator('#pdf').isVisible().catch(() => false));
+      await page.locator('#system').screenshot({ path: path.join(shots, 'system-mac-desktop.png') }).catch(() => {});
+
+      await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
+      check('mac ui: Mac results hidden while Windows is selected', !(await page.locator('#sys-results').isVisible().catch(() => true)) && await page.locator('#sys-steps').isVisible().catch(() => false));
+      await page.click('#sys-os-linux', { timeout: 2000 }).catch(() => {});
+      const lxLead = await page.locator('#sys-lead').innerText().catch(() => '');
+      check('mac ui: Linux lead unchanged', /^Linux already keeps an error journal/.test(lxLead.trim()) && !(await page.locator('#sys-results').isVisible().catch(() => true)), lxLead);
+      await page.click('#sys-os-mac', { timeout: 2000 }).catch(() => {});
+      check('mac ui: switching back keeps the chosen files and the results', await page.locator('#sys-results').isVisible().catch(() => false) &&
+        (await msg(page, 'crash')).trim() === m2.trim() && (await msg(page, 'spx')).trim() === m1.trim());
+
+      ok = true;
+      try { await choose(page, SET_B); await analyze(page); } catch (e) { ok = false; }
+      check('mac ui: Set B chosen and analyzed', ok);
+      const scoreB = ok ? (await page.locator('#sys-score').innerText()).trim() : '';
+      check('mac ui: Set B score 20', scoreB === '20', scoreB);
+      const resB = ok ? await page.locator('#sys-results').innerText() : '';
+      check('mac ui: Set B: no battery, SMART, macOS 13', /No battery reported/.test(resB) && /SMART/.test(resB) && /macOS 13/.test(resB), resB.slice(0, 400));
+      const shownB = await shownText(page);
+      check('mac ui: file names are never shown (Set B)', leaks(shownB).length === 0, leaks(shownB));
+      check('mac ui: still nothing in the outbound log', (await page.locator('#ledger-list li').count()) === before);
+
+      await page.click('#sys-mac-clear', { timeout: 2000 }).catch(() => {});
+      const c1 = await msg(page, 'spx'); const c2 = await msg(page, 'crash');
+      const states = await page.evaluate(() => ['spx', 'crash'].map((k) => (document.getElementById('sys-step-mac-' + k) || { getAttribute: () => null }).getAttribute('data-state')));
+      check('mac ui: Clear empties both steps and the results', !c1.trim() && !c2.trim() && states.join(',') === 'empty,empty' && !(await page.locator('#sys-results').isVisible().catch(() => true)), [c1, c2, states]);
+      await page.click('#sys-mac-analyze', { timeout: 3000 }).catch(() => {});
+      check('mac ui: after Clear, Analyze asks for a file again', /Choose at least one file first/.test(await page.locator('#sys-mac-status').innerText().catch(() => '')));
+      check('mac ui: no page errors', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // Chromium tells the macOS version through userAgentData; the user-agent string is frozen at 10_15_7.
+      const { page, context } = await newPage('ok', { userAgent: MAC_UA,
+        initScript: 'Object.defineProperty(Navigator.prototype, "userAgentData", { configurable: true, get: () => ({ platform: "macOS", getHighEntropyValues: () => Promise.resolve({ platformVersion: "15.1.0" }) }) });' });
+      await waitBanner(page);
+      const banner = await page.locator('#sys-banner').innerText({ timeout: 2000 }).catch(() => '');
+      check('mac ui: userAgentData 15.1.0 -> banner says macOS 15', /You.re on macOS 15\. Save the reports/.test(banner), banner);
+      await context.close();
+    }
+    {
+      // Reports only (no .spx): the date is the newest report's
+      const { page, context, seen } = await newPage('ok', { userAgent: MAC_UA, timezoneId: 'Europe/Dublin' });
+      await waitBanner(page);
+      let ok = true;
+      try { await choose(page, { reports: SET_A.reports }); await analyze(page); } catch (e) { ok = false; }
+      const res = ok ? await page.locator('#sys-results').innerText() : '';
+      check('mac ui: reports only -> Newest report from 2026-10-16', /Newest report from 2026-10-16 · read on this device, nothing uploaded/.test(res), res.slice(0, 300));
+      check('mac ui: reports only -> no page errors', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    {
+      // Wrong files, too big, too many
+      const { page, context, seen } = await newPage('ok', { userAgent: MAC_UA });
+      await waitBanner(page);
+      await page.setInputFiles('#sys-file-mac-spx', path.join(here, '..', 'fixtures', 'sys', 'battery-report.html'), { timeout: 3000 }).catch(() => {});
+      await settled(page, 'spx');
+      const win = await msg(page, 'spx');
+      check('mac ui: Windows battery report in step 1 -> not System Information', /doesn.t look like a System Information \(\.spx\) file\.$/.test(win.trim()), win);
+      await page.setInputFiles('#sys-file-mac-spx', MFX(SET_A.reports[2]), { timeout: 3000 }).catch(() => {});
+      await settled(page, 'spx');
+      const ips = await msg(page, 'spx');
+      check('mac ui: crash report in step 1 -> use step 2', /doesn.t look like a System Information \(\.spx\) file\. It looks like a crash report; use step 2\./.test(ips), ips);
+      await page.setInputFiles('#sys-file-mac-spx', MFX('sysinfo-text.txt'), { timeout: 3000 }).catch(() => {});
+      await settled(page, 'spx');
+      const txt = await msg(page, 'spx');
+      check('mac ui: text export in step 1 -> choose File > Save', /This is the text version\. In System Information choose File > Save… instead; it saves a \.spx file\./.test(txt), txt);
+      await page.setInputFiles('#sys-file-mac-crash', MFX('silicon.spx'), { timeout: 3000 }).catch(() => {});
+      await settled(page, 'crash');
+      const spxIn2 = await msg(page, 'crash');
+      check('mac ui: .spx in step 2 -> none is a report, use step 1', /^None of these files is a crash or panic report\. Look for names ending in \.panic, \.ips or \.crash\. One of them looks like the System Information file; use step 1\.$/.test(spxIn2.trim()), spxIn2);
+      await page.click('#sys-mac-analyze', { timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(200);
+      check('mac ui: only unusable files -> nothing could be read, no results', /Nothing could be read/.test(await page.locator('#sys-mac-status').innerText().catch(() => '')) &&
+        !(await page.locator('#sys-results').isVisible().catch(() => true)));
+      await page.setInputFiles('#sys-file-mac-spx', { name: 'big.spx', mimeType: 'application/xml', buffer: Buffer.alloc(41 * 1024 * 1024, 0x20) }, { timeout: 10000 }).catch(() => {});
+      await settled(page, 'spx');
+      const big = await msg(page, 'spx');
+      check('mac ui: 41 MB .spx -> too big', /larger than 40 MB/.test(big), big);
+      const one = fs.readFileSync(MFX(SET_A.reports[2]));
+      const many = Array.from({ length: 101 }, () => ({ name: 'crash.ips', mimeType: 'application/octet-stream', buffer: one }));
+      await page.setInputFiles('#sys-file-mac-crash', many, { timeout: 10000 }).catch(() => {});
+      await settled(page, 'crash');
+      const capped = await msg(page, 'crash');
+      check('mac ui: 101 files -> only the first 100 read, 100 app crashes', /100 app crashes/.test(capped) && /Only the first 100 files were read\./.test(capped), capped);
+      check('mac ui: wrong files cause no page error', seen.errors.length === 0, seen.errors);
+      await context.close();
+    }
+    for (const [label, opts, engineName] of [['375 px', { userAgent: MAC_UA, viewport: { width: 375, height: 812 } }, 'chromium'], ['iPhone', devices['iPhone 14'], 'webkit']]) {
+      const eng = engineName === 'webkit' ? await webkit.launch() : browser;
+      try {
+        const { page, context, seen } = await newPage('ok', opts, eng);
+        await waitBanner(page);
+        await page.click('#sys-os-mac', { timeout: 2000 }).catch(() => {});
+        if (engineName === 'webkit') {
+          check('mac ui: on a phone, a line says to do the steps on the Mac', /^Do these steps on the Mac\. You can read them here and open this page on the Mac later\.$/.test((await page.locator('#sys-mac-phone').innerText({ timeout: 2000 }).catch(() => '')).trim()));
+          await page.click('#sys-step-mac-crash .sys-copy', { timeout: 2000 }).catch(() => {});
+          await page.waitForTimeout(100);
+        }
+        let ok = true;
+        try { await choose(page, SET_A); await analyze(page); } catch (e) { ok = false; }
+        check('mac ui: works at ' + label, ok && (await page.locator('#sys-score').innerText()).trim() === '55');
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        check('mac ui: no horizontal scroll at ' + label + ' with the Mac steps open', overflow <= 0, overflow);
+        check('mac ui: no page errors at ' + label, seen.errors.length === 0, seen.errors);
+        await page.locator('#system').screenshot({ path: path.join(shots, engineName === 'webkit' ? 'system-mac-iphone.png' : 'system-mac-375.png') }).catch(() => {});
         await context.close();
       } finally {
         if (eng !== browser) await eng.close();

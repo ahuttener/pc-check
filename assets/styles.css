@@ -382,9 +382,7 @@ h1 {
 .sys-os-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
 .sys-os-btn:hover { border-color: var(--action); }
 .sys-os-btn[aria-pressed="true"] { background: var(--action-strong); color: var(--action-ink); border-color: var(--action-strong); }
-.sys-soon-tag { font-size: 0.75rem; font-weight: 500; padding: 1px 8px; border-radius: 999px; border: 1px dashed currentColor; opacity: 0.85; }
-.sys-soon { margin: 16px 0 0; padding: 12px 16px; border-left: 4px solid var(--info); background: var(--info-soft); border-radius: 0 10px 10px 0; max-width: 72ch; }
-.sys-soon[hidden], .sys-steps[hidden], .sys-results[hidden] { display: none; }
+.sys-steps[hidden], .sys-results[hidden] { display: none; }
 
 .sys-step-list { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .sys-step { display: flex; flex-direction: column; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
@@ -400,6 +398,13 @@ h1 {
 /* Linux: one column of paste boxes, each with its read-only command */
 .sys-paste-list { grid-template-columns: minmax(0, 1fr); }
 .sys-linux .sys-cmd code { font-family: var(--mono); font-size: 0.875rem; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 5px; overflow-wrap: anywhere; }
+/* Mac: two file steps; the folder paths sit inside the sentence with their copy buttons */
+.sys-mac .sys-step-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sys-mac .sys-cmd code { font-family: var(--mono); font-size: 0.875rem; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 5px; overflow-wrap: anywhere; }
+.sys-path { display: inline-flex; vertical-align: middle; max-width: 100%; margin: 4px 0; }
+.sys-path code { flex: 0 1 auto; }
+.sys-mac-phone { margin: 14px 0 0; }
+.sys-mac-phone[hidden] { display: none; }
 .sys-what { margin: 8px 0 0; font-size: 0.9375rem; max-width: 80ch; }
 .sys-readonly { margin: 8px 0 0; font-size: 0.875rem; color: var(--ok); }
 .sys-note { margin: 6px 0 0; font-size: 0.875rem; color: var(--muted); max-width: 80ch; }
@@ -496,7 +501,7 @@ h1 {
   }
   .site-nav { width: 100%; }
   .side { margin-top: 36px; }
-  .sys-step-list { grid-template-columns: minmax(0, 1fr); }
+  .sys-step-list, .sys-mac .sys-step-list { grid-template-columns: minmax(0, 1fr); }
   .ledger-jump { display: inline-block; }
   .intro { padding-bottom: 28px; }
   .foot { padding: 0 16px 32px; }
