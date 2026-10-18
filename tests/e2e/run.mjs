@@ -64,7 +64,7 @@ const RTC_STUB = `(() => {
 })();`;
 
 async function newPage(mode, opts = {}, engine = browser) {
-  const { initScript, speed = 'ok', ...contextOpts } = opts;
+  const { initScript, speed = 'ok', colo = 'DUB', ...contextOpts } = opts;
   const context = await engine.newContext(Object.assign({ locale: 'en-IE' }, contextOpts));
   if (initScript) await context.addInitScript(initScript);
   await context.addInitScript(RTC_STUB);
@@ -104,7 +104,13 @@ async function newPage(mode, opts = {}, engine = browser) {
   await page.route(/speed\.cloudflare\.com\//, async (r) => {
     const url = r.request().url();
     seen.speed.push(url);
-    const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'cf-meta-colo', 'cf-meta-colo': 'DUB' };
+    const headers = { 'Access-Control-Allow-Origin': '*' };
+    if (url.includes('/cdn-cgi/trace')) {
+      seen.trace = (seen.trace || 0) + 1;
+      if (colo === 'fail') return r.fulfill({ status: 503, headers, body: 'down' });
+      const c = colo === 'bad' ? '<b>x</b>' : colo;
+      return r.fulfill({ status: 200, contentType: 'text/plain', headers, body: 'fl=1\nh=speed.cloudflare.com\nip=203.0.113.9\ncolo=' + c + '\nloc=IE\n' });
+    }
     if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: Object.assign({ 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'content-type' }, headers) });
     const bytes = parseInt((url.match(/bytes=(\d+)/) || [])[1] || '0', 10);
     const kind = url.includes('__up') ? 'up' : (bytes > 0 ? 'down' : null);
@@ -118,6 +124,8 @@ async function newPage(mode, opts = {}, engine = browser) {
     try {
       if (speed === 'stall' && bytes >= 1000000 && ++bigAnswered > 6) return await new Promise(() => {}); // never answered
       if (speed === 'down') return await r.fulfill({ status: 503, headers, body: 'down' });
+      // Cloudflare answers 429 (one-hour Retry-After) to big downloads after heavy use from one IP; small ones still work.
+      if (speed === 'limit' && bytes >= 10000000) return await r.fulfill({ status: 429, headers: { 'Retry-After': '3574' }, body: 'x' }); // no CORS header, like the real one
       if (speed === 'slowping' && bytes === 0) await new Promise((res) => setTimeout(res, 1500));
       if (speed === 'slow' && kind) await new Promise((res) => setTimeout(res, 3000));
       await new Promise((res) => setTimeout(res, 20));
@@ -320,6 +328,35 @@ try {
     check('speed: ping 180 ms adds a note', !!r.lag.note && r.lag.note[0] === 'speedPingHigh', r.lag.note);
     check('speed: no samples -> error', r.none === 'error', r.none);
 
+    // Result maths: p90 of 1-second window rates (Cloudflare/Ookla style), with sane fallbacks.
+    const m = await page.evaluate(() => {
+      const R = window.__bsc.speedRates;
+      const steady = [];
+      let b = 0;
+      for (let t = 0; t <= 8000; t += 200) { steady.push({ t, b }); b += (t < 4000 ? 50e6 : 100e6) / 8 * 0.2; }
+      const capped = [{ t: 0, b: 0 }, { t: 200, b: 10e6 }, { t: 400, b: 30e6 }, { t: 600, b: 50e6 }];
+      const stall = [{ t: 0, b: 0 }];
+      for (let t = 200; t <= 8000; t += 200) stall.push({ t, b: 6e6 });
+      const reqs = [];
+      for (let k = 0; k < 4; k++) for (let s0 = k * 200; s0 + 800 <= 6000; s0 += 800) reqs.push({ s: s0, e: s0 + 800, b: 2e6 });
+      return {
+        steady: R.down(steady, 100),
+        capped: R.down(capped, 150),
+        stall: R.down(stall, 100),
+        none: R.down([{ t: 0, b: 0 }, { t: 8000, b: 0 }], null),
+        up: R.up(reqs, 6000),
+        upFew: R.up([{ s: 0, e: 400, b: 250000 }, { s: 0, e: 500, b: 250000 }], 600),
+        upNone: R.up([], 6000)
+      };
+    });
+    check('speed maths: download is the p90 of 1 s windows (50 then 100 Mbps -> ~100)', m.steady.mbps > 95 && m.steady.mbps <= 101 && !m.steady.partial, m.steady);
+    check('speed maths: cap-shortened run uses bytes / time after the first byte', Math.abs(m.capped.mbps - 50e6 * 8 / 0.45 / 1e6) < 1 && !m.capped.partial, m.capped);
+    check('speed maths: stalled run uses everything and is partial', Math.abs(m.stall.mbps - 6e6 * 8 / 7.9 / 1e6) < 0.5 && m.stall.partial, m.stall);
+    check('speed maths: no bytes -> no number', m.none.mbps === null, m.none);
+    check('speed maths: upload spreads each request over its own time (4 x 2 MB / 0.8 s -> ~80 Mbps)', m.up > 76 && m.up < 84, m.up);
+    check('speed maths: upload with too few windows uses all completions', Math.abs(m.upFew - 500000 * 8 / 0.5 / 1e6) < 0.01, m.upFew);
+    check('speed maths: upload with nothing finished -> no number', m.upNone === null, m.upNone);
+
     await context.close();
   }
   {
@@ -338,6 +375,7 @@ try {
     check('speed facts show Mbps, ping and the data centre', facts.includes('Mbps') && facts.includes(' ms') && facts.includes('DUB'), facts);
     check('ledger lists speed.cloudflare.com', (await page.locator('#ledger-list').innerText()).includes('speed.cloudflare.com'));
     check('speed: GO is enabled again', !(await page.locator('#speed-go').isDisabled()));
+    check('speed: data centre read once from /cdn-cgi/trace', seen.trace === 1, seen.trace);
     check('speed: download runs 6 parallel streams', seen.maxDown >= 6 && seen.maxDown <= 6, seen.maxDown);
     check('speed: upload runs 4 parallel streams', seen.maxUp >= 4 && seen.maxUp <= 4, seen.maxUp);
     check('speed facts show the connection count', facts.includes('6 down / 4 up'), facts);
@@ -369,6 +407,25 @@ try {
       document.getElementById('check-speed').getAttribute('data-status') !== 'idle', null, { timeout: 25000 });
     const facts = await page.locator('#check-speed [data-role="facts"]').innerText();
     check('speed: stalled download ends with partial result', Date.now() - t0 < 25000 && /Download/.test(facts) && /Mbps/.test(facts), facts);
+    await context.close();
+  }
+  {
+    for (const colo of ['bad', 'fail']) {
+      const { page, context } = await newPage('ok', { colo });
+      await page.click('#speed-go');
+      await page.waitForFunction(() => !['running', 'idle'].includes(document.getElementById('check-speed').getAttribute('data-status')), null, { timeout: 40000 });
+      const facts = await page.locator('#check-speed [data-role="facts"]').innerText();
+      check('speed: data centre ' + colo + ' -> no data-centre fact, result still ok', (await status(page, 'speed')) === 'ok' && !/data centre/i.test(facts) && !facts.includes('<b>'), facts);
+      await context.close();
+    }
+  }
+  {
+    const { page, context, seen } = await newPage('ok', { speed: 'limit' });
+    await page.click('#speed-go');
+    await page.waitForFunction(() => !['running', 'idle'].includes(document.getElementById('check-speed').getAttribute('data-status')), null, { timeout: 40000 });
+    const big = seen.speed.filter((u) => /bytes=25000000/.test(u)).length;
+    check('speed: 429 on big downloads -> smaller requests still give a result', (await status(page, 'speed')) === 'ok' && seen.speed.some((u) => /__down\?bytes=1000000\b/.test(u)), await status(page, 'speed'));
+    check('speed: after a 429 the big size is not retried per stream', big <= 6, big);
     await context.close();
   }
   {

@@ -1251,7 +1251,8 @@
     upSizes: [250000, 1000000, 2000000],
     upGrowMs: 1500,
     upCapBytes: 50e6,
-    warmupMs: 1500, // TCP ramp-up, left out of the result
+    warmupMs: 750, // TCP ramp-up, left out of the result
+    windowMs: 1000, // results are the p90 of rates over 1 s windows
     sampleMs: 200,
     liveMs: 1000, // the needle shows the rate over the last second
     maxErrors: 3, // a stream stops after this many failures in a row
@@ -1309,20 +1310,33 @@
   function round1(n) { return n === null ? null : Math.round(n * 10) / 10; }
   function toMbps(bytes, ms) { return ms > 0 ? (bytes * 8) / (ms / 1000) / 1e6 : null; }
 
-  // Download result from the byte counter samples ({t: ms since start, b: bytes so far}): the rate after the warm-up.
-  // A phase that ended early (data cap) skips its first 30 % instead; one with nothing after the warm-up uses everything.
-  function downRate(samples) {
+  function p90(xs) {
+    var s = xs.slice().sort(function (a, b) { return a - b; });
+    return s.length ? s[Math.max(Math.ceil(0.9 * s.length) - 1, 0)] : null;
+  }
+
+  // Download result, reported like Cloudflare's own test and Ookla: the 90th percentile of the rates over 1 s windows
+  // (from the byte counter samples {t: ms since start, b: bytes so far}) that start after the warm-up.
+  // Too short for 3 windows (data cap on a very fast link): bytes / time since the first byte arrived.
+  // Nothing more after the warm-up (a stall): the same, marked partial.
+  function downRate(samples, firstByteT) {
     var last = samples[samples.length - 1];
-    if (!last || last.b === 0 || last.t <= 0) return { mbps: null, fallback: false };
-    var from = Math.min(SPEED.warmupMs, last.t * 0.3);
+    if (!last || last.b === 0) return { mbps: null, partial: false };
+    var from = (firstByteT !== null && firstByteT !== undefined && firstByteT < last.t) ? firstByteT : 0;
+    var whole = toMbps(last.b, last.t - from);
+    var warmB = null;
+    var rates = [];
+    var j = 0;
     for (var i = 0; i < samples.length; i++) {
       var s = samples[i];
-      if (s.t >= from) {
-        if (last.t - s.t >= SPEED.sampleMs / 2 && last.b > s.b) return { mbps: toMbps(last.b - s.b, last.t - s.t), fallback: false };
-        break;
-      }
+      if (warmB === null && s.t >= SPEED.warmupMs) warmB = s.b;
+      if (s.t < SPEED.warmupMs + SPEED.windowMs) continue;
+      while (j + 1 < i && s.t - samples[j + 1].t >= SPEED.windowMs * 0.9) j++;
+      if (s.t > samples[j].t) rates.push(toMbps(s.b - samples[j].b, s.t - samples[j].t));
     }
-    return { mbps: toMbps(last.b, last.t), fallback: true };
+    if (warmB !== null && last.b === warmB && last.t - SPEED.warmupMs >= SPEED.windowMs) return { mbps: whole, partial: true };
+    if (rates.length >= 3) return { mbps: p90(rates), partial: false };
+    return { mbps: whole, partial: false };
   }
 
   // The rate over the last liveMs, for the needle.
@@ -1334,19 +1348,29 @@
     return null;
   }
 
-  // Upload result from finished requests ({t, b}). fetch has no upload progress, so bytes count when a request ends:
-  // bytes finished between the first and the last completion after the warm-up; with fewer than 2, all completions.
-  function upRate(done) {
-    if (!done.length) return null;
-    var after = done.filter(function (d) { return d.t >= SPEED.warmupMs; });
-    if (after.length >= 2 && after[after.length - 1].t > after[0].t) {
+  // Upload result from finished requests ({s: start, e: end, b: bytes}, ms since start). fetch has no upload progress,
+  // so each request's bytes are spread evenly over its own time; then, like the download, the p90 of 1 s windows after
+  // the warm-up, up to tEnd (no window may reach into a request that never finished). Fewer than 3 windows: all bytes
+  // over the time to the last completion.
+  function upRate(reqs, tEnd) {
+    if (!reqs.length) return null;
+    var rates = [];
+    var W = SPEED.windowMs;
+    function inWindow(t) {
       var b = 0;
-      for (var i = 1; i < after.length; i++) b += after[i].b;
-      return toMbps(b, after[after.length - 1].t - after[0].t);
+      reqs.forEach(function (r) {
+        var lo = Math.max(r.s, t - W);
+        var hi = Math.min(r.e, t);
+        if (hi > lo) b += r.b * (hi - lo) / Math.max(r.e - r.s, 1);
+      });
+      return b;
     }
+    for (var t = SPEED.warmupMs + W; t <= tEnd + 0.001; t += SPEED.sampleMs) rates.push(toMbps(inWindow(t), W));
+    if (rates.length >= 3) return p90(rates);
     var all = 0;
-    done.forEach(function (d) { all += d.b; });
-    return toMbps(all, done[done.length - 1].t);
+    var lastE = 0;
+    reqs.forEach(function (r) { all += r.b; if (r.e > lastE) lastE = r.e; });
+    return toMbps(all, lastE);
   }
 
   // Parallel download: every stream loops big requests and adds bytes to one counter as they arrive.
@@ -1356,6 +1380,7 @@
     var size = streaming ? SPEED.downBytes : SPEED.downFallbackBytes;
     var start = now();
     var total = 0;
+    var firstByteT = null;
     var samples = [{ t: 0, b: 0 }];
     var live = SPEED.downStreams;
     var gaveUp = false;
@@ -1372,17 +1397,25 @@
         sample();
         ctl.abort(); // every request still running stops here
         ctl.unlink();
-        var r = downRate(samples);
-        resolve({ mbps: r.mbps, bytes: total, partial: gaveUp || (r.fallback && total > 0) });
+        var r = downRate(samples, firstByteT);
+        resolve({ mbps: r.mbps, bytes: total, partial: gaveUp || r.partial });
       }
       function stream(fails) {
         if (finished) return;
-        speedFetch(SPEED.base + '__down?bytes=' + size, {}, ctl.signal, function (n) {
+        var mine = size;
+        var got = 0;
+        speedFetch(SPEED.base + '__down?bytes=' + mine, {}, ctl.signal, function (n) {
           if (finished) return;
+          got += n;
+          if (firstByteT === null && n > 0) firstByteT = now() - start;
           total += n;
           if (total >= SPEED.downCapBytes) finish();
         }).then(function () { stream(0); }, function () {
           if (finished) return;
+          // Cloudflare rate-limits big downloads after heavy use from one address (429 without CORS headers, so the
+          // page only sees a failed fetch); small ones still work. A big request that fails before its first byte
+          // switches the phase to small requests.
+          if (got === 0 && mine > SPEED.downFallbackBytes) { size = SPEED.downFallbackBytes; stream(fails); return; }
           if (fails + 1 >= SPEED.maxErrors) { gaveUp = true; if (--live === 0) finish(); return; }
           setTimeout(function () { stream(fails + 1); }, SPEED.retryMs);
         });
@@ -1404,47 +1437,78 @@
     var start = now();
     var started = 0;
     var sent = 0;
-    var done = [];
+    var reqs = [];
+    var running = {}; // start times of requests still in flight, by id
+    var nextId = 0;
     var live = SPEED.upStreams;
     var gaveUp = false;
     var closing = false;
     var finished = false;
     var windowTimer = null;
     return new Promise(function (resolve) {
+      // Windows may not reach past a request that is still running: its bytes are not counted yet.
+      function safeEnd() {
+        var end = 0;
+        reqs.forEach(function (r) { if (r.e > end) end = r.e; });
+        Object.keys(running).forEach(function (k) { if (running[k] < end) end = running[k]; });
+        return end;
+      }
       function finish() {
         if (finished) return;
         finished = true;
         clearTimeout(windowTimer);
+        var end = safeEnd();
         ctl.abort();
         ctl.unlink();
-        resolve({ mbps: upRate(done), bytes: sent, partial: gaveUp || closing });
+        resolve({ mbps: upRate(reqs, end), bytes: sent, partial: gaveUp || closing });
       }
       function ended() { if (--live === 0) finish(); }
       function stream(level, fails) {
         if (finished) return;
         if (closing || started >= SPEED.upCapBytes) { ended(); return; }
         var size = SPEED.upSizes[level];
+        var id = nextId++;
+        var s = now() - start;
         started += size;
+        running[id] = s;
         speedFetch(SPEED.base + '__up', { method: 'POST', body: buf.subarray(0, size) }, ctl.signal).then(function (r) {
           if (finished) return;
+          delete running[id];
           sent += size;
-          done.push({ t: now() - start, b: size });
-          var m = upRate(done);
+          reqs.push({ s: s, e: now() - start, b: size });
+          var m = upRate(reqs, safeEnd());
           if (m !== null) onRate(m);
           if (closing) { finish(); return; }
           stream(r.ms < SPEED.upGrowMs ? Math.min(level + 1, top) : level, 0);
         }, function () {
-          started -= size;
           if (finished) return;
+          delete running[id];
+          started -= size;
           if (closing) { ended(); return; }
           if (fails + 1 >= SPEED.maxErrors) { gaveUp = true; ended(); return; }
           setTimeout(function () { stream(0, fails + 1); }, SPEED.retryMs);
         });
       }
       ctl.signal.addEventListener('abort', finish);
-      windowTimer = setTimeout(function () { if (done.length) finish(); else closing = true; }, SPEED.upWindowMs);
+      windowTimer = setTimeout(function () { if (reqs.length) finish(); else closing = true; }, SPEED.upWindowMs);
       for (var i = 0; i < SPEED.upStreams; i++) stream(0, 0);
     });
+  }
+
+  // The data centre comes from Cloudflare's trace text (the speed endpoints do not let the page read their colo
+  // header). Only a three-letter code is kept; anything else, or any failure, means no data-centre fact.
+  function parseColo(text) {
+    var m = /^colo=([^\r\n]*)$/m.exec(String(text).slice(0, 4096));
+    var v = m ? m[1].trim() : '';
+    return /^[A-Z]{3}$/.test(v) ? v : null;
+  }
+  function readColo(signal) {
+    var c = linkedController(signal);
+    var timer = setTimeout(function () { c.abort(); }, SPEED.requestTimeoutMs);
+    return fetch(SPEED.base + 'cdn-cgi/trace', { cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error', signal: c.signal })
+      .then(function (res) { if (!res.ok) throw new Error('http_' + res.status); return res.text(); })
+      .then(parseColo, function () { return null; })
+      .then(function (colo) { clearTimeout(timer); c.unlink(); return colo; });
   }
 
   function measureSpeed(onProgress, signal) {
@@ -1457,10 +1521,10 @@
     var pings = [];
     var pingStart = now();
     onProgress('ping', null);
+    var colo = readColo(signal);
     function ping(i) {
       if (i >= SPEED.pings || aborted() || (i > 0 && now() - pingStart > SPEED.pingBudgetMs)) return Promise.resolve();
       return speedFetch(SPEED.base + '__down?bytes=0', {}, signal).then(function (r) {
-        if (!out.colo) out.colo = r.res.headers.get('cf-meta-colo');
         pings.push(r.ms);
         onProgress('ping', r.ms);
         return ping(i + 1);
@@ -1468,8 +1532,10 @@
     }
 
     return ping(0).catch(function (err) { stop(err); })
-      .then(function () {
+      .then(function () { return colo; })
+      .then(function (c) {
         checkAbort();
+        out.colo = c;
         out.pingMs = round1(median(pings));
         if (pings.length > 1) {
           var diffs = 0;
@@ -2269,6 +2335,8 @@
     evaluateTracking: evaluateTracking,
     evaluateSpeed: evaluateSpeed,
     speed: SPEED,
+    speedRates: { down: downRate, up: upRate },
+    parseColo: parseColo,
     sha1Hex: sha1Hex,
     shortVersion: shortVersion,
     detectOs: detectOs
