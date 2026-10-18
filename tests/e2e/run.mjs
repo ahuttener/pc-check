@@ -5,6 +5,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { androidZips } from '../tools/make-android-zips.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
@@ -202,7 +203,7 @@ try {
     console.log('Language');
     check('html lang = en', (await page.getAttribute('html', 'lang')) === 'en');
     check('no PT/EN switch', (await page.locator('.lang').count()) === 0);
-    for (const f of ['assets/app.js', 'assets/sysreport.js', 'index.html']) {
+    for (const f of ['assets/app.js', 'assets/sysreport.js', 'assets/zipread.js', 'index.html']) {
       const src = fs.readFileSync(path.join(here, '..', '..', f), 'utf8');
       const hit = src.match(/.{0,40}(?:[\u00e3\u00f5\u00e7\u00c3\u00d5\u00c7]|Portugu|pt-BR|CAPACIDADE|Resumo do Sistema|Dispositivo|\bpt:).{0,40}/);
       check('no Portuguese left in ' + f, !hit, hit && hit[0]);
@@ -1115,6 +1116,197 @@ try {
         }, ios['panic-full-2026-10-14-224107.000.ips']);
         check('ios panic: 3 MB of padding after panicString -> still thermal, < 200 ms (' + engineName + ')', b !== null && b.len > 3000000 && b.kind === 'panic' && b.cause === 'thermal' && b.ms < 200, b && [Math.round(b.ms), b]);
         await made.context.close();
+      } finally {
+        if (eng !== browser) await eng.close();
+      }
+    }
+  }
+
+  // 8a-android. Android bug report: the in-browser zip reader (PCZip) and the dumpstate text scanner, on synthetic
+  // fixtures and on zips the generator builds in memory (nothing committed)
+  console.log('Android reader');
+  {
+    const adir = path.join(here, '..', 'fixtures', 'sys', 'android');
+    const ard = (f) => fs.readFileSync(path.join(adir, f), 'utf8');
+    const zips = androidZips(adir);
+    const z64 = {};
+    Object.keys(zips).forEach((k) => { z64[k] = zips[k].toString('base64'); });
+    const MAIN = { a: 'bugreport-shiba-BP3A.250905.014-2026-10-17-21-14-05.txt', b: 'bugreport-a51nsxx-TP1A.220624.014-2026-10-16-19-40-12.txt' };
+    const planted = JSON.parse(ard('PLANTED.json'));
+    const plantedValues = [].concat(...Object.keys(planted).map((k) => planted[k])).map((v) => String(v).toLowerCase())
+      .concat(['/storage/emulated', 'mimei', 'account {', 'ssid']);
+    const input = {
+      z64, png64: PNG.toString('base64'),
+      a: ard('bugreport-a.txt'), b: ard('bugreport-b.txt'), c: ard('bugreport-c.txt'),
+      ips: fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', 'ios', 'MobileSafari-2026-10-15-091244.ips'), 'utf8'),
+      df: fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', 'linux', 'df-ubuntu.txt'), 'utf8')
+    };
+    // Shared page-side helpers (a string, so both evaluate calls below can use them)
+    const HELPERS = `
+      const S = window.PCSys, Z = window.PCZip;
+      const blobOf = (b64) => { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Blob([u]); };
+      const ser = (v) => JSON.parse(JSON.stringify(v, function (k, x) { const raw = this[k]; return raw instanceof Date ? { date: raw.getTime() } : x; }));
+      const readZ = async (b, opts) => {
+        const s = S.androidScanner();
+        const t0 = performance.now();
+        const r = await Z.readBugreport(b, Object.assign({ onText: (x) => s.push(x) }, opts || {}));
+        return { r, ms: performance.now() - t0, scan: r && !r.error ? ser(s.finish()) : null };
+      };`;
+    for (const engineName of ['chromium', 'webkit']) {
+      const eng = engineName === 'webkit' ? await webkit.launch() : browser;
+      const tag = ' (' + engineName + ')';
+      try {
+        const made = await newPage('ok', {}, eng);
+        const r = await made.page.evaluate(new Function('t', 'return (async () => {' + HELPERS + `
+          if (!S || !S.androidScanner || !Z || !Z.readBugreport) return null;
+          const out = {};
+          out.deflate = Z.supportsDeflate();
+          out.consts = [Z.TAIL_MAX, Z.MAX_CD_BYTES, Z.MAX_ENTRIES, Z.MAIN_ENTRY_MAX, S.ANDROID_TEXT_CAP];
+          const P = S.parseAndroidBugreport;
+          out.A = ser(P(t.a)); out.B = ser(P(t.b)); out.C = ser(P(t.c));
+          out.local = {
+            aTime: new Date(2026, 9, 17, 21, 14, 5).getTime(), aFirst: new Date(2026, 9, 15, 8, 2, 11, 340).getTime(),
+            aLast: new Date(2026, 9, 17, 20, 59, 1, 204).getTime(), bFirst: new Date(2026, 9, 16, 6, 0, 1, 0).getTime(),
+            bLast: new Date(2026, 9, 16, 19, 39, 58, 121).getTime()
+          };
+          const whole = JSON.stringify(out.A);
+          out.chunks = [1, 7, 4096].map((n) => {
+            const s = S.androidScanner();
+            for (let i = 0; i < t.a.length; i += n) s.push(t.a.slice(i, i + n));
+            return JSON.stringify(ser(s.finish())) === whole;
+          });
+          const yr = P('== dumpstate: 2026-01-02 08:00:00\\n------ EVENT LOG (logcat -b events) ------\\n' +
+            '12-31 23:00:00.000  1000  1712  2290 I am_crash: [0,1,com.example.one,0,E,M,F,1,0]\\n' +
+            '01-03 09:00:00.000  1000  1712  2290 I am_crash: [0,2,com.example.two,0,E,M,F,1,0]\\n');
+          out.years = yr.events ? yr.events.crashes.map((c) => c.time.getFullYear()) : null;
+          const causes = ['kernel_panic', 'kernel_panic,sysrq', 'watchdog,sdm', 'reboot,thermal', 'shutdown,thermal,battery', 'reboot,longkey',
+            'hard,longkey,master_dc', 'hard,hw_reset', 'warm,s1_reset', 'reboot', 'reboot,userrequested', 'reboot,ota', 'reboot,shell',
+            'shutdown,battery', 'cold,powerkey', 'bootloader', 'recovery', 'reboot,rescueparty', '', 'kernel_panic,' + 'x'.repeat(287)];
+          out.causes = causes.map((c) => S.androidBootCause(c));
+          out.notReport = [P(t.ips), P(t.df)];
+          const head = t.a.slice(0, t.a.indexOf('\\n', t.a.indexOf('Dumpstate info:')) + 1);
+          const big = head + 'x'.repeat(10000000) + '\\n';
+          let t0 = performance.now();
+          const bigR = P(big);
+          out.long = { ms: performance.now() - t0, lines: bigR.lines, headLines: P(head).lines, time: bigR.time && bigR.time.getTime() };
+
+          // Zip reader: good sets
+          out.good = {};
+          for (const k of ['set-a.zip', 'set-b.zip', 'set-c.zip']) out.good[k] = await readZ(blobOf(t.z64[k]));
+          out.good.text = await readZ(new Blob([t.a]));
+          // Refusals
+          out.bad = {};
+          for (const k of ['encrypted.zip', 'bzip2.zip', 'zip64.zip', 'multidisk.zip', 'truncated.zip', 'cd-too-big.zip', 'no-main.zip',
+            'traversal.zip', 'empty.zip', 'eocd-in-comment.zip', 'liar.zip']) out.bad[k] = await readZ(blobOf(t.z64[k]));
+          out.bad.png = await readZ(blobOf(t.png64));
+          out.bad.zero = await readZ(new Blob([]));
+          const junk = new Uint8Array(200);
+          junk.set([0x50, 0x4b, 0x03, 0x04]);
+          let seed = 12345;
+          for (let i = 4; i < 200; i++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; junk[i] = 0x80 | (seed >> 16) & 0x7f; }
+          out.bad.junk = await readZ(new Blob([junk]));
+          out.listA = await Z.listEntries(blobOf(t.z64['set-a.zip']));
+
+          // Bomb: 30 MiB cap, timer gaps, progress
+          let maxGap = 0, last = performance.now();
+          const timer = setInterval(() => { const now = performance.now(); maxGap = Math.max(maxGap, now - last); last = now; }, 20);
+          const prog = [];
+          const bomb = await readZ(blobOf(t.z64['bomb.zip']), { onProgress: (n) => prog.push([n, performance.now()]) });
+          clearInterval(timer);
+          out.bomb = { r: bomb.r, ms: bomb.ms, time: bomb.scan && bomb.scan.time, maxGap, prog };
+
+          // Never loads the whole file: record the sizes of every whole-blob read
+          const sizes = [];
+          const orig = { ab: Blob.prototype.arrayBuffer, tx: Blob.prototype.text, fab: FileReader.prototype.readAsArrayBuffer, ftx: FileReader.prototype.readAsText };
+          Blob.prototype.arrayBuffer = function () { sizes.push(this.size); return orig.ab.apply(this, arguments); };
+          Blob.prototype.text = function () { sizes.push(this.size); return orig.tx.apply(this, arguments); };
+          FileReader.prototype.readAsArrayBuffer = function (b) { sizes.push(b.size); return orig.fab.apply(this, arguments); };
+          FileReader.prototype.readAsText = function (b) { sizes.push(b.size); return orig.ftx.apply(this, arguments); };
+          const bombBlob = blobOf(t.z64['bomb.zip']);
+          const aBlob = blobOf(t.z64['set-a.zip']);
+          let mains;
+          try {
+            await readZ(aBlob);
+            await readZ(bombBlob);
+          } finally {
+            Blob.prototype.arrayBuffer = orig.ab; Blob.prototype.text = orig.tx;
+            FileReader.prototype.readAsArrayBuffer = orig.fab; FileReader.prototype.readAsText = orig.ftx;
+          }
+          const mainOf = async (b) => { const l = await Z.listEntries(b); return l.entries.filter((e) => /^bugreport-/.test(e.name))[0].compSize; };
+          mains = [await mainOf(aBlob), await mainOf(bombBlob)];
+          out.sizes = { sizes, mains, bombSize: bombBlob.size };
+          return out;
+        })();`), input);
+        check('android reader: PCZip and PCSys.androidScanner exist' + tag, r !== null);
+        if (r) {
+          const A = r.A, B = r.B, C = r.C, L = r.local;
+          const apps = (l) => (l || []).map((x) => x.app);
+          check('android reader: DecompressionStream deflate-raw available' + tag, r.deflate === true);
+          check('android reader: constants' + tag, JSON.stringify(r.consts) === JSON.stringify([65557, 8388608, 30000, 4096, 31457280]), r.consts);
+          check('android scanner: Set A header and properties' + tag, A.kind === 'android' && A.time && A.time.date === L.aTime && A.android === '16' && A.sdk === 36 &&
+            A.securityPatch === '2026-09-05' && A.manufacturer === 'Google' && A.model === 'Pixel 8', A);
+          check('android scanner: Set A boots' + tag, A.boots.length === 4 && A.boots[1].reason === 'kernel_panic' && A.boots[1].time.date === Date.parse('2026-10-10T12:05:00Z') &&
+            A.bootReason === 'reboot,userrequested' && A.kmsgPanic === false, [A.boots, A.bootReason]);
+          check('android scanner: Set A event log' + tag, A.events && JSON.stringify(apps(A.events.crashes)) === JSON.stringify(['com.android.chrome', 'com.example.snapnotes', 'com.example.snapnotes']) &&
+            JSON.stringify(apps(A.events.anrs)) === JSON.stringify(['com.example.snapnotes']) && A.events.first.date === L.aFirst && A.events.last.date === L.aLast, A.events);
+          check('android scanner: Set A fatal, battery, storage' + tag, A.fatal && A.fatal.crashes.length === 1 &&
+            JSON.stringify(A.battery) === JSON.stringify({ health: 2, cycles: null, designMah: 4575, learnedMah: 3900 }) &&
+            JSON.stringify(A.storage) === JSON.stringify({ freeKb: 40000000, totalKb: 128000000 }), [A.fatal, A.battery, A.storage]);
+          check('android scanner: Set B' + tag, B.android === '13' && B.securityPatch === '2026-02-01' && B.manufacturer === 'samsung' && B.model === 'SM-A515F' &&
+            B.boots.length === 5 && B.events === null && B.fatal && JSON.stringify(apps(B.fatal.crashes)) === JSON.stringify(['com.example.snapnotes']) &&
+            B.fatal.first.date === L.bFirst && B.fatal.last.date === L.bLast &&
+            JSON.stringify(B.battery) === JSON.stringify({ health: 3, cycles: 812, designMah: 4000, learnedMah: 2280 }) && B.storage && B.storage.freeKb === 2516582, B);
+          check('android scanner: Set C' + tag, C.boots.length === 0 && C.bootReason === 'reboot' && C.kmsgPanic === true && C.events === null && C.fatal === null &&
+            JSON.stringify(C.battery) === JSON.stringify({ health: null, cycles: null, designMah: null, learnedMah: null }) && C.storage === null && C.android === '15', C);
+          check('android scanner: same result in 1, 7 and 4,096-character chunks' + tag, r.chunks.every(Boolean), r.chunks);
+          check('android scanner: event year inferred from the report date' + tag, JSON.stringify(r.years) === JSON.stringify([2025, 2026]), r.years);
+          check('android boot cause table' + tag, JSON.stringify(r.causes) === JSON.stringify(['kernel_panic', 'kernel_panic', 'watchdog', 'thermal', 'thermal', 'forced', 'forced',
+            'hardware_reset', 'hardware_reset', null, null, null, null, null, null, null, null, null, null, null]), r.causes);
+          const leak = [A, B, C].map((x) => { const s = JSON.stringify(x).toLowerCase(); return plantedValues.filter((p) => s.includes(p)); });
+          check('android parsers keep no identifiers' + tag, leak.every((l) => l.length === 0), leak);
+          check('android scanner: not a bug report' + tag, r.notReport.every((x) => x && x.error === 'not_bugreport'), r.notReport);
+          check('android scanner: one 10,000,000-character line, fast, counted once' + tag, r.long.ms < 2000 && r.long.lines === r.long.headLines + 1 && r.long.time === L.aTime,
+            [Math.round(r.long.ms), r.long.lines, r.long.headLines]);
+          const sameAs = (x, want) => x && x.scan && JSON.stringify(x.scan) === JSON.stringify(want);
+          const ga = r.good['set-a.zip'], gb = r.good['set-b.zip'], gc = r.good['set-c.zip'], gt = r.good.text;
+          check('zip reader: set-a.zip -> main text, deflated, two entries opened' + tag, ga.r.source === 'zip' && ga.r.truncated === false && ga.r.bytes === Buffer.byteLength(input.a, 'utf8') &&
+            JSON.stringify(ga.r.opened) === JSON.stringify(['main_entry.txt', MAIN.a]) && sameAs(ga, A), ga.r);
+          check('zip reader: set-b.zip -> largest root match, stored, padded local header' + tag, gb.r.source === 'zip' && JSON.stringify(gb.r.opened) === JSON.stringify([MAIN.b]) && sameAs(gb, B), gb.r);
+          check('zip reader: set-c.zip' + tag, gc.r.source === 'zip' && sameAs(gc, C), gc.r);
+          check('zip reader: plain bugreport text' + tag, gt.r.source === 'text' && gt.r.truncated === false && sameAs(gt, A), gt.r);
+          const opened = [].concat(...[ga, gb, gc].map((x) => x.r.opened || []));
+          check('zip reader: only two entries are opened' + tag, !opened.some((n) => /anr|screenshot|^FS\//.test(n)), opened);
+          const want = { 'encrypted.zip': 'encrypted', 'bzip2.zip': 'unsupported_method', 'zip64.zip': 'zip64', 'multidisk.zip': 'multi_disk', 'truncated.zip': 'damaged',
+            'cd-too-big.zip': 'damaged', 'no-main.zip': 'no_main', 'traversal.zip': 'no_main', 'empty.zip': 'no_main', png: 'not_bugreport', zero: 'empty', junk: 'damaged' };
+          for (const k of Object.keys(want)) {
+            const x = r.bad[k];
+            check('zip reader refuses ' + k + ' -> ' + want[k] + tag, x.r && x.r.error === want[k] && x.ms < 1000, [x.r, Math.round(x.ms)]);
+          }
+          const ec = r.bad['eocd-in-comment.zip'];
+          check('zip reader: EOCD signature inside the comment is ignored' + tag, ec.r.source === 'zip' && sameAs(ec, C) && ec.ms < 1000, ec.r);
+          const li = r.bad['liar.zip'];
+          check('zip reader: lying size -> 1,000 bytes, not truncated' + tag, li.r.bytes === 1000 && li.r.truncated === false, li.r);
+          const bm = r.bomb;
+          const progOk = bm.prog.length >= 1 && bm.prog.every((p, i) => i === 0 || (p[0] > bm.prog[i - 1][0] && p[1] - bm.prog[i - 1][1] >= 990));
+          check('zip reader: bomb stops at 30 MiB' + tag, bm.r.bytes === 31457280 && bm.r.truncated === true && bm.time && bm.time.date === L.aTime && bm.ms < 15000,
+            [bm.r, Math.round(bm.ms)]);
+          check('zip reader: bomb never blocks the page for 500 ms' + tag, bm.maxGap < 500, Math.round(bm.maxGap));
+          check('zip reader: progress rises, at most once per second' + tag, progOk, bm.prog.map((p) => [p[0], Math.round(p[1])]));
+          const sz = r.sizes;
+          check('zip reader: never loads the whole file or the main entry' + tag, sz.sizes.length > 0 && sz.sizes.every((n) => n <= 8454165 && sz.mains.indexOf(n) < 0) &&
+            (sz.bombSize <= 65557 || sz.sizes.indexOf(sz.bombSize) < 0), sz);
+        }
+        await made.context.close();
+
+        // Without DecompressionStream: stored entries still work, deflated ones say so
+        const nd = await newPage('ok', { initScript: 'delete window.DecompressionStream;' }, eng);
+        const q = await nd.page.evaluate(new Function('t', 'return (async () => {' + HELPERS + `
+          if (!Z) return null;
+          return { deflate: Z.supportsDeflate(), a: await readZ(blobOf(t.z64['set-a.zip'])), b: await readZ(blobOf(t.z64['set-b.zip'])), B: ser(S.parseAndroidBugreport(t.b)) };
+        })();`), input);
+        check('zip reader without DecompressionStream: supportsDeflate false, deflated -> no_deflate, stored still read' + tag,
+          q !== null && q.deflate === false && q.a.r.error === 'no_deflate' && q.b.r.source === 'zip' && JSON.stringify(q.b.scan) === JSON.stringify(q.B), q && [q.deflate, q.a.r, q.b.r]);
+        await nd.context.close();
       } finally {
         if (eng !== browser) await eng.close();
       }

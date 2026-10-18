@@ -994,6 +994,325 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Android bug report (the dumpstate main text), scanned as a stream of text chunks: one pending line, bounded lists,
+  // only the sections, services and property keys PC Check needs. Nothing else is kept.
+  // ---------------------------------------------------------------------------
+  var ANDROID_TEXT_CAP = 31457280; // decompressed bytes read from the main entry (30 MiB)
+  var ANDROID_MAX_EVENTS = 10000;  // per list
+  var ANDROID_MAX_BOOTS = 64;
+  var ANDROID_PROP_CHARS = 64;
+  var ANDROID_APP_CHARS = 256;
+  var ANDROID_PROPS = toSet(['ro.build.version.release', 'ro.build.version.release_or_codename', 'ro.build.version.sdk',
+    'ro.build.version.security_patch', 'ro.product.manufacturer', 'ro.product.model', 'sys.boot.reason', 'ro.boot.bootreason',
+    'persist.sys.boot.reason.history']);
+  var BOOT_HISTORY_KEY = 'persist.sys.boot.reason.history';
+  var A_DUMPSTATE = /^== dumpstate: (\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/;
+  var A_FINGERPRINT = /^Build fingerprint: '?[^\/' ]{1,64}\/[^\/' ]{1,64}\/[^:\/' ]{1,64}:([^\/' ]{1,64})\//;
+  var A_PROP = /^\[([A-Za-z0-9._-]{1,128})\]: \[(.*)$/;
+  var A_LOG_TIME = /^(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)\.(\d{3})\s/;
+  var A_BOOT_ENTRY = /^(.{1,64}),(\d{1,12})$/;
+  var A_HEALTH = /^\s*health: (\d{1,2})\s*$/;
+  var A_CYCLES = /(?:^|\s)(?:[Cc]ycle count|mBatteryCycleCount)\s*[:=]\s*(\d{1,7})(?!\d)/;
+  var A_DESIGN = /^\s*Estimated battery capacity: (\d{1,6}) mAh/;
+  var A_LEARNED = /^\s*Last learned battery capacity: (\d{1,6}) mAh/;
+  var A_DATA_FREE = /^Data-Free: (\d{1,15})K \/ (\d{1,15})K total/;
+  var A_SERVICE_PRIORITY = /^(?:CRITICAL|HIGH|NORMAL) /;
+
+  // Unexpected restarts (AOSP bootstat canonical reasons); expected and unknown reasons give null
+  function androidBootCause(reason) {
+    if (typeof reason !== 'string' || !reason || reason.length > 128) return null;
+    var r = reason.toLowerCase();
+    if (/^(?:kernel_panic|panic)\b/.test(r)) return 'kernel_panic';
+    if (/^watchdog\b|,watchdog\b|\bwdog\b|\bwdt\b/.test(r)) return 'watchdog';
+    if (/\bthermal/.test(r)) return 'thermal';
+    if (/\blongkey\b/.test(r)) return 'forced';
+    if (/^(?:hard|warm)\b|\bhw_reset\b|\bpmic\b|\bocp\b|\bundervoltage\b/.test(r)) return 'hardware_reset';
+    return null;
+  }
+
+  function validLocal(y, mo, d, h, mi, s, ms) {
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59) return null;
+    var t = new Date(y, mo - 1, d, h, mi, s, ms);
+    return isNaN(t.getTime()) || t.getDate() !== d || t.getMonth() !== mo - 1 ? null : t;
+  }
+
+  // Log lines carry no year: the report's year, or the year before when the month-day is more than one day after
+  // the report's (calendar days, so the time of day and the time zone cannot tip it).
+  function androidLogTime(m, ref) {
+    var mo = +m[1];
+    var d = +m[2];
+    var r = ref || new Date();
+    var y = r.getFullYear();
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    if (Date.UTC(y, mo - 1, d) - Date.UTC(y, r.getMonth(), r.getDate()) > DAY) y--;
+    return validLocal(y, mo, d, +m[3], +m[4], +m[5], +m[6]);
+  }
+
+  function androidProcess(name) {
+    var s = String(name);
+    var colon = s.indexOf(':');
+    if (colon >= 0) s = s.slice(0, colon);
+    s = s.trim();
+    return s.length > ANDROID_APP_CHARS ? s.slice(0, ANDROID_APP_CHARS) : s;
+  }
+
+  // Field 3 (the process name) of "[User,PID,Process Name,…]"; the free-text fields after it are never kept
+  function bracketField(line, from, index) {
+    var p = from;
+    for (var i = 0; i < index; i++) {
+      p = line.indexOf(',', p);
+      if (p < 0) return null;
+      p++;
+    }
+    var end = line.indexOf(',', p);
+    if (end < 0) end = line.indexOf(']', p);
+    if (end < 0) end = line.length;
+    return line.slice(p, end);
+  }
+
+  function logList() { return { crashes: [], anrs: [], first: null, last: null }; }
+
+  function androidScanner() {
+    var time = null;
+    var seenDumpstate = false;
+    var seenProps = false;
+    var inHeader = true;
+    var fingerprint = null;
+    var props = Object.create(null);
+    var boots = [];
+    var section = '';
+    var service = '';
+    var contKey = null; // a property value spanning lines
+    var kmsgPanic = false;
+    var kmsgWatchdog = false;
+    var events = null;
+    var fatal = null;
+    var fatalPending = null;
+    var battery = { health: null, cycles: null, designMah: null, learnedMah: null };
+    var storage = null;
+    var lines = 0;
+    var pending = '';
+    var over = false; // the pending line passed LINE_CHARS: the rest of it is dropped
+
+    function setProp(key, value) {
+      if (!ANDROID_PROPS[key] || key in props) return;
+      props[key] = value.length && value.length <= ANDROID_PROP_CHARS ? value : null;
+    }
+
+    function bootEntry(s) {
+      if (boots.length >= ANDROID_MAX_BOOTS) return;
+      var m = A_BOOT_ENTRY.exec(s.trim());
+      if (!m) return;
+      var t = new Date(+m[2] * 1000);
+      if (!isNaN(t.getTime())) boots.push({ reason: m[1], time: t });
+    }
+
+    function propLine(line) {
+      if (contKey !== null) {
+        var closes = line.charCodeAt(line.length - 1) === 93; // ]
+        if (contKey === BOOT_HISTORY_KEY) bootEntry(closes ? line.slice(0, -1) : line);
+        if (closes) contKey = null;
+        return;
+      }
+      if (line.charCodeAt(0) !== 91) return; // [
+      var m = A_PROP.exec(line);
+      if (!m) return;
+      var key = m[1];
+      var rest = m[2];
+      var single = rest.charCodeAt(rest.length - 1) === 93;
+      var value = single ? rest.slice(0, -1) : rest;
+      if (key === BOOT_HISTORY_KEY) {
+        if (!(key in props)) {
+          props[key] = true;
+          if (value) bootEntry(value);
+          if (!single) contKey = key;
+        } else if (!single) {
+          contKey = '#';
+        }
+        return;
+      }
+      if (!single) contKey = '#'; // another key's value spans lines: skip to its closing bracket
+      else setProp(key, value);
+    }
+
+    function logTimeOf(line, list) {
+      if (line.charCodeAt(0) < 48 || line.charCodeAt(0) > 57) return null;
+      var m = A_LOG_TIME.exec(line);
+      if (!m) return null;
+      var t = androidLogTime(m, time);
+      if (t && list) {
+        if (list.first === null) list.first = t;
+        list.last = t;
+      }
+      return t;
+    }
+
+    function eventLine(line) {
+      var t = logTimeOf(line, events);
+      if (!t) return;
+      var i = line.indexOf(' am_crash: [');
+      var kind = 'crashes';
+      if (i < 0) {
+        i = line.indexOf(' am_anr: [');
+        kind = 'anrs';
+        if (i < 0) return;
+        i += 10;
+      } else {
+        i += 12;
+      }
+      if (events[kind].length >= ANDROID_MAX_EVENTS) return;
+      var name = bracketField(line, i, 2);
+      if (name !== null) events[kind].push({ time: t, app: androidProcess(name) });
+    }
+
+    function systemLine(line) {
+      var t = logTimeOf(line, fatal);
+      if (!t) return;
+      if (line.indexOf('AndroidRuntime: FATAL EXCEPTION') >= 0) { fatalPending = t; return; }
+      if (fatalPending === null) return;
+      var p = line.indexOf('AndroidRuntime: Process: ');
+      if (p < 0) return;
+      var rest = line.slice(p + 25);
+      var comma = rest.indexOf(',');
+      if (fatal.crashes.length < ANDROID_MAX_EVENTS) fatal.crashes.push({ time: fatalPending, app: androidProcess(comma >= 0 ? rest.slice(0, comma) : rest) });
+      fatalPending = null;
+    }
+
+    function serviceLine(line) {
+      var m;
+      if (service === 'battery') {
+        if (battery.health === null && (m = A_HEALTH.exec(line))) {
+          var h = +m[1];
+          if (h >= 1 && h <= 7) battery.health = h;
+        } else if (battery.cycles === null && line.indexOf('ycle') >= 0 && (m = A_CYCLES.exec(line))) {
+          battery.cycles = +m[1];
+        }
+      } else if (service === 'batterystats') {
+        if (line.indexOf('battery capacity') < 0) return;
+        if (battery.designMah === null && (m = A_DESIGN.exec(line))) battery.designMah = +m[1];
+        else if (battery.learnedMah === null && (m = A_LEARNED.exec(line))) battery.learnedMah = +m[1];
+      } else if (service === 'diskstats') {
+        if (storage === null && line.charCodeAt(0) === 68 && line.startsWith('Data-Free: ') && (m = A_DATA_FREE.exec(line))) {
+          storage = { freeKb: +m[1], totalKb: +m[2] };
+        }
+      }
+    }
+
+    function sectionHeader(line) {
+      // "------ TITLE (command) ------" opens a section; "------ 0.4s was the duration of 'TITLE' ------" closes it
+      var inner = line.slice(7, line.length - 7);
+      service = '';
+      contKey = null;
+      fatalPending = null;
+      if (inner.indexOf(' was the duration of ') >= 0) { section = ''; return; }
+      var paren = inner.indexOf(' (');
+      section = paren >= 0 ? inner.slice(0, paren) : inner;
+      inHeader = false;
+      if (section === 'SYSTEM PROPERTIES') seenProps = true;
+      else if (section === 'EVENT LOG') { if (events === null) events = logList(); }
+      else if (section === 'SYSTEM LOG') { if (fatal === null) fatal = logList(); }
+    }
+
+    function handle(line) {
+      lines++;
+      var n = line.length;
+      if (n && line.charCodeAt(n - 1) === 13) line = line.slice(0, --n);
+      if (!n) return;
+      var c = line.charCodeAt(0);
+      if (c === 45 && n >= 14 && line.startsWith('------ ') && line.endsWith(' ------')) { sectionHeader(line); return; }
+      if (c === 61 && line.startsWith('== dumpstate:')) {
+        seenDumpstate = true;
+        if (time === null) {
+          var d = A_DUMPSTATE.exec(line);
+          if (d) time = validLocal(+d[1], +d[2], +d[3], +d[4], +d[5], +d[6], 0);
+        }
+        return;
+      }
+      if (inHeader) {
+        if (fingerprint === null && c === 66 && line.startsWith('Build fingerprint: ')) {
+          var f = A_FINGERPRINT.exec(line);
+          if (f) fingerprint = f[1];
+        }
+        return;
+      }
+      if (section === 'SYSTEM PROPERTIES') { propLine(line); return; }
+      if (section === 'EVENT LOG') { eventLine(line); return; }
+      if (section === 'SYSTEM LOG') { systemLine(line); return; }
+      if (section === 'LAST KMSG') {
+        if (!kmsgPanic && line.indexOf('Kernel panic - not syncing') >= 0) kmsgPanic = true;
+        if (!kmsgWatchdog && line.toLowerCase().indexOf('watchdog bark') >= 0) kmsgWatchdog = true;
+        return;
+      }
+      if (c === 68 && line.startsWith('DUMP OF SERVICE ')) {
+        var name = line.slice(16);
+        if (name.endsWith(':')) name = name.slice(0, -1);
+        service = name.replace(A_SERVICE_PRIORITY, '');
+        return;
+      }
+      if (c === 45 && line.startsWith('--------- ') && line.indexOf(' was the duration of dumpsys ') >= 0) { service = ''; return; }
+      if (service) serviceLine(line);
+    }
+
+    function push(text) {
+      var s = String(text);
+      var pos = 0;
+      var n = s.length;
+      while (pos < n) {
+        var nl = s.indexOf('\n', pos);
+        var end = nl < 0 ? n : nl;
+        if (!over) {
+          var room = LINE_CHARS - pending.length;
+          if (end - pos > room) { pending += s.slice(pos, pos + room); over = true; }
+          else pending += s.slice(pos, end);
+        }
+        if (nl < 0) break;
+        var line = pending;
+        pending = '';
+        over = false;
+        handle(line);
+        pos = nl + 1;
+      }
+    }
+
+    function finish() {
+      if (pending.length || over) {
+        var line = pending;
+        pending = '';
+        over = false;
+        handle(line);
+      }
+      if (!seenDumpstate && !seenProps) return { error: 'not_bugreport' };
+      var sdk = props['ro.build.version.sdk'];
+      return {
+        kind: 'android',
+        time: time,
+        android: props['ro.build.version.release_or_codename'] || props['ro.build.version.release'] || fingerprint || null,
+        sdk: typeof sdk === 'string' && /^[0-9]{1,3}$/.test(sdk) ? +sdk : null,
+        securityPatch: props['ro.build.version.security_patch'] || null,
+        manufacturer: props['ro.product.manufacturer'] || null,
+        model: props['ro.product.model'] || null,
+        boots: boots.slice(),
+        bootReason: props['sys.boot.reason'] || props['ro.boot.bootreason'] || null,
+        kmsgPanic: kmsgPanic,
+        kmsgWatchdog: kmsgWatchdog,
+        events: events === null ? null : { crashes: events.crashes.slice(), anrs: events.anrs.slice(), first: events.first, last: events.last },
+        fatal: fatal === null ? null : { crashes: fatal.crashes.slice(), first: fatal.first, last: fatal.last },
+        battery: { health: battery.health, cycles: battery.cycles, designMah: battery.designMah, learnedMah: battery.learnedMah },
+        storage: storage === null ? null : { freeKb: storage.freeKb, totalKb: storage.totalKb },
+        lines: lines
+      };
+    }
+
+    return { push: push, finish: finish };
+  }
+
+  function parseAndroidBugreport(text) {
+    var s = androidScanner();
+    s.push(typeof text === 'string' ? text : '');
+    return s.finish();
+  }
+
+  // ---------------------------------------------------------------------------
   // Anonymiser: nothing personal may reach the AI summary or the PDF
   // ---------------------------------------------------------------------------
   function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -2084,6 +2403,8 @@
     MAC_REPORT_HEAD: MAC_REPORT_HEAD, MACOS_MAJORS: MACOS_MAJORS, parseSpx: parseSpx, parseMacReport: parseMacReport,
     evaluateMac: evaluateMac,
     IOS_REPORT_HEAD: IOS_REPORT_HEAD, IOS_MAJORS: IOS_MAJORS, parseIosReport: parseIosReport, uniqueIosReports: uniqueIosReports,
-    evaluateIos: evaluateIos
+    evaluateIos: evaluateIos,
+    ANDROID_TEXT_CAP: ANDROID_TEXT_CAP, androidScanner: androidScanner, parseAndroidBugreport: parseAndroidBugreport,
+    androidBootCause: androidBootCause
   };
 })();
