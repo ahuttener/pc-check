@@ -1,0 +1,65 @@
+{
+  "Google Chrome Helper (Renderer)-2026-10-15-091244.ips": {
+    "kind": "crash",
+    "time": "2026-10-15T08:12:44.000Z",
+    "app": "Google Chrome Helper (Renderer)",
+    "exception": "EXC_BAD_ACCESS"
+  },
+  "Google Chrome Helper (Renderer)-2026-10-16-200103.ips": {
+    "kind": "crash",
+    "time": "2026-10-16T19:01:03.000Z",
+    "app": "Google Chrome Helper (Renderer)",
+    "exception": "EXC_BAD_ACCESS"
+  },
+  "JetsamEvent-2026-10-17-130512.ips": {
+    "kind": "other"
+  },
+  "Kernel-2026-08-20-101500.panic": {
+    "kind": "panic",
+    "time": "2026-08-20T09:15:00.000Z",
+    "cause": "data_abort",
+    "causeLine": "Kernel trap at 0xffffff7f9a1b2c3d, type 14=page fault, registers:",
+    "extensions": []
+  },
+  "Kernel-2026-10-09-213301.panic": {
+    "kind": "panic",
+    "time": "2026-10-09T20:33:01.000Z",
+    "cause": "cpu_error",
+    "causeLine": "x86 CPU CATERR detected",
+    "extensions": [
+      "com.paragon-software.filesystems.ntfs"
+    ]
+  },
+  "Microsoft Word-2026-10-12-110204.ips": {
+    "kind": "crash",
+    "time": "2026-10-12T10:02:04.000Z",
+    "app": "Microsoft Word",
+    "exception": "EXC_CRASH"
+  },
+  "Microsoft Word-2026-10-16-153012.ips": {
+    "kind": "crash",
+    "time": "2026-10-16T14:30:12.000Z",
+    "app": "Microsoft Word",
+    "exception": "EXC_CRASH"
+  },
+  "Safari_2026-10-01-090909_Priyas-iMac.crash": {
+    "kind": "crash",
+    "time": "2026-10-01T08:09:09.123Z",
+    "app": "Safari",
+    "exception": "EXC_BAD_ACCESS"
+  },
+  "panic-full-2026-10-02-081533.0001.panic": {
+    "kind": "panic",
+    "time": "2026-10-02T07:15:33.000Z",
+    "cause": "data_abort",
+    "causeLine": "Kernel data abort. at pc 0xfffffe0028b2c4e0, lr 0xfffffe0028b2c4a8 (saved state: 0xfffffe8a2c3d3f60)",
+    "extensions": []
+  },
+  "panic-full-2026-10-14-224107.0002.panic": {
+    "kind": "panic",
+    "time": "2026-10-14T21:41:07.000Z",
+    "cause": "watchdog",
+    "causeLine": "watchdog timeout: no checkins from watchdogd in 92 seconds (17 total checkins since monitoring last enabled)",
+    "extensions": []
+  }
+}
