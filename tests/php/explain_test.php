@@ -83,5 +83,47 @@ foreach ($files as $f) {
     unlink($f);
 }
 
+// Configuration file formats (the live grcaudit-config.php cannot be inspected, so all common ones work).
+$tmpDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'bsc-config-' . mt_rand(100000, 999999);
+mkdir($tmpDir);
+$write = function ($name, $php) use ($tmpDir) {
+    $f = $tmpDir . DIRECTORY_SEPARATOR . $name;
+    file_put_contents($f, $php);
+    return $f;
+};
+$load = function ($file) {
+    ob_start();
+    $c = bsc_explain_load_config($file);
+    $printed = ob_get_clean();
+    return array($c, $printed);
+};
+list($c, $printed) = $load($write('array.php', "<?php\nreturn array('ANTHROPIC_API_KEY' => ' sk-ant-array-123 ', 'LLM_MODEL' => 'claude-sonnet-5-5', 'DAILY_LIMIT' => 150);\n"));
+t('config: return array -> key (trimmed) and model', $c['key'] === 'sk-ant-array-123' && $c['model'] === 'claude-sonnet-5-5');
+t('config: nothing printed', $printed === '');
+list($c) = $load($write('short.php', "<?php\nreturn ['ANTHROPIC_API_KEY' => 'sk-ant-short-1'];\n"));
+t('config: GRC Audit sample format (short array, no model) -> key, default model', $c['key'] === 'sk-ant-short-1' && $c['model'] === 'claude-haiku-5-5');
+list($c) = $load($write('vars.php', "<?php\n\$ANTHROPIC_API_KEY = 'sk-ant-vars-456';\n\$LLM_MODEL = 'claude-opus-5-5';\n"));
+t('config: variables -> key and model', $c['key'] === 'sk-ant-vars-456' && $c['model'] === 'claude-opus-5-5');
+t('config: variables do not leak into the global scope', !isset($GLOBALS['ANTHROPIC_API_KEY']));
+list($c) = $load($write('cfgvar.php', "<?php\n\$config = array('ANTHROPIC_API_KEY' => 'sk-ant-cfg-1');\n"));
+t('config: $config array variable -> key', $c['key'] === 'sk-ant-cfg-1');
+list($c, $printed) = $load($write('noisy.php', "stray text before the tag\n<?php\nreturn array('ANTHROPIC_API_KEY' => 'sk-ant-noisy-1');\n?>\ntrailing sk-ant-noisy-1\n"));
+t('config: stray output in the file is never echoed', $printed === '' && $c['key'] === 'sk-ant-noisy-1');
+list($c) = $load($write('placeholder.php', "<?php\nreturn array('ANTHROPIC_API_KEY' => 'sk-ant-xxxxxxxx-REPLACE-ME');\n"));
+t('config: REPLACE-ME placeholder -> not configured', $c['key'] === '');
+list($c) = $load($write('badmodel.php', "<?php\nreturn array('ANTHROPIC_API_KEY' => 'k1', 'LLM_MODEL' => 'Bad Model; drop');\n"));
+t('config: invalid model -> default model', $c['model'] === 'claude-haiku-5-5');
+list($c) = $load($tmpDir . DIRECTORY_SEPARATOR . 'missing.php');
+t('config: missing file -> not configured', $c['key'] === '' && $c['model'] === 'claude-haiku-5-5');
+list($c) = $load($write('empty.php', "<?php\n// nothing here\n"));
+t('config: file without a key -> not configured', $c['key'] === '');
+// define() last: constants cannot be undefined again in this process.
+list($c, $printed) = $load($write('define.php', "<?php\ndefine('ANTHROPIC_API_KEY', 'sk-ant-const-789');\ndefine('LLM_MODEL', 'claude-sonnet-5-5');\n"));
+t('config: define() constants -> key and model', $c['key'] === 'sk-ant-const-789' && $c['model'] === 'claude-sonnet-5-5' && $printed === '');
+foreach ((array) glob($tmpDir . DIRECTORY_SEPARATOR . '*') as $f) {
+    unlink($f);
+}
+rmdir($tmpDir);
+
 echo 'explain: ' . ($failures ? "$failures failed" : 'all passed') . "\n";
 exit($failures ? 1 : 0);

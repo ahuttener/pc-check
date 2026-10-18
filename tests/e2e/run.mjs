@@ -501,7 +501,7 @@ try {
   console.log('System report parsers');
   {
     const fx = (f) => fs.readFileSync(path.join(here, '..', 'fixtures', 'sys', f)).toString('base64');
-    const files = { rel: fx('reliability.xml'), bat: fx('battery-report.html'), msi: fx('msinfo32-head.txt'), pt: fx('msinfo32-pt.txt'), de: fx('msinfo32-de.txt') };
+    const files = { rel: fx('reliability.xml'), relDe: fx('reliability-de.xml'), bat: fx('battery-report.html'), msi: fx('msinfo32-head.txt'), pt: fx('msinfo32-pt.txt'), de: fx('msinfo32-de.txt') };
     const { page, context } = await newPage('ok');
     const r = await page.evaluate((files) => {
       const S = window.PCSys;
@@ -518,6 +518,9 @@ try {
         relGenerated: rel.generated && rel.generated.toISOString().slice(0, 10), relNow: rel.stabilityNow,
         relShutdowns: rel.events ? rel.events.filter((e) => e.problem === 'Shut down unexpectedly').length : -1,
         relMiracast: rel.events ? rel.events.filter((e) => /Miracast/.test(e.source)).length : -1,
+        relUnsupported: rel.unsupportedLanguage === true, relDe: S.parseReliability(text.relDe),
+        relNoEvents: S.parseReliability('<?xml version="1.0"?><RelMonReport TimeGenerated="2026-10-17T10:00:00"><Events/></RelMonReport>'),
+        relDeEval: (() => { const e = S.evaluateWindows({ reliability: S.parseReliability(text.relDe) }, new Date('2026-10-18T09:00:00Z')); return { findings: e.findings.length, reportDate: e.reportDate, shutdowns: e.shutdowns30d }; })(),
         bat, msi, pt: S.parseMsinfo(text.pt), de: S.parseMsinfo(text.de),
         wrong: S.parseReliability(text.bat), wrongBat: S.parseBattery(text.rel), wrongMsi: S.parseMsinfo('hello'),
         bigMs: performance.now() - t0, bigOs: bigParsed.os
@@ -529,6 +532,10 @@ try {
       check('reliability: stability now ~1.97', Math.abs(r.relNow - 1.97) < 0.01, r.relNow);
       check('reliability: unexpected shutdowns parsed', r.relShutdowns > 0, r.relShutdowns);
       check('reliability: MiracastPowerManager crashes parsed', r.relMiracast > 0, r.relMiracast);
+      check('reliability: English report is read (not flagged as another language)', !r.relUnsupported);
+      check('reliability: German report (localised Problem text) -> unsupported language, not a healthy verdict', r.relDe.unsupportedLanguage === true && !r.relDe.events, r.relDe);
+      check('reliability: an unsupported report adds no findings and no date in evaluateWindows', r.relDeEval.findings === 0 && r.relDeEval.reportDate === null && r.relDeEval.shutdowns === null, r.relDeEval);
+      check('reliability: a report with no events at all is still read', Array.isArray(r.relNoEvents.events) && r.relNoEvents.events.length === 0 && !r.relNoEvents.unsupportedLanguage, r.relNoEvents);
       check('battery: health between 0 and 100 and cycles', r.bat.healthPct > 80 && r.bat.healthPct < 100 && r.bat.cycles === 96, r.bat);
       check('battery: design and full capacity in mWh', r.bat.designMWh === 76316 && r.bat.fullMWh === 68979, r.bat);
       check('msinfo: OS, model, CPU, RAM', /Windows 11/.test(r.msi.os) && /Predator/.test(r.msi.model) && /Ultra 7/.test(r.msi.cpu) && r.msi.ramGb === 32, r.msi);
@@ -697,6 +704,22 @@ try {
       await context.close();
     }
     {
+      // The report was saved at 22:38 local time on 17/10. West of UTC that is already 18/10 in UTC:
+      // the dates shown must be the local ones.
+      const { page, context } = await newPage('ok', { userAgent: WIN_UA, timezoneId: 'America/Los_Angeles' });
+      let ok = true;
+      try {
+        await page.setInputFiles('#sys-file-reliability', FX('reliability.xml'), { timeout: 3000 });
+        await page.click('#sys-analyze', { timeout: 3000 });
+        await page.waitForSelector('#sys-results:not([hidden])', { timeout: 10000 });
+      } catch (e) { ok = false; }
+      const step = await page.locator('#sys-step-reliability [data-role="msg"]').innerText({ timeout: 2000 }).catch(() => '');
+      const res = ok ? await page.locator('#sys-results').innerText() : '';
+      check('system: late-evening report keeps its local date (step message)', /saved 2026-10-17/.test(step), step);
+      check('system: late-evening report keeps its local date (results)', ok && /2026-10-17/.test(res) && !/2026-10-18/.test(res), res.slice(0, 400));
+      await context.close();
+    }
+    {
       const { page, context, seen } = await newPage('ok', { userAgent: WIN_UA });
       await page.setInputFiles('#sys-file-reliability', FX('battery-report.html'), { timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(300);
@@ -706,6 +729,11 @@ try {
       await page.waitForTimeout(300);
       const de = await page.locator('#sys-step-msinfo [data-role="msg"]').innerText({ timeout: 2000 }).catch(() => '');
       check('system: other-language report says so', /language PC Check can.t read yet/i.test(de), de);
+      check('system: language message does not promise the crash history works', !/crash history still works/i.test(de), de);
+      await page.setInputFiles('#sys-file-reliability', FX('reliability-de.xml'), { timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      const relDe = await page.locator('#sys-step-reliability [data-role="msg"]').innerText({ timeout: 2000 }).catch(() => '');
+      check('system: German crash history says the language is not readable yet', /language PC Check can.t read yet/i.test(relDe), relDe);
       check('system: wrong file causes no page error', seen.errors.length === 0, seen.errors);
       await context.close();
     }

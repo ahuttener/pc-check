@@ -61,6 +61,30 @@ if (bsc_rate_limit_file($strictBucket, false) === bsc_rate_limit_file($strictBuc
     $failures++;
     fwrite(STDERR, "FAIL: non-strict mode keeps the full IPv6 address\n");
 }
+// An IPv4-mapped IPv6 address (dual-stack servers report IPv4 clients this way) is the IPv4 address,
+// not a /64 shared with every other IPv4 client.
+$_SERVER['REMOTE_ADDR'] = '::ffff:198.51.100.7';
+$mapped = bsc_rate_limit_ip(true);
+$_SERVER['REMOTE_ADDR'] = '::FFFF:198.51.100.8';
+$mappedOther = bsc_rate_limit_ip(true);
+if ($mapped !== '198.51.100.7' || $mappedOther !== '198.51.100.8') {
+    $failures++;
+    fwrite(STDERR, "FAIL: strict: IPv4-mapped IPv6 counts as the IPv4 address, got $mapped / $mappedOther\n");
+}
+$_SERVER['REMOTE_ADDR'] = '::ffff:198.51.100.7';
+$mappedFile = bsc_rate_limit_file($strictBucket, true);
+$_SERVER['REMOTE_ADDR'] = '198.51.100.7';
+if ($mappedFile !== bsc_rate_limit_file($strictBucket, true)) {
+    $failures++;
+    fwrite(STDERR, "FAIL: strict: ::ffff:a.b.c.d and a.b.c.d share one window\n");
+}
+$_SERVER['REMOTE_ADDR'] = '::ffff:198.51.100.7';
+bsc_rate_limit($strictBucket, 1, 60, true);
+$_SERVER['REMOTE_ADDR'] = '::ffff:198.51.100.8';
+if (bsc_rate_limit($strictBucket, 1, 60, true) !== 0) {
+    $failures++;
+    fwrite(STDERR, "FAIL: strict: two IPv4-mapped clients must not share a window\n");
+}
 foreach ((array) glob(bsc_cache_dir() . '/rl/' . $strictBucket . '-*') as $f) {
     unlink($f);
 }

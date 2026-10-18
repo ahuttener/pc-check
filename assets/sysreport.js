@@ -32,6 +32,14 @@
   // ---------------------------------------------------------------------------
   // Reliability Monitor: "Save reliability history" (XML, language-neutral tags)
   // ---------------------------------------------------------------------------
+  // Problem texts of an English Windows (the only language PC Check reads in this report so far).
+  var RELIABILITY_PROBLEMS = ['Stopped working', 'Stopped responding and was closed', 'Stopped responding', 'Hardware error',
+    'Shut down unexpectedly', 'Windows was not properly shut down', 'Failed Windows Update', 'Successful Windows Update'];
+
+  function isKnownProblem(problem) {
+    return RELIABILITY_PROBLEMS.indexOf(problem) !== -1 || /^(Successful|Failed) (application|driver|Windows)\b/.test(problem);
+  }
+
   function parseReliability(text) {
     if (!/<RelMonReport[\s>]/.test(String(text).slice(0, 2000))) return { error: 'not_reliability' };
     var doc = new DOMParser().parseFromString(String(text).replace(/^<\?xml[^>]*\?>/, ''), 'application/xml');
@@ -50,6 +58,11 @@
     var events = Array.prototype.map.call(doc.getElementsByTagName('Event'), function (e) {
       return { time: parseDate(childText(e, 'Time')), impact: childText(e, 'Impact'), source: childText(e, 'Source'), problem: childText(e, 'Problem') };
     }).filter(function (e) { return e.time; });
+
+    // Tags are language-neutral but the Problem text is the Windows display language. If none of the
+    // events reads as a problem we know, the rules below would count nothing and call a crashing PC
+    // healthy, so say the language is not supported instead.
+    if (events.length && !events.some(function (e) { return isKnownProblem(e.problem); })) return { unsupportedLanguage: true };
 
     return {
       generated: generated || (points[0] ? points[0].time : null),
@@ -197,6 +210,14 @@
   var CRASH_PROBLEMS = ['Stopped working', 'Stopped responding and was closed', 'Stopped responding'];
   var SHUTDOWN_PROBLEMS = ['Shut down unexpectedly', 'Windows was not properly shut down'];
 
+  // YYYY-MM-DD in the viewer's time zone: Windows writes local times, and a report saved late in the
+  // evening must not show the next day's UTC date.
+  function localDate(d) {
+    if (!d || isNaN(d.getTime())) return null;
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
   function evaluateWindows(reports, now) {
@@ -209,7 +230,7 @@
       os: null, model: null, ramGb: null, names: (r.names || []).concat(r.msinfo && r.msinfo.names ? r.msinfo.names : []) };
     function add(id, severity, title, detail, fix) { findings.push({ id: id, severity: severity, title: title, detail: detail || '', fix: fix || '' }); }
 
-    var rel = r.reliability && !r.reliability.error ? r.reliability : null;
+    var rel = r.reliability && !r.reliability.error && !r.reliability.unsupportedLanguage ? r.reliability : null;
     if (rel) {
       var gen = rel.generated || at;
       out.reportDate = gen;
@@ -296,7 +317,7 @@
     if (bat) facts.push({ label: 'Battery health', value: bat.healthPct + ' %' + (bat.cycles !== null ? ' (' + plural(bat.cycles, 'cycle', 'cycles') + ')' : '') });
     if (out.stabilityNow !== null) facts.push({ label: 'Stability index', value: out.stabilityNow + ' / 10' });
     if (out.shutdowns30d !== null) facts.push({ label: 'Unexpected shutdowns (30 days)', value: String(out.shutdowns30d) });
-    if (out.reportDate) facts.push({ label: 'Report from', value: out.reportDate.toISOString().slice(0, 10) });
+    if (out.reportDate) facts.push({ label: 'Report from', value: localDate(out.reportDate) });
     facts.forEach(function (f) { f.value = anonymise(f.value, out.names); });
     findings.forEach(function (f) { f.title = anonymise(f.title, out.names); f.detail = anonymise(f.detail, out.names); });
     return out;

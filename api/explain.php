@@ -11,7 +11,6 @@ require __DIR__ . '/_lib.php';
 @ini_set('display_errors', '0');
 
 define('BSC_EXPLAIN_MAX_BODY', 8192);
-define('BSC_EXPLAIN_DEFAULT_MODEL', 'claude-haiku-5-5');
 define('BSC_EXPLAIN_PER_IP_HOUR', 5);
 define('BSC_EXPLAIN_DAILY_CAP', 200);
 
@@ -62,25 +61,20 @@ if ($summary === null) {
 }
 
 // 4. Configuration: ~/domains/cybersecinfo.com/grcaudit-config.php (page is in public_html/pccheck/api/)
-$config = array();
 $configFile = dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'grcaudit-config.php';
 // Tests only: PHP's built-in server (never used in production) may point elsewhere, so the test
 // suite can guarantee there is no key and the paid upstream is never reached.
 if (PHP_SAPI === 'cli-server' && is_string(getenv('BSC_EXPLAIN_CONFIG')) && getenv('BSC_EXPLAIN_CONFIG') !== '') {
     $configFile = getenv('BSC_EXPLAIN_CONFIG');
 }
-if (is_file($configFile)) {
-    $loaded = include $configFile;
-    if (is_array($loaded)) {
-        $config = $loaded;
-    }
-}
-$apiKey = isset($config['ANTHROPIC_API_KEY']) && is_string($config['ANTHROPIC_API_KEY']) ? trim($config['ANTHROPIC_API_KEY']) : '';
-if ($apiKey === '' || stripos($apiKey, 'REPLACE-ME') !== false) {
+// Array, define() or variables: see bsc_explain_load_config(). The placeholder key counts as missing.
+$config = bsc_explain_load_config($configFile);
+$apiKey = $config['key'];
+$model = $config['model'];
+unset($config);
+if ($apiKey === '') {
     bsc_json(503, array('error' => 'not_configured'));
 }
-$model = isset($config['LLM_MODEL']) && is_string($config['LLM_MODEL']) && preg_match('/^[a-z0-9][a-z0-9.\-]{2,63}$/', $config['LLM_MODEL'])
-    ? $config['LLM_MODEL'] : BSC_EXPLAIN_DEFAULT_MODEL;
 
 // 5. Per-IP limit, then 6. the global daily cap (counted only for requests that reach this point)
 $wait = bsc_rate_limit('explain', BSC_EXPLAIN_PER_IP_HOUR, 3600, true);

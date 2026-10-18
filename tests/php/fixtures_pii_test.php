@@ -1,7 +1,9 @@
 <?php
 /**
  * The system-report fixtures come from a real PC. Fail if any personal identifier survived.
- * Forbidden names come from the environment of the machine that made them, so this file holds none.
+ * Forbidden names come from the environment of the machine that runs the test, plus fixed strings that
+ * guard on any machine: the owner's surname and account name, and the banking security modules the
+ * owner's PC has installed (the fixture generator renames them to ExampleApp.exe).
  * Run: php tests/php/fixtures_pii_test.php
  */
 
@@ -13,7 +15,8 @@ if (!$files) {
     exit(1);
 }
 
-$forbidden = array_filter(array(getenv('COMPUTERNAME'), getenv('USERNAME'), 'huttener'));
+$fixed = array('huttener', 'AdrianoCH', 'stico BB', 'Topaz OFD', 'Warsaw', 'GbPlugin');
+$forbidden = array_unique(array_filter(array_merge(array(getenv('COMPUTERNAME'), getenv('USERNAME')), $fixed)));
 foreach ($files as $file) {
     $raw = file_get_contents($file);
     $text = (substr($raw, 0, 2) === "\xFF\xFE") ? mb_convert_encoding(substr($raw, 2), 'UTF-8', 'UTF-16LE') : $raw;
@@ -22,6 +25,10 @@ foreach ($files as $file) {
             $failures++;
             fwrite(STDERR, 'FAIL: ' . basename($file) . " contains a personal name\n");
         }
+    }
+    if (preg_match('/\b(DESKTOP|LAPTOP)-[A-Z0-9]{5,}\b/i', $text)) {
+        $failures++;
+        fwrite(STDERR, 'FAIL: ' . basename($file) . " contains a default Windows computer name\n");
     }
     if (preg_match('/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i', $text)) {
         $failures++;

@@ -280,10 +280,17 @@ function bsc_client_ip()
 function bsc_rate_limit_ip($strict)
 {
     $ip = bsc_client_ip();
-    if ($strict && strpos($ip, ':') !== false) {
+    if (strpos($ip, ':') !== false) {
         $bin = @inet_pton($ip);
         if ($bin !== false && strlen($bin) === 16) {
-            return inet_ntop(substr($bin, 0, 8) . str_repeat(chr(0), 8)) . '/64';
+            // IPv4-mapped (::ffff:a.b.c.d), as dual-stack servers report IPv4 clients: it is that IPv4
+            // address, never a /64 shared by every IPv4 client.
+            if (substr($bin, 0, 12) === str_repeat(chr(0), 10) . "\xFF\xFF") {
+                return inet_ntop(substr($bin, 12));
+            }
+            if ($strict) {
+                return inet_ntop(substr($bin, 0, 8) . str_repeat(chr(0), 8)) . '/64';
+            }
         }
     }
     return $ip;
@@ -382,6 +389,68 @@ function bsc_daily_cap($name, $max)
     flock($fh, LOCK_UN);
     fclose($fh);
     return $allowed;
+}
+
+// ---------------------------------------------------------------------------
+// AI configuration (grcaudit-config.php, shared with GRC Audit)
+// ---------------------------------------------------------------------------
+
+define('BSC_EXPLAIN_DEFAULT_MODEL', 'claude-haiku-5-5');
+
+/**
+ * Reads the API key and model from a PHP config file in any of the common formats:
+ *   return array('ANTHROPIC_API_KEY' => ..., 'LLM_MODEL' => ...);   (GRC Audit's grcaudit-config.sample.php)
+ *   $ANTHROPIC_API_KEY = ...; $LLM_MODEL = ...;   or   $config = array(...);
+ *   define('ANTHROPIC_API_KEY', ...); define('LLM_MODEL', ...);
+ * The file is included inside this function, so its variables stay local, and anything it prints is
+ * discarded, so the key can never reach the response. Returns array('key' => '' when not configured,
+ * 'model' => a valid model name).
+ */
+function bsc_explain_load_config($__bscFile)
+{
+    $__bscFound = array();
+    if (is_string($__bscFile) && $__bscFile !== '' && @is_file($__bscFile)) {
+        ob_start();
+        try {
+            $__bscReturned = include $__bscFile;
+        } catch (\Throwable $__bscError) {
+            $__bscReturned = null;
+        }
+        ob_end_clean();
+        $__bscSources = array();
+        if (is_array($__bscReturned)) {
+            $__bscSources[] = $__bscReturned;
+        }
+        $__bscVars = get_defined_vars();
+        $__bscSources[] = $__bscVars;
+        foreach (array('config', 'CONFIG', 'cfg') as $__bscName) {
+            if (isset($__bscVars[$__bscName]) && is_array($__bscVars[$__bscName])) {
+                $__bscSources[] = $__bscVars[$__bscName];
+            }
+        }
+        $__bscConstants = array();
+        foreach (array('ANTHROPIC_API_KEY', 'LLM_MODEL') as $__bscName) {
+            if (defined($__bscName)) {
+                $__bscConstants[$__bscName] = constant($__bscName);
+            }
+        }
+        $__bscSources[] = $__bscConstants;
+        foreach (array('ANTHROPIC_API_KEY', 'LLM_MODEL') as $__bscName) {
+            foreach ($__bscSources as $__bscSource) {
+                if (isset($__bscSource[$__bscName]) && is_string($__bscSource[$__bscName]) && trim($__bscSource[$__bscName]) !== '') {
+                    $__bscFound[$__bscName] = trim($__bscSource[$__bscName]);
+                    break;
+                }
+            }
+        }
+    }
+    $key = isset($__bscFound['ANTHROPIC_API_KEY']) ? $__bscFound['ANTHROPIC_API_KEY'] : '';
+    if (stripos($key, 'REPLACE-ME') !== false) {
+        $key = '';
+    }
+    $model = isset($__bscFound['LLM_MODEL']) && preg_match('/^[a-z0-9][a-z0-9.\-]{2,63}$/', $__bscFound['LLM_MODEL'])
+        ? $__bscFound['LLM_MODEL'] : BSC_EXPLAIN_DEFAULT_MODEL;
+    return array('key' => $key, 'model' => $model);
 }
 
 // ---------------------------------------------------------------------------

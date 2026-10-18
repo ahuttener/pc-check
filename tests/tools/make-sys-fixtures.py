@@ -17,11 +17,16 @@ COMPUTER = os.environ.get('COMPUTERNAME', '')
 USER = os.environ.get('USERNAME', '')
 
 
+# Installed software that says too much about the owner (banking security modules): replaced by a
+# neutral name. The reports are read as UTF-16, so accented names arrive intact ("Diagnóstico BB").
+PRIVATE_SOURCES = re.compile(r'<Source>(?:Diagn\S*stico BB|Topaz OFD[^<]*|Warsaw[^<]*|GbPlugin[^<]*)</Source>', re.I)
+
+
 def scrub(text):
     for word, repl in ((USER, 'USER'), (COMPUTER, 'PC-NAME')):
         if word:
             text = re.sub(re.escape(word), repl, text, flags=re.I)
-    return text
+    return PRIVATE_SOURCES.sub('<Source>ExampleApp.exe</Source>', text)
 
 
 def read_utf16_or_utf8(path, limit=None):
@@ -67,10 +72,36 @@ for e in wer:
     if seen[src] <= 25:
         wer_kept.append(e)
 
-xml = ('<?xml version="1.0" encoding="utf-16" ?>\n<RelMonReport TimeGenerated="%s">\n\t<GraphData>\n\t\t%s\n\t</GraphData>\n'
-       '\t<Events>\n\t\t<RacEvents>\n\t\t\t%s\n\t\t</RacEvents>\n\t\t<WerEvents>\n\t\t\t%s\n\t\t</WerEvents>\n\t</Events>\n</RelMonReport>\n') % (
-    generated, '\n\t\t'.join(points), '\n\t\t\t'.join(rac), '\n\t\t\t'.join(wer_kept))
-write_utf16(os.path.join(OUT, 'reliability.xml'), scrub(xml))
+
+def rel_xml(pts, rac_events, wer_events):
+    nl2, nl3 = '\n\t\t', '\n\t\t\t'
+    return ('<?xml version="1.0" encoding="utf-16" ?>\n<RelMonReport TimeGenerated="%s">\n\t<GraphData>\n\t\t%s\n\t</GraphData>\n'
+            '\t<Events>\n\t\t<RacEvents>\n\t\t\t%s\n\t\t</RacEvents>\n\t\t<WerEvents>\n\t\t\t%s\n\t\t</WerEvents>\n\t</Events>\n</RelMonReport>\n') % (
+        generated, nl2.join(pts), nl3.join(rac_events), nl3.join(wer_events))
+
+
+write_utf16(os.path.join(OUT, 'reliability.xml'), scrub(rel_xml(points, rac, wer_kept)))
+
+# 1b. Synthetic German reliability history: Problem and State are localised UI text, which PC Check
+# cannot read in German, so the parser must say so instead of reporting a healthy PC.
+REL_DE = [('Stopped responding and was closed', 'Reagiert nicht mehr und wurde geschlossen'),
+          ('Stopped working', 'Funktioniert nicht mehr'), ('Shut down unexpectedly', 'Unerwartet heruntergefahren'),
+          ('Windows was not properly shut down', 'Windows wurde nicht ordnungsgemäß heruntergefahren'),
+          ('Hardware error', 'Hardwarefehler'), ('Failed Windows Update', 'Fehler bei Windows-Update'),
+          ('Successful Windows Update', 'Erfolgreiches Windows-Update'),
+          ('Successful application installation', 'Erfolgreiche Anwendungsinstallation'),
+          ('Successful application reconfiguration', 'Erfolgreiche Neukonfiguration der Anwendung'),
+          ('Report sent', 'Bericht gesendet'), ('Not reported', 'Nicht gemeldet')]
+
+
+def to_de(ev):
+    for a, b in REL_DE:
+        ev = ev.replace('<Problem>%s</Problem>' % a, '<Problem>%s</Problem>' % b).replace('<State>%s</State>' % a, '<State>%s</State>' % b)
+    return ev
+
+
+write_utf16(os.path.join(OUT, 'reliability-de.xml'),
+            scrub(rel_xml(points[:5], [to_de(e) for e in rac[:15]], [to_de(e) for e in wer_kept[:25]])))
 
 # 2. Battery report: replace the computer name and the battery serial number.
 bat = open(os.path.join(SRC, 'battery-report.html'), 'rb').read().decode('utf-8-sig')

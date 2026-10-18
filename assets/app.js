@@ -383,7 +383,7 @@
       sysNotBattery: 'This doesn’t look like a battery report. Pick the battery-report.html file the command saved on your Desktop.',
       sysNotMsinfo: 'This doesn’t look like a System Information export. In msinfo32, use File > Export and pick the .txt file.',
       sysLooksLike: function (step) { return ' It looks like the file for step ' + step + '.'; },
-      sysLanguage: 'This report is in a language PC Check can’t read yet — the crash history still works.',
+      sysLanguage: 'This report is in a language PC Check can’t read yet, so it is left out of the results. Any other report you add still counts.',
       sysTooBig: 'This file is larger than 40 MB, so it is not one of the reports PC Check reads.',
       sysReadError: 'This file could not be read. Try saving it again.',
       sysNeedFile: 'Add at least one report first. The crash history (step 1) tells the most.',
@@ -1452,7 +1452,12 @@
     return null;
   }
 
-  function isoDate(d) { return d && !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : null; }
+  // Local calendar date (the report's own day), not the UTC one.
+  function isoDate(d) {
+    if (!d || isNaN(d.getTime())) return null;
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
 
   function setSysStep(kind, status, msg) {
     state.sys.steps[kind] = status ? { status: status, msg: msg } : null;
