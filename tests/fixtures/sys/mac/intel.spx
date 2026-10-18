@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<dict>
+		<key>_dataType</key>
+		<string>SPHardwareDataType</string>
+		<key>_detailLevel</key>
+		<integer>1</integer>
+		<key>_items</key>
+		<array>
+			<dict>
+				<key>_name</key>
+				<string>hardware_overview</string>
+				<key>SMC_version_system</key>
+				<string>2.46f12</string>
+				<key>boot_rom_version</key>
+				<string>2069.0.0.0.0</string>
+				<key>cpu_type</key>
+				<string>6-Core Intel Core i5</string>
+				<key>current_processor_speed</key>
+				<string>3 GHz</string>
+				<key>l2_cache_core</key>
+				<string>256 KB</string>
+				<key>l3_cache</key>
+				<string>9 MB</string>
+				<key>machine_model</key>
+				<string>iMac19,1</string>
+				<key>machine_name</key>
+				<string>iMac</string>
+				<key>number_processors</key>
+				<integer>6</integer>
+				<key>packages</key>
+				<integer>1</integer>
+				<key>physical_memory</key>
+				<string>16 GB</string>
+				<key>platform_UUID</key>
+				<string>9A8B7C6D-5E4F-4A3B-2C1D-0E9F8A7B6C5D</string>
+				<key>serial_number</key>
+				<string>C02ZK1ABJV3P</string>
+			</dict>
+		</array>
+		<key>_parentDataType</key>
+		<string>SPRootDataType</string>
+		<key>_timeStamp</key>
+		<date>2026-10-18T07:40:00Z</date>
+	</dict>
+	<dict>
+		<key>_dataType</key>
+		<string>SPNetworkDataType</string>
+		<key>_detailLevel</key>
+		<integer>1</integer>
+		<key>_items</key>
+		<array>
+			<dict>
+				<key>_name</key>
+				<string>Ethernet</string>
+				<key>Ethernet</key>
+				<dict>
+					<key>MAC Address</key>
+					<string>38:f9:d3:aa:bb:cc</string>
+				</dict>
+				<key>IPv4</key>
+				<dict>
+					<key>Addresses</key>
+					<array>
+						<string>192.0.2.77</string>
+					</array>
+					<key>Router</key>
+					<string>192.0.2.1</string>
+				</dict>
+				<key>interface</key>
+				<string>en0</string>
+			</dict>
+		</array>
+		<key>_parentDataType</key>
+		<string>SPRootDataType</string>
+		<key>_timeStamp</key>
+		<date>2026-10-18T07:40:00Z</date>
+	</dict>
+	<dict>
+		<key>_dataType</key>
+		<string>SPPowerDataType</string>
+		<key>_detailLevel</key>
+		<integer>1</integer>
+		<key>_items</key>
+		<array>
+			<dict>
+				<key>_name</key>
+				<string>sppower_information</string>
+				<key>AC Power</key>
+				<dict>
+					<key>Display Sleep Timer</key>
+					<integer>10</integer>
+					<key>System Sleep Timer</key>
+					<integer>0</integer>
+				</dict>
+			</dict>
+		</array>
+		<key>_parentDataType</key>
+		<string>SPRootDataType</string>
+		<key>_timeStamp</key>
+		<date>2026-10-18T07:40:00Z</date>
+	</dict>
+	<dict>
+		<key>_dataType</key>
+		<string>SPSoftwareDataType</string>
+		<key>_detailLevel</key>
+		<integer>1</integer>
+		<key>_items</key>
+		<array>
+			<dict>
+				<key>_name</key>
+				<string>os_overview</string>
+				<key>boot_mode</key>
+				<string>normal_boot</string>
+				<key>boot_volume</key>
+				<string>Macintosh HD</string>
+				<key>kernel_version</key>
+				<string>Darwin 22.6.0</string>
+				<key>local_host_name</key>
+				<string>Priya’s iMac</string>
+				<key>os_version</key>
+				<string>macOS 13.7.1 (22H221)</string>
+				<key>secure_vm</key>
+				<string>secure_vm_enabled</string>
+				<key>system_integrity</key>
+				<string>integrity_enabled</string>
+				<key>user_name</key>
+				<string>Priya Shah (pshah)</string>
+			</dict>
+		</array>
+		<key>_parentDataType</key>
+		<string>SPRootDataType</string>
+		<key>_timeStamp</key>
+		<date>2026-10-18T07:40:00Z</date>
+	</dict>
+	<dict>
+		<key>_dataType</key>
+		<string>SPStorageDataType</string>
+		<key>_detailLevel</key>
+		<integer>1</integer>
+		<key>_items</key>
+		<array>
+			<dict>
+				<key>_name</key>
+				<string>Macintosh HD</string>
+				<key>bsd_name</key>
+				<string>disk2s1s1</string>
+				<key>file_system</key>
+				<string>APFS</string>
+				<key>free_space_in_bytes</key>
+				<integer>20002721464</integer>
+				<key>ignore_ownership</key>
+				<string>no</string>
+				<key>mount_point</key>
+				<string>/</string>
+				<key>physical_drive</key>
+				<dict>
+					<key>device_name</key>
+					<string>APPLE HDD ST1000DM003</string>
+					<key>is_internal_disk</key>
+					<string>yes</string>
+					<key>media_name</key>
+					<string>AppleAPFSMedia</string>
+					<key>medium_type</key>
+					<string>rotational</string>
+					<key>protocol</key>
+					<string>SATA</string>
+					<key>smart_status</key>
+					<string>Failing</string>
+				</dict>
+				<key>size_in_bytes</key>
+				<integer>500068036608</integer>
+				<key>volume_uuid</key>
+				<string>7A6B5C4D-3E2F-4A1B-9C8D-7E6F5A4B3C2D</string>
+				<key>writable</key>
+				<string>no</string>
+			</dict>
+			<dict>
+				<key>_name</key>
+				<string>Priya’s Photos</string>
+				<key>bsd_name</key>
+				<string>disk4s2</string>
+				<key>file_system</key>
+				<string>HFS+</string>
+				<key>free_space_in_bytes</key>
+				<integer>1400000000000</integer>
+				<key>ignore_ownership</key>
+				<string>yes</string>
+				<key>mount_point</key>
+				<string>/Volumes/Priya’s Photos</string>
+				<key>physical_drive</key>
+				<dict>
+					<key>device_name</key>
+					<string>WD Elements 25A3</string>
+					<key>is_internal_disk</key>
+					<string>no</string>
+					<key>medium_type</key>
+					<string>rotational</string>
+					<key>protocol</key>
+					<string>USB</string>
+				</dict>
+				<key>size_in_bytes</key>
+				<integer>2000000000000</integer>
+				<key>volume_uuid</key>
+				<string>3D2C1B0A-F9E8-4D7C-A6B5-C4D3E2F1A0B9</string>
+				<key>writable</key>
+				<string>yes</string>
+			</dict>
+		</array>
+		<key>_parentDataType</key>
+		<string>SPRootDataType</string>
+		<key>_timeStamp</key>
+		<date>2026-10-18T07:40:00Z</date>
+	</dict>
+</array>
+</plist>

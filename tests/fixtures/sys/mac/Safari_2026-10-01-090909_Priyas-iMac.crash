@@ -1,0 +1,22 @@
+Process:               Safari [1234]
+Path:                  /Applications/Safari.app/Contents/MacOS/Safari
+Identifier:            com.apple.Safari
+Version:               16.6 (18615.3.12)
+Code Type:             X86-64 (Native)
+Parent Process:        launchd [1]
+Responsible:           Safari [1234]
+User ID:               501
+
+Date/Time:             2026-10-01 09:09:09.123 +0100
+OS Version:            macOS 13.7.1 (22H221)
+Report Version:        12
+Anonymous UUID:        6A1B2C3D-4E5F-6071-8293-A4B5C6D7E8F9
+
+Time Awake Since Boot: 52000 seconds
+
+System Integrity Protection: enabled
+
+Crashed Thread:        0  Dispatch queue: com.apple.main-thread
+
+Exception Type:        EXC_BAD_ACCESS (SIGSEGV)
+Exception Codes:       KERN_INVALID_ADDRESS at 0x0000000000000010

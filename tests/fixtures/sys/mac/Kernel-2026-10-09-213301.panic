@@ -1,0 +1,13 @@
+{"bug_type":"210","timestamp":"2026-10-09 21:33:01.00 +0100","os_version":"macOS 13.7.1 (22H221)","roots_installed":0,"incident_id":"6E7F8091-A2B3-44C5-D6E7-F8091A2B3C4D"}
+{
+  "build" : "macOS 13.7.1 (22H221)",
+  "product" : "iMac19,1",
+  "incident" : "6E7F8091-A2B3-44C5-D6E7-F8091A2B3C4D",
+  "crashReporterKey" : "9b2c3d4e5f60718293a4b5c6d7e8f9012345678a",
+  "date" : "2026-10-09 21:33:01.85 +0100",
+  "panicString" : "panic(cpu 0 caller 0xffffff801a2b3c4d): x86 CPU CATERR detected\nBacktrace (CPU 0), Frame : Return Address\n0xffffffa0b1c2d3e0 : 0xffffff801a2b3c4d \n      Kernel Extensions in backtrace:\n         com.paragon-software.filesystems.ntfs(5.0.4)[A1B2C3D4-E5F6-3A7B-8C9D-0E1F2A3B4C5D]@0xffffff7f9c000000->0xffffff7f9c0fffff\n\nProcess name corresponding to current thread: kernel_task\n\nMac OS version:\n22H221\n\nKernel version:\nDarwin Kernel Version 22.6.0: Thu Sep  5 20:48:48 PDT 2024; root:xnu-8796.141.3~1\/RELEASE_X86_64\nSystem model name: iMac19,1 (Mac-63001698E7A34814)\n",
+  "panicFlags" : "0x0",
+  "processByPid" : {
+    "0" : {"procname" : "kernel_task"}
+  }
+}

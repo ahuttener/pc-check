@@ -7,8 +7,8 @@
  * Run: php tests/php/fixtures_pii_test.php
  */
 
-/** Every e-mail, MAC and IPv4/IPv6 in a Linux fixture must be a planted one. Returns the number of problems. */
-function linux_check($file, $text, $planted)
+/** Every e-mail, MAC and IPv4/IPv6 in a Linux or Mac fixture must be a planted one. Returns the number of problems. */
+function planted_check($file, $text, $planted)
 {
     $bad = 0;
     $name = basename($file);
@@ -51,41 +51,67 @@ if (!$files) {
 
 $fixed = array('huttener', 'AdrianoCH', 'stico BB', 'Topaz OFD', 'Warsaw', 'GbPlugin');
 $forbidden = array_unique(array_filter(array_merge(array(getenv('COMPUTERNAME'), getenv('USERNAME')), $fixed)));
-$linuxDir = $dir . 'linux/';
-$linuxFiles = array();
 $planted = array();
-if (!is_dir($linuxDir) || !is_file($linuxDir . 'PLANTED.json')) {
-    $failures++;
-    fwrite(STDERR, "FAIL: tests/fixtures/sys/linux/ or its PLANTED.json is missing
+$plantedIpv6 = array();
+$groups = array(
+    'linux' => array('dir' => $dir . 'linux/', 'glob' => '*.txt'),
+    'mac' => array('dir' => $dir . 'mac/', 'glob' => '*'),
+);
+$dirFiles = array();
+foreach ($groups as $label => $g) {
+    $dirFiles[$label] = array();
+    $planted[$label] = array();
+    if (!is_dir($g['dir']) || !is_file($g['dir'] . 'PLANTED.json')) {
+        $failures++;
+        fwrite(STDERR, 'FAIL: tests/fixtures/sys/' . $label . "/ or its PLANTED.json is missing
 ");
-} else {
-    $linuxFiles = glob($linuxDir . '*.txt');
-    $decoded = json_decode(file_get_contents($linuxDir . 'PLANTED.json'), true);
+        continue;
+    }
+    foreach (glob($g['dir'] . $g['glob']) as $f) {
+        if (is_file($f) && basename($f) !== 'PLANTED.json') {
+            $dirFiles[$label][] = $f;
+        }
+    }
+    $decoded = json_decode(file_get_contents($g['dir'] . 'PLANTED.json'), true);
     if (!is_array($decoded)) {
         $failures++;
-        fwrite(STDERR, "FAIL: linux/PLANTED.json is not valid JSON
+        fwrite(STDERR, 'FAIL: ' . $label . "/PLANTED.json is not valid JSON
 ");
-    } else {
-        foreach (array('emails', 'macs', 'ips') as $k) {
-            foreach (isset($decoded[$k]) ? $decoded[$k] : array() as $v) {
-                $planted[$k][strtolower($v)] = true;
+        continue;
+    }
+    foreach (array('emails', 'macs', 'ips') as $k) {
+        foreach (isset($decoded[$k]) ? $decoded[$k] : array() as $v) {
+            $planted[$label][$k][strtolower($v)] = true;
+            if ($label === 'mac' && $k === 'ips' && strpos($v, '::') !== false) {
+                $plantedIpv6[] = $v;
             }
         }
     }
 }
-$allFiles = array_merge($files, $linuxFiles);
+$allFiles = array_merge($files, $dirFiles['linux'], $dirFiles['mac']);
 foreach ($allFiles as $file) {
-    $isLinux = strpos($file, $linuxDir) === 0;
+    $label = null;
+    foreach ($groups as $l => $g) {
+        if (strpos($file, $g['dir']) === 0) {
+            $label = $l;
+        }
+    }
     $raw = file_get_contents($file);
-    $text = (substr($raw, 0, 2) === "\xFF\xFE") ? mb_convert_encoding(substr($raw, 2), 'UTF-8', 'UTF-16LE') : $raw;
+    $text = (substr($raw, 0, 2) === "ÿþ") ? mb_convert_encoding(substr($raw, 2), 'UTF-8', 'UTF-16LE') : $raw;
     foreach ($forbidden as $word) {
         if (stripos($text, $word) !== false) {
             $failures++;
-            fwrite(STDERR, 'FAIL: ' . basename($file) . " contains a personal name\n");
+            fwrite(STDERR, 'FAIL: ' . basename($file) . " contains a personal name
+");
         }
     }
-    if ($isLinux) {
-        $failures += linux_check($file, $text, $planted);
+    if ($label !== null) {
+        $failures += planted_check($file, $text, $planted[$label]);
+        if ($label === 'mac' && strpos(str_replace($plantedIpv6, '', $text), '::') !== false) {
+            $failures++;
+            fwrite(STDERR, 'FAIL: ' . basename($file) . " contains '::' outside a planted IPv6 value
+");
+        }
         continue;
     }
     if (preg_match('/\b(DESKTOP|LAPTOP)-[A-Z0-9]{5,}\b/i', $text)) {

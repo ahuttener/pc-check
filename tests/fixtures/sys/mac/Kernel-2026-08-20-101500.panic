@@ -1,0 +1,9 @@
+{"bug_type":"210","timestamp":"2026-08-20 10:15:00.00 +0100","os_version":"macOS 13.7.1 (22H221)","roots_installed":0,"incident_id":"7F8091A2-B3C4-45D6-E7F8-091A2B3C4D5E"}
+panic(cpu 1 caller 0xffffff8012a4b5c6): Kernel trap at 0xffffff7f9a1b2c3d, type 14=page fault, registers:
+CR0: 0x0000000080010033, CR2: 0x0000000000000028, CR3: 0x000000001f2e3000, CR4: 0x00000000003626e0
+Backtrace (CPU 1), Frame : Return Address
+0xffffffa0c1d2e3f0 : 0xffffff8012a4b5c6
+Process name corresponding to current thread: kernel_task
+Mac OS version:
+22H221
+System model name: iMac19,1 (Mac-63001698E7A34814)

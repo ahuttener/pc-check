@@ -1,0 +1,28 @@
+{"app_name":"Google Chrome Helper (Renderer)","timestamp":"2026-10-15 09:12:44.00 +0100","app_version":"130.0.6723.59","slice_uuid":"3c2b1a09-f8e7-36d5-c4b3-a29180f7e6d5","build_version":"6723.59","platform":1,"bundleID":"com.google.Chrome.helper.renderer","share_with_app_devs":0,"is_first_party":0,"bug_type":"309","os_version":"macOS 26.0.1 (25A362)","roots_installed":0,"name":"Google Chrome Helper (Renderer)","incident_id":"3B4C5D6E-7F80-4192-A3B4-C5D6E7F8091A"}
+{
+  "uptime" : 260000,
+  "procRole" : "Background",
+  "version" : 2,
+  "userID" : 501,
+  "deployVersion" : 210,
+  "modelCode" : "Mac14,2",
+  "coalitionID" : 812,
+  "osVersion" : {
+    "train" : "macOS 26.0.1",
+    "build" : "25A362",
+    "releaseType" : "User"
+  },
+  "captureTime" : "2026-10-15 09:12:43.8123 +0100",
+  "incident" : "3B4C5D6E-7F80-4192-A3B4-C5D6E7F8091A",
+  "pid" : 48211,
+  "translated" : false,
+  "cpuType" : "ARM-64",
+  "procName" : "Google Chrome Helper (Renderer)",
+  "procPath" : "\/Applications\/Google Chrome.app\/Contents\/Frameworks\/Google Chrome Framework.framework\/Helpers\/Google Chrome Helper (Renderer).app\/Contents\/MacOS\/Google Chrome Helper (Renderer)",
+  "parentProc" : "Google Chrome",
+  "crashReporterKey" : "8a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+  "exception" : {"codes":"0x0000000000000001, 0x0000000000000000","rawCodes":[1,0],"type":"EXC_BAD_ACCESS","signal":"SIGSEGV","subtype":"KERN_INVALID_ADDRESS at 0x0000000000000000"},
+  "termination" : {"flags":0,"code":11,"namespace":"SIGNAL","indicator":"Segmentation fault: 11","byProc":"exc handler","byPid":48211},
+  "asi" : {"Google Chrome Framework":["Profile: \/Users\/jdoe\/Library\/Application Support\/Google\/Chrome\/Default (jane.doe@example.com)"]},
+  "sip" : "enabled"
+}

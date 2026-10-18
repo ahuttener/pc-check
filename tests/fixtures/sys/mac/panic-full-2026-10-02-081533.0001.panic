@@ -1,0 +1,15 @@
+{"bug_type":"210","timestamp":"2026-10-02 08:15:33.00 +0100","os_version":"macOS 26.0.1 (25A362)","roots_installed":0,"incident_id":"2A3B4C5D-6E7F-4081-9A2B-3C4D5E6F7A8B"}
+{
+  "build" : "macOS 26.0.1 (25A362)",
+  "product" : "Mac14,2",
+  "socId" : "8112",
+  "incident" : "2A3B4C5D-6E7F-4081-9A2B-3C4D5E6F7A8B",
+  "crashReporterKey" : "8a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+  "date" : "2026-10-02 08:15:33.12 +0100",
+  "panicString" : "panic(cpu 2 caller 0xfffffe0027a1c3d4): Kernel data abort. at pc 0xfffffe0028b2c4e0, lr 0xfffffe0028b2c4a8 (saved state: 0xfffffe8a2c3d3f60)\nDebugger message: panic\nOS version: 25A362\nPaniclog version: 14\n\nPanicked task 0xfffffe1b2c3d4e50: 0 pages, 498 threads: pid 0: kernel_task\n",
+  "panicFlags" : "0x902",
+  "processByPid" : {
+    "2214" : {"procname" : "Finder", "path" : "\/System\/Library\/CoreServices\/Finder.app\/Contents\/MacOS\/Finder"},
+    "3307" : {"procname" : "DropSync", "path" : "\/Users\/jdoe\/Applications\/DropSync.app\/Contents\/MacOS\/DropSync"}
+  }
+}
