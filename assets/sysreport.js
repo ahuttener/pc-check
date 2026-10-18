@@ -2360,6 +2360,8 @@
 
   // input: {report: androidScanner().finish() result, truncated?: boolean}. The window is the 30 days before the report
   // time (the "== dumpstate:" line, else the analysis time) up to one day after it.
+  // "once" / "2 times" (Android texts only)
+  function times(n) { return n === 1 ? 'once' : n + ' times'; }
   function evaluateAndroid(input, now) {
     var r = input || {};
     var rep = r.report && r.report.kind === 'android' ? r.report : {};
@@ -2388,9 +2390,10 @@
       reboots30d = restarts.length;
     } else if (typeof rep.bootReason === 'string' || rep.kmsgSeen || rep.kmsgPanic || rep.kmsgWatchdog) {
       var cause = androidBootCause(rep.bootReason);
-      if (!cause && rep.kmsgPanic) cause = 'kernel_panic';
-      else if (!cause && rep.kmsgWatchdog) cause = 'watchdog';
-      if (cause) restarts.push({ cause: cause, time: ref });
+      var kmsgCause = false;
+      if (!cause && rep.kmsgPanic) { cause = 'kernel_panic'; kmsgCause = true; }
+      else if (!cause && rep.kmsgWatchdog) { cause = 'watchdog'; kmsgCause = true; }
+      if (cause) restarts.push({ cause: cause, time: ref, kmsgOnly: kmsgCause });
       reboots30d = restarts.length;
     }
     restarts.sort(function (a, b) { return b.time.getTime() - a.time.getTime(); });
@@ -2449,22 +2452,29 @@
       batteryHealthPct: estimate, batteryCycles: cycles, batteryStatus: status, storageFreePct: storageFreePct,
       truncated: r.truncated === true, reminder: ANDROID_REMINDER, names: [] };
     function add(id, severity, title, detail, fix) { findings.push({ id: id, severity: severity, title: title, detail: detail || '', fix: fix || '' }); }
-    var inLogs = function () { return logDays !== null ? ' in the last ' + plural(logDays, 'day', 'days') + ' of logs' : ' in the logs'; };
+    var inLogs = function () { return logDays !== null ? ' in the last ' + (logDays === 1 ? 'day' : logDays + ' days') + ' of logs' : ' in the logs'; };
 
     if (restarts.length) {
-      var detail = 'Most recent: ' + localDate(restarts[0].time) + '.';
-      ANDROID_REBOOT_CAUSE_ORDER.forEach(function (c) { if (causeCount[c]) detail += ' ' + ANDROID_REBOOT_CAUSE_TEXT[c]; });
+      var detail;
+      if (restarts.length === 1 && restarts[0].kmsgOnly) {
+        // Only the last-kmsg fallback: its time is the report's, not the crash's, so no date
+        detail = restarts[0].cause === 'kernel_panic' ? 'The log from the previous start shows a kernel panic.' :
+          'The log from the previous start shows the system stopped responding and was restarted automatically.';
+      } else {
+        detail = 'Most recent: ' + localDate(restarts[0].time) + '.';
+        ANDROID_REBOOT_CAUSE_ORDER.forEach(function (c) { if (causeCount[c]) detail += ' ' + ANDROID_REBOOT_CAUSE_TEXT[c]; });
+      }
       add('reboots', restarts.length >= 2 ? 'risk' : 'warn',
-        'Your phone restarted by itself ' + plural(restarts.length, 'time', 'times') + ' in 30 days', detail, ANDROID_FIX.reboots);
+        'Your phone restarted by itself ' + times(restarts.length) + ' in 30 days', detail, ANDROID_FIX.reboots);
     }
     if (crashList && crashList.length) {
-      add('crashes', crashList.length >= 3 ? 'warn' : 'info', 'Apps crashed ' + plural(crashList.length, 'time', 'times') + inLogs(),
+      add('crashes', crashList.length >= 3 ? 'warn' : 'info', 'Apps crashed ' + times(crashList.length) + inLogs(),
         'Most crashes: ' + crashApps.slice(0, 3).map(function (a) { return a.name + ' (' + plural(a.count, 'crash', 'crashes') + ')'; }).join('; ') +
         '. Android keeps only a few days of logs, so older crashes are not counted.', ANDROID_FIX.crashes);
     }
     if (anrList && anrList.length) {
-      add('anrs', anrList.length >= 3 ? 'warn' : 'info', 'Apps stopped responding ' + plural(anrList.length, 'time', 'times') + inLogs(),
-        'Most often: ' + anrApps.slice(0, 3).map(function (a) { return a.name + ' (' + plural(a.count, 'time', 'times') + ')'; }).join('; ') + '.', ANDROID_FIX.anrs);
+      add('anrs', anrList.length >= 3 ? 'warn' : 'info', 'Apps stopped responding ' + times(anrList.length) + inLogs(),
+        'Most often: ' + anrApps.slice(0, 3).map(function (a) { return a.name + ' (' + times(a.count) + ')'; }).join('; ') + '.', ANDROID_FIX.anrs);
     }
     var statusSev = status === 'dead' || status === 'failure' ? 'risk' : (status === 'overheat' || status === 'over_voltage' ? 'warn' : null);
     var estimateSev = estimate === null ? null : (estimate < 60 ? 'warn' : (estimate < 80 ? 'info' : null));
@@ -2504,7 +2514,7 @@
     var warns = findings.filter(function (f) { return f.severity === 'warn'; }).length;
     out.score = Math.max(0, 100 - 25 * risks - 10 * warns);
 
-    var logLabel = logDays !== null ? ' (last ' + plural(logDays, 'day', 'days') + ' of logs)' : ' (in the logs)';
+    var logLabel = logDays !== null ? ' (last ' + (logDays === 1 ? 'day' : logDays + ' days') + ' of logs)' : ' (in the logs)';
     if (android !== null) facts.push({ label: 'System', value: 'Android ' + android });
     if (securityPatch !== null) facts.push({ label: 'Security patch', value: securityPatch });
     if (model !== null) facts.push({ label: 'Model', value: model });

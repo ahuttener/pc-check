@@ -1446,12 +1446,12 @@ try {
       const A = r.A, B = r.B, C = r.C;
       const fnd = (e, id) => e.findings.filter((f) => f.id === id)[0];
       check('android set A: platform android, score 80, reboots warn, crashes warn, anrs info', A.platform === 'android' && A.score === 80 && A.ids.join(',') === 'reboots:warn,crashes:warn,anrs:info', [A.score, A.ids]);
-      check('android set A: reboots texts', fnd(A, 'reboots').title === 'Your phone restarted by itself 1 time in 30 days' &&
+      check('android set A: reboots texts', fnd(A, 'reboots').title === 'Your phone restarted by itself once in 30 days' &&
         fnd(A, 'reboots').detail === 'Most recent: 2026-10-10. The Android system crashed (a kernel panic).' && /^Install the latest software update \(open Settings and search for “Software update”\)/.test(fnd(A, 'reboots').fix), fnd(A, 'reboots'));
       check('android set A: crashes texts', fnd(A, 'crashes').title === 'Apps crashed 3 times in the last 3 days of logs' &&
         fnd(A, 'crashes').detail === 'Most crashes: com.example.snapnotes (2 crashes); com.android.chrome (1 crash). Android keeps only a few days of logs, so older crashes are not counted.' &&
         /^Update the app in the Play Store\./.test(fnd(A, 'crashes').fix), fnd(A, 'crashes'));
-      check('android set A: anrs texts', fnd(A, 'anrs').title === 'Apps stopped responding 1 time in the last 3 days of logs' && fnd(A, 'anrs').detail === 'Most often: com.example.snapnotes (1 time).', fnd(A, 'anrs'));
+      check('android set A: anrs texts', fnd(A, 'anrs').title === 'Apps stopped responding once in the last 3 days of logs' && fnd(A, 'anrs').detail === 'Most often: com.example.snapnotes (once).', fnd(A, 'anrs'));
       check('android set A: good news holds 85 %', A.goodNews.length === 1 && A.goodNews[0].title.indexOf('85 %') !== -1, A.goodNews);
       check('android set A: summary JSON is exact', A.summary === '{"platform":"android","android":"16","securityPatch":"2026-09-05","model":"Google Pixel 8","score":80,"findings":[{"id":"reboots","severity":"warn"},{"id":"crashes","severity":"warn"},{"id":"anrs","severity":"info"}],"reboots30d":1,"rebootCauses":[{"name":"kernel_panic","count":1}],"crashes":3,"anrs":1,"topCrashApps":[{"name":"com.example.snapnotes","count":2},{"name":"com.android.chrome","count":1}],"logDays":3,"batteryHealthPct":85,"batteryCycles":null,"batteryStatus":"good","storageFreePct":31}', A.summary);
       check('android set A: facts in order', same(A.facts.map((f) => f.label + ': ' + f.value), ['System: Android 16', 'Security patch: 2026-09-05', 'Model: Google Pixel 8',
@@ -1466,11 +1466,12 @@ try {
         /^Security patch level 2026-02-01\./.test(fnd(B, 'old_patch').detail), [fnd(B, 'storage'), fnd(B, 'old_patch')]);
       check('android set B: reboots detail names forced, kernel panic and thermal in order', /^Most recent: 2026-10-\d\d\. The Android system crashed \(a kernel panic\)\. The phone restarted or switched off because it got too hot\. The power button was held to force a restart, usually because the phone froze\.$/.test(fnd(B, 'reboots').detail) &&
         fnd(B, 'reboots').title === 'Your phone restarted by itself 3 times in 30 days', fnd(B, 'reboots'));
-      check('android set B: crashes from the system log', fnd(B, 'crashes').title === 'Apps crashed 1 time in the last 1 day of logs', fnd(B, 'crashes'));
+      check('android set B: crashes from the system log', fnd(B, 'crashes').title === 'Apps crashed once in the last day of logs', fnd(B, 'crashes'));
+      check('android set B: singular log-day fact label', B.facts.some(f => f.label === 'App crashes (last day of logs)') && !B.facts.some(f => /last 1 day/.test(f.label)), B.facts);
       check('android set B: no good news', B.goodNews.length === 0, B.goodNews);
       check('android set B: summary JSON is exact', B.summary === '{"platform":"android","android":"13","securityPatch":"2026-02-01","model":"samsung SM-A515F","score":15,"findings":[{"id":"reboots","severity":"risk"},{"id":"crashes","severity":"info"},{"id":"battery","severity":"warn"},{"id":"storage","severity":"risk"},{"id":"old_patch","severity":"risk"}],"reboots30d":3,"rebootCauses":[{"name":"forced","count":1},{"name":"kernel_panic","count":1},{"name":"thermal","count":1}],"crashes":1,"anrs":null,"topCrashApps":[{"name":"com.example.snapnotes","count":1}],"logDays":1,"batteryHealthPct":57,"batteryCycles":812,"batteryStatus":"overheat","storageFreePct":4}', B.summary);
       check('android set C: score 80, reboots warn, old_patch warn (104 days)', C.score === 80 && C.ids.join(',') === 'reboots:warn,old_patch:warn' &&
-        fnd(C, 'old_patch').title === 'The security patch is 104 days old' && fnd(C, 'reboots').detail === 'Most recent: 2026-10-17. The Android system crashed (a kernel panic).', [C.ids, C.findings]);
+        fnd(C, 'old_patch').title === 'The security patch is 104 days old' && fnd(C, 'reboots').detail === 'The log from the previous start shows a kernel panic.' && !/Most recent/.test(fnd(C, 'reboots').detail), [C.ids, C.findings]);
       check('android set C: summary JSON is exact', C.summary === '{"platform":"android","android":"15","securityPatch":"2026-07-05","model":"Example Phone X1","score":80,"findings":[{"id":"reboots","severity":"warn"},{"id":"old_patch","severity":"warn"}],"reboots30d":1,"rebootCauses":[{"name":"kernel_panic","count":1}],"crashes":null,"anrs":null,"topCrashApps":[],"logDays":null,"batteryHealthPct":null,"batteryCycles":null,"batteryStatus":null,"storageFreePct":null}', C.summary);
       check('android set A on 1 December: same findings plus old_report 44 days, score 80', r.staleA.ids.join(',') === 'reboots:warn,crashes:warn,anrs:info,old_report:info' &&
         fnd(r.staleA, 'old_report').title === 'The bug report is 44 days old' && fnd(r.staleA, 'old_report').detail === 'Take a new bug report to see the current state.' &&
