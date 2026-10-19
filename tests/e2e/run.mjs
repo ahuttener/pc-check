@@ -1650,7 +1650,26 @@ try {
           volumePrefixed: S.anonymise('/Volumes/[volume]Jane/x'),
           volumeKept: S.anonymise('x (/Volumes/[volume]) 92 % /Volumes/[volume]')
         },
-        volumeWords: S.parseSpx(t.silicon.replace('<string>Jane\u2019s Backup</string>', '<string>Backup</string>')).names
+        volumeWords: S.parseSpx(t.silicon.replace('<string>Jane\u2019s Backup</string>', '<string>Backup</string>')).names,
+        // A computer still named after its model: the model fact and summary keep "MacBook Air"
+        modelNamed: ['MacBook Air', 'MacBook-Air', 'Mac', 'Mac mini (2)'].map((n) => {
+          const spx = S.parseSpx(t.silicon.replace(/(<key>local_host_name<\/key>\s*<string>)[^<]*/, '$1' + n));
+          const e = S.evaluateMac({ spx: spx }, now);
+          return { name: n, model: (e.facts.filter((f) => f.label === 'Model')[0] || {}).value, summary: S.buildSummary(e).model,
+            listed: spx.names.some((v) => typeof v === 'string' && v.toLowerCase() === n.toLowerCase()) };
+        }),
+        intl: [
+          S.anonymise('Ng\u1ecdc\u2019s iPhone synced'),
+          S.anonymise('\u0418\u0432\u0430\u043d\u2019s iPhone synced'),
+          S.anonymise('\u7530\u4e2d\u306eiPhone synced'),
+          S.anonymise('\u5f20\u4f1f\u7684iPad synced'),
+          S.anonymise('\uae40\ubbfc\uc900\uc758 iPhone synced'),
+          S.anonymise('\u039d\u03af\u03ba\u03bf\u03c2\u2019s iPad synced')
+        ],
+        // Demonstratives and pronouns are not names; a Latin name glued to CJK text is still masked; 2-character CJK names
+        cjkKept: [S.anonymise('\u3053\u306e iPhone'), S.anonymise('\u65b0\u7684iPhone'), S.anonymise('\ub0b4 iPhone')],
+        cjkGlued: [S.anonymise('Smith\u306e MacBook', [{ word: 'Smith' }]), S.anonymise('Jane\u7684\u6587\u4ef6', [{ word: 'Jane' }])],
+        cjkShort: S.anonymise('\u7530\u4e2d \u306f', S.parseSpx(t.silicon.replace(/(<key>user_name<\/key>\s*<string>)[^<]*/, '$1\u7530\u4e2d \u592a\u90ce (taro)')).names)
       };
     }, input);
     check('mac rules: evaluateMac is loaded', r !== null);
@@ -1712,6 +1731,11 @@ try {
       check('mac anonymiser: provisioning UDID -> [id]', /\[id\]/.test(x.udid) && !/[0-9A-F]{6,}/i.test(x.udid), x.udid);
       check('mac anonymiser: {word} names are whole words, any case', x.word === '[name] said hi' && x.wordInside === 'Janet' && x.wordCase === '[name] and [name], [name].', [x.word, x.wordInside, x.wordCase]);
       check('mac anonymiser: plain names stay substrings, mixed lists work', x.plain === '[name] and Samsung' && x.mixed === '[name]: [name]' && x.noObjectText === '[object Object] stays', [x.plain, x.mixed, x.noObjectText]);
+      check('mac anonymiser: a computer named after its model keeps the model visible', r.modelNamed.every((m) => m.model === 'MacBook Air (Mac14,2)' && m.summary === 'MacBook Air (Mac14,2)' && !m.listed), r.modelNamed);
+      check('mac anonymiser: Vietnamese, Cyrillic, Greek, Japanese, Chinese and Korean device names masked whole', r.intl.every((v) => v === '[device] synced'), r.intl);
+      check('mac anonymiser: "この iPhone", "新的iPhone", "내 iPhone" stay', r.cjkKept.join('|') === 'この iPhone|新的iPhone|내 iPhone', r.cjkKept);
+      check('mac anonymiser: a Latin name glued to CJK text is masked', r.cjkGlued.join('|') === '[name]の MacBook|[name]的文件', r.cjkGlued);
+      check('mac anonymiser: a 2-character CJK family name is masked', r.cjkShort === '[name] は', r.cjkShort);
       check('mac spx: a generic volume name ("Backup") is not a name', !r.volumeWords.some((n) => typeof n === 'object' && /^backup$/i.test(n.word)), r.volumeWords);
       // Fragments: given names, host-name prefixes, and every 8-character piece of each serial
       const fragments = ['jane', 'priya', 'janes', 'priyas'].concat(...planted.serials.map((sn) => {
@@ -3729,7 +3753,7 @@ try {
         await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
         const report = await page.locator('#report').innerText();
         check('pdf linux: heading says "System report (Linux)"', report.includes('System report (Linux)') && !report.includes('System report (Windows)'), report.slice(0, 300));
-        check('pdf linux: facts under "This PC", never "This phone"', report.includes('This PC') && !report.includes('This phone'), report.slice(-900));
+        check('pdf linux: facts under "This computer", never "This PC" or "This phone"', report.includes('This computer') && !report.includes('This PC') && !report.includes('This phone'), report.slice(-900));
         check('pdf linux: score 25 / 100 and Ubuntu 24.04.1 LTS', /\b25 \/ 100/.test(report) && report.includes('Ubuntu 24.04.1 LTS'), report.slice(0, 600));
         check('pdf linux: "Logs from" date line', /Logs from 2026-10-18/.test(report), report.slice(0, 400));
         check('pdf linux: includes the AI explanation as text', report.includes('Second paragraph: update the drivers.') && (await page.locator('#report b, #report img:not([src*="emblem.png"])').count()) === 0);
@@ -3838,7 +3862,7 @@ try {
         await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
         const report = await page.locator('#report').innerText();
         check('pdf mac: heading says "System report (Mac)"', report.includes('System report (Mac)') && !report.includes('System report (Windows)') && !report.includes('System report (Linux)'), report.slice(0, 300));
-        check('pdf mac: facts under "This PC", never "This phone"', report.includes('This PC') && !report.includes('This phone'), report.slice(-900));
+        check('pdf mac: facts under "This Mac", never "This PC" or "This phone"', report.includes('This Mac') && !report.includes('This PC') && !report.includes('This phone'), report.slice(-900));
         check('pdf mac: score 55 / 100 and macOS 26.0.1', /\b55 \/ 100/.test(report) && report.includes('macOS 26.0.1'), report.slice(0, 600));
         check('pdf mac: "System Information from" date line', /System Information from 2026-10-18/.test(report), report.slice(0, 400));
         check('pdf mac: findings and facts', /kernel panic/i.test(report) && /91\.9 %/.test(report) && /Battery health/.test(report), report.slice(0, 600));

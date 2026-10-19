@@ -523,7 +523,7 @@
   var SPX_TYPES = toSet(['SPHardwareDataType', 'SPSoftwareDataType', 'SPPowerDataType', 'SPStorageDataType']);
   var BATTERY_SERVICE = toSet(['fair', 'poor', 'service recommended', 'replace soon', 'replace now', 'service battery', 'check battery']);
   var PLIST_MAX_DEPTH = 32;
-  var NAME_LETTER = /[A-Za-z\u00C0-\u024F]/g;
+  var NAME_LETTER = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]/g;
 
   function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date); }
   function pstr(v) { return typeof v === 'string' ? v : null; }
@@ -593,6 +593,8 @@
     'data', 'disk', 'drive', 'external', 'external drive', 'external disk', 'volume', 'storage', 'no name', 'time machine',
     'time machine backups', 'recovery', 'preboot', 'update', 'boot camp', 'bootcamp', 'windows', 'shared', 'photos', 'music',
     'media', 'files', 'documents', 'archive', 'work', 'home', 'samsung', 'sandisk', 'seagate', 'lacie', 'kingston']);
+  var CJK_NAME = /^[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]{2,}$/;
+  var GENERIC_MAC = toSet(['mac', 'macbook', 'macbook air', 'macbook pro', 'imac', 'imac pro', 'mac mini', 'mac studio', 'mac pro']);
   function genericKey(name) { return String(name).trim().toLowerCase().replace(/\s+\d+$/, ''); }
 
   // Computer name, user, serials, UUIDs and volume names, kept only so the anonymiser can remove them elsewhere.
@@ -608,6 +610,8 @@
       if (!seen[k]) { seen[k] = true; list.push({ word: s }); }
     }
     var computer = pstr(sw && sw.local_host_name);
+    // A computer still called by its model ("MacBook Air", "Mac mini 2") names nobody, and masking it would hide the model
+    if (computer && GENERIC_MAC[genericKey(computer.replace(/[-_]+/g, ' ').replace(/\s*\(\d+\)$/, ''))]) computer = null;
     if (computer) {
       computer = computer.slice(0, 256);
       add(computer);
@@ -623,9 +627,9 @@
       add(full);
       if (m) add(m[2].trim());
     }
-    if (full) full.split(/[\s,]+/).forEach(function (w) { if (letters(w) >= 4) addWord(w); });
+    if (full) full.split(/[\s,]+/).forEach(function (w) { if (CJK_NAME.test(w)) add(w); else if (letters(w) >= 4) addWord(w); });
     if (computer) {
-      var re = /([A-Za-z\u00C0-\u024F]+)[\u2019']s(?![A-Za-z\u00C0-\u024F])/g;
+      var re = /([A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF]+)[\u2019']s(?![A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF])/g;
       var p;
       while ((p = re.exec(computer)) !== null) if (p[1].length >= 4) addWord(p[1]);
     }
@@ -1341,7 +1345,7 @@
   var NO_NAMES = { list: null, length: -1, re: null, wordRe: null };
   var nameReCache = NO_NAMES;
   // Letters and digits that may not touch a {word} name (no Unicode property escapes: they are ES2018)
-  var WORD_CHARS = 'A-Za-z0-9\u00C0-\u024F';
+  var WORD_CHARS = 'A-Za-z0-9\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF';
 
   function isWordName(n) { return n !== null && typeof n === 'object' && typeof n.word === 'string'; }
 
@@ -1364,7 +1368,7 @@
       }
       var n = names[i] === null || names[i] === undefined ? '' : String(names[i]);
       var key = n.toLowerCase();
-      if (n.length < 3 || seen[key] || picked.length >= ANON_NAME_CAP) continue;
+      if ((n.length < 3 && !CJK_NAME.test(n)) || seen[key] || picked.length >= ANON_NAME_CAP) continue;
       seen[key] = true;
       picked.push(n);
     }
@@ -1385,11 +1389,15 @@
   // the model and copy counter after the device word go with it); device host names ("Janes-iPhone.local");
   // international phone numbers with at least 8 digits (a "+0100" time zone or a "+0x1c" offset never matches).
   var IOS_MOBILE_PATH = /(\/var\/mobile\/)[^"\n]*/g;
-  var DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30} ){0,2}[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F.\-]{0,30}['`\u2018\u2019\u02BC][sS]?\s+(?:[iI][pP][hH][oO][nN][eE]|[iI][pP][aA][dD]|[iI][pP][oO][dD] [tT][oO][uU][cC][hH]|[iI][pP][oO][dD]|[aA][pP][pP][lL][eE] [wW][aA][tT][cC][hH])(?:(?: [0-9]{1,2}e?)? (?:Pro Max|PRO MAX|Pro|PRO|Plus|PLUS|Max|MAX|mini|MINI|Air|AIR|SE)(?: [0-9]{1,2}(?= ?\(\d{1,3}\)|[)\].,;:!?"'\r\n]|$))?| (?:[0-9]{1,2}e?|SE|XR|XS|X)(?= ?\(\d{1,3}\)|[)\].,;:!?"'\r\n]|$))?(?: ?\(\d{1,3}\))?(?![A-Za-z0-9])/g;
+  var DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF])(?:[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF][A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF.\-]{0,30} ){0,2}[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF][A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF.\-]{0,30}['`\u2018\u2019\u02BC][sS]?\s+(?:[iI][pP][hH][oO][nN][eE]|[iI][pP][aA][dD]|[iI][pP][oO][dD] [tT][oO][uU][cC][hH]|[iI][pP][oO][dD]|[aA][pP][pP][lL][eE] [wW][aA][tT][cC][hH])(?:(?: [0-9]{1,2}e?)? (?:Pro Max|PRO MAX|Pro|PRO|Plus|PLUS|Max|MAX|mini|MINI|Air|AIR|SE)(?: [0-9]{1,2}(?= ?\(\d{1,3}\)|[)\].,;:!?"'\r\n]|$))?| (?:[0-9]{1,2}e?|SE|XR|XS|X)(?= ?\(\d{1,3}\)|[)\].,;:!?"'\r\n]|$))?(?: ?\(\d{1,3}\))?(?![A-Za-z0-9])/g;
   // Default device names in other languages ("iPhone de Ana Maria Silva", "iPad von Jan van Dijk", "iPhone di Gio"):
   // up to three capitalised name parts, with a lower-case particle between them, so "iPhone de la maison" stays.
-  var DEVICE_OF_NAME = /(^|[^A-Za-z0-9\u00C0-\u024F])(?:iPhone|iPad|iPod)\s+(?:de|von|di)\s+[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F.\-]{0,30}(?:\s+(?:(?:da|das|de|del|della|der|den|di|do|dos|du|la|le|van|von|zu)\s+)?[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F.\-]{0,30}){0,2}(?![A-Za-z0-9])/g;
-  var DEVICE_HOST = /(^|[^A-Za-z0-9\u00C0-\u024F-])[A-Za-z0-9\u00C0-\u024F-]{1,40}-(?:iPhone|iPad|iPod)(?:-\d{1,3})?(?:\.local)?(?![A-Za-z0-9])/gi;
+  var DEVICE_OF_NAME = /(^|[^A-Za-z0-9\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF])(?:iPhone|iPad|iPod)\s+(?:de|von|di)\s+[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF.\-]{0,30}(?:\s+(?:(?:da|das|de|del|della|der|den|di|do|dos|du|la|le|van|von|zu)\s+)?[A-Z\u00C0-\u00DE][A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF.\-]{0,30}){0,2}(?![A-Za-z0-9])/g;
+  var DEVICE_HOST = /(^|[^A-Za-z0-9\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF-])[A-Za-z0-9\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF-]{1,40}-(?:iPhone|iPad|iPod)(?:-\d{1,3})?(?:\.local)?(?![A-Za-z0-9])/gi;
+  // Japanese, Chinese and Korean default names put the owner first with a possessive particle ("田中のiPhone",
+  // "张伟的iPad", "김민준의 iPhone").
+  // A demonstrative or pronoun before the particle ("この iPhone", "新的iPhone", "내 iPhone") is not a name.
+  var DEVICE_CJK = /(?![\u3053\u305D\u3042\u3069\u8FD9\u90A3\u6211\u4F60\u4ED6\u5979\u60A8\u65B0\u65E7\uC774\uADF8\uC800\uB0B4\uC81C][\u306E\u7684\uC758])[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]{1,8}(?:\u306E|\u7684|\uC758)\s?(?:iPhone|iPad|iPod(?: touch)?)(?![A-Za-z])/g;
   var PHONE_INTL = /\+[1-9][0-9 ().-]{6,20}[0-9]/g;
   // Android: shared-storage and app-data paths up to the end of the quoted value or line; account names
   // ("Account {name=…, type=…}"); serials and phone numbers labelled by their key (lower-case serials the upper-case
@@ -1399,8 +1407,8 @@
   var ANDROID_ACCOUNT = /(\bAccount\s*\{\s*name=)[^,}\n]{1,128}/g;
   var ANDROID_SERIAL = /(\b(?:ro\.(?:boot\.)?serialno|serialno|serial_?number|androidboot\.serialno)\b["'\]]?\s*[:=]\s*\[?["']?)[A-Za-z0-9._-]{4,64}/gi;
   var ANDROID_PHONE_KEY = /(\b(?:mLine1Number|line1Number|mMsisdn|msisdn|phoneNumber|phone_number)\b\s*[=:]\s*["']?)\+?[0-9][0-9 ()-]{3,20}[0-9]/gi;
-  var ANDROID_DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9À-ɏ])(?:[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ.\-]{0,30} ){0,2}[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ.\-]{0,30}['`‘’ʼ]s?\s+(?:Pixel|Galaxy|OnePlus|Xperia|Redmi|Xiaomi|Moto|Nokia|Phone|phone|Tablet|tablet|Tab)(?:\s+(?:[0-9][A-Za-z0-9+]{0,5}|[A-Z][0-9][A-Za-z0-9+]{0,5}|Pro|Plus|Ultra|Lite|FE|XL|5G|mini|Fold|Flip)){0,3}(?![A-Za-z0-9])/g;
-  var ANDROID_DEVICE_HOST = /(^|[^A-Za-z0-9À-ɏ-])[A-Za-z0-9À-ɏ-]{1,40}-(?:Pixel|Galaxy|Phone)(?:-[A-Za-z0-9]{1,8}){0,3}(?:\.local|\.lan)?(?![A-Za-z0-9])/g;
+  var ANDROID_DEVICE_POSSESSIVE = /(^|[^A-Za-z0-9\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF])(?:[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF][A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF.\-]{0,30} ){0,2}[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF][A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF.\-]{0,30}['`‘’ʼ]s?\s+(?:Pixel|Galaxy|OnePlus|Xperia|Redmi|Xiaomi|Moto|Nokia|Phone|phone|Tablet|tablet|Tab)(?:\s+(?:[0-9][A-Za-z0-9+]{0,5}|[A-Z][0-9][A-Za-z0-9+]{0,5}|Pro|Plus|Ultra|Lite|FE|XL|5G|mini|Fold|Flip)){0,3}(?![A-Za-z0-9])/g;
+  var ANDROID_DEVICE_HOST = /(^|[^A-Za-z0-9\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF-])[A-Za-z0-9\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF-]{1,40}-(?:Pixel|Galaxy|Phone)(?:-[A-Za-z0-9]{1,8}){0,3}(?:\.local|\.lan)?(?![A-Za-z0-9])/g;
   var ANDROID_IMEI = /(^|[^0-9A-Za-z.])[0-9]{15}(?![0-9A-Za-z])/g;
   var ANON_MAX_CHARS = 8192; // longer than any title, detail, fact or cause line PC Check builds
 
@@ -1408,7 +1416,7 @@
   // time-zone offset ("13:05:12 +1000 2026", "+1100 (2026)")
   var TZ_TOKEN = /^\+(?:0\d|1[0-4])[0-5]\d(?=\s|$|\))/;
   function maskPhone(m, offset, all) {
-    if (offset > 0 && /[A-Za-z0-9.\u00C0-\u024F]/.test(all.charAt(offset - 1))) return m;
+    if (offset > 0 && /[A-Za-z0-9.\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u1E00-\u1EFF]/.test(all.charAt(offset - 1))) return m;
     if (TZ_TOKEN.test(m)) return m;
     return m.replace(/[^0-9]/g, '').length >= 8 ? '[phone]' : m;
   }
@@ -1446,6 +1454,7 @@
       .replace(DEVICE_POSSESSIVE, '$1[device]')
       .replace(DEVICE_OF_NAME, '$1[device]')
       .replace(DEVICE_HOST, '$1[device]')
+      .replace(DEVICE_CJK, '[device]')
       .replace(PHONE_INTL, maskPhone);
     if (android) {
       s = s

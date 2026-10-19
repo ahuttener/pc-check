@@ -57,13 +57,12 @@ function bsc_is_https_url($url)
     return is_string($url) && stripos($url, 'https://') === 0;
 }
 
-function bsc_http_request($url, $postFields = null)
+/**
+ * The one HTTP client: HTTPS only, certificate checked, no redirects, size cap. $body null means GET.
+ * Returns the response body on HTTP 200, otherwise null. Nothing is logged.
+ */
+function bsc_http_send($url, $headers, $body, $timeout)
 {
-    if (!bsc_is_https_url($url)) {
-        return null;
-    }
-    $body = is_array($postFields) ? http_build_query($postFields, '', '&') : null;
-
     if (function_exists('curl_init')) {
         $buffer = '';
         $tooBig = false;
@@ -75,9 +74,9 @@ function bsc_http_request($url, $postFields = null)
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_TIMEOUT => BSC_TIMEOUT,
+            CURLOPT_TIMEOUT => (int) $timeout,
             CURLOPT_USERAGENT => BSC_USER_AGENT,
-            CURLOPT_HTTPHEADER => array('Accept: application/json'),
+            CURLOPT_HTTPHEADER => $headers,
             CURLOPT_WRITEFUNCTION => function ($handle, $chunk) use (&$buffer, &$tooBig) {
                 if (strlen($buffer) + strlen($chunk) > BSC_MAX_BYTES) {
                     $tooBig = true;
@@ -103,12 +102,11 @@ function bsc_http_request($url, $postFields = null)
 
     $http = array(
         'method' => $body !== null ? 'POST' : 'GET',
-        'timeout' => BSC_TIMEOUT,
+        'timeout' => (int) $timeout,
         'follow_location' => 0,
         'max_redirects' => 0,
         'ignore_errors' => true,
-        'header' => "User-Agent: " . BSC_USER_AGENT . "\r\nAccept: application/json\r\n"
-            . ($body !== null ? "Content-Type: application/x-www-form-urlencoded\r\n" : ''),
+        'header' => 'User-Agent: ' . BSC_USER_AGENT . "\r\n" . implode("\r\n", $headers) . "\r\n",
     );
     if ($body !== null) {
         $http['content'] = $body;
@@ -127,6 +125,21 @@ function bsc_http_request($url, $postFields = null)
     }
     return $data;
 }
+
+function bsc_http_request($url, $postFields = null)
+{
+    if (!bsc_is_https_url($url)) {
+        return null;
+    }
+    $headers = array('Accept: application/json');
+    $body = null;
+    if (is_array($postFields)) {
+        $body = http_build_query($postFields, '', '&');
+        $headers[] = 'Content-Type: application/x-www-form-urlencoded';
+    }
+    return bsc_http_send($url, $headers, $body, BSC_TIMEOUT);
+}
+
 
 function bsc_http_get($url)
 {
@@ -161,61 +174,7 @@ function bsc_http_post_json($url, $headers, $body, $timeout = 40)
         }
     }
 
-    if (function_exists('curl_init')) {
-        $buffer = '';
-        $tooBig = false;
-        $ch = curl_init($url);
-        curl_setopt_array($ch, array(
-            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_TIMEOUT => (int) $timeout,
-            CURLOPT_USERAGENT => BSC_USER_AGENT,
-            CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_WRITEFUNCTION => function ($handle, $chunk) use (&$buffer, &$tooBig) {
-                if (strlen($buffer) + strlen($chunk) > BSC_MAX_BYTES) {
-                    $tooBig = true;
-                    return -1;
-                }
-                $buffer .= $chunk;
-                return strlen($chunk);
-            },
-        ));
-        $ok = curl_exec($ch);
-        $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
-        if ($ok === false || $tooBig || $code !== 200) {
-            return null;
-        }
-        return $buffer;
-    }
-
-    $context = stream_context_create(array(
-        'http' => array(
-            'method' => 'POST',
-            'timeout' => (int) $timeout,
-            'follow_location' => 0,
-            'max_redirects' => 0,
-            'ignore_errors' => true,
-            'header' => 'User-Agent: ' . BSC_USER_AGENT . "\r\n" . implode("\r\n", $headers) . "\r\n",
-            'content' => $payload,
-        ),
-        'ssl' => array('verify_peer' => true, 'verify_peer_name' => true),
-    ));
-    $data = @file_get_contents($url, false, $context, 0, BSC_MAX_BYTES + 1);
-    if ($data === false || strlen($data) > BSC_MAX_BYTES) {
-        return null;
-    }
-    $statusLine = isset($http_response_header[0]) ? $http_response_header[0] : '';
-    if (!preg_match('#^HTTP/\S+\s+200\b#', $statusLine)) {
-        return null;
-    }
-    return $data;
+    return bsc_http_send($url, $headers, $payload, $timeout);
 }
 
 // ---------------------------------------------------------------------------

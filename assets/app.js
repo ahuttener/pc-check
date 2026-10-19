@@ -266,7 +266,8 @@
       sysVerdictWarn: 'A few things need attention.',
       sysVerdictRisk: function (platform) {
         return platform === 'ios' ? 'This iPhone has problems worth fixing soon.' : (platform === 'ipad' ? 'This iPad has problems worth fixing soon.' :
-          (platform === 'android' ? 'This phone has problems worth fixing soon.' : 'This PC has problems worth fixing soon.'));
+          (platform === 'android' ? 'This phone has problems worth fixing soon.' : (platform === 'mac' ? 'This Mac has problems worth fixing soon.' :
+          (platform === 'linux' ? 'This computer has problems worth fixing soon.' : 'This PC has problems worth fixing soon.'))));
       },
       sysReportFrom: function (date, platform, fromSpx) {
         var what = platform === 'linux' ? 'Logs from ' : (platform === 'mac' ? (fromSpx ? 'System Information from ' : 'Newest report from ') :
@@ -342,7 +343,7 @@
       sysLocalOnly: 'Read on this device, nothing uploaded',
       sysFindingsTitle: 'What we found',
       sysNoFindings: 'Nothing to fix in these reports.',
-      sysFactsTitle: function (platform) { return platform === 'ios' ? 'This iPhone' : (platform === 'ipad' ? 'This iPad' : (platform === 'android' ? 'This phone' : 'This PC')); },
+      sysFactsTitle: function (platform) { return platform === 'ios' ? 'This iPhone' : (platform === 'ipad' ? 'This iPad' : (platform === 'android' ? 'This phone' : (platform === 'mac' ? 'This Mac' : (platform === 'linux' ? 'This computer' : 'This PC')))); },
       sysFix: 'Fix: ',
       sev_risk: 'Risk',
       sev_warn: 'Attention',
@@ -1623,6 +1624,7 @@
   var SYS_GLYPH = { windows: 'os-windows', mac: 'os-mac', linux: 'os-linux', android: 'os-phone', ios: 'os-phone', other: 'os-windows' };
   var SEVERITY_ORDER = ['risk', 'warn', 'info'];
   var sysReads = {};
+  var sysToken = {};
 
   function detectOs() {
     var ua = navigator.userAgent || '';
@@ -1706,6 +1708,7 @@
 
   function loadSysFile(kind, file) {
     if (!file) return Promise.resolve();
+    var token = sysToken[kind] = (sysToken[kind] || 0) + 1;
     state.sys.files[kind] = null;
     state.sys.evaluation = null;
     state.sys.status = null;
@@ -1717,6 +1720,7 @@
     setSysStep(kind, 'reading', ['sysReading']);
     var blob = kind === 'msinfo' ? file.slice(0, SYS_MSINFO_HEAD_BYTES) : file;
     var job = readBuffer(blob).then(function (buffer) {
+      if (token !== sysToken[kind]) return; // a newer file was chosen for this step meanwhile
       var text = window.PCSys.decode(buffer);
       var parsed = window.PCSys[SYS_PARSER[kind]](text);
       if (parsed && parsed.error) {
@@ -1731,7 +1735,7 @@
         else setSysStep(kind, 'ok', [kind === 'battery' ? 'sysReadBattery' : 'sysReadMsinfo']);
       }
     }).catch(function () {
-      setSysStep(kind, 'error', ['sysReadError']);
+      if (token === sysToken[kind]) setSysStep(kind, 'error', ['sysReadError']);
     });
     sysReads[kind] = job;
     return job;
@@ -2026,6 +2030,10 @@
       }
       msg += (capped ? t('sysMacCapped', MAC_MAX_REPORTS) : '') + (unreadable ? t('sysMacUnreadable', unreadable) : '');
       setMacStep('crash', reports.length ? 'ok' : 'error', msg);
+    }).catch(function () {
+      if (token !== macToken.crash) return;
+      state.sys.mac.reports = [];
+      setMacStep('crash', 'error', ['sysReadError']);
     });
     macReads.crash = job;
     return job;
@@ -2437,6 +2445,8 @@
     if (!root) return;
     $('#sys-status').textContent = state.sys.status ? resolve(state.sys.status) : '';
     root.textContent = '';
+    var live = $('#sys-ai-live');
+    if (live && !(state.sys.ai && state.sys.ai.busy)) live.textContent = '';
     var e = state.sys.evaluation;
     // Results belong to one system: they show only while that system's button is selected.
     if (e && e.platform !== state.sys.selected) e = null;
@@ -2543,8 +2553,11 @@
 
   function renderSysAi() {
     var box = $('#sys-ai');
-    if (!box) return;
     var ai = state.sys.ai;
+    // #sys-ai-live sits in the page, outside the rebuilt results, so screen readers hear "Sending…"
+    var live = $('#sys-ai-live');
+    if (live) live.textContent = box && ai.busy ? t('sysAiSending') : '';
+    if (!box) return;
     box.textContent = '';
     box.setAttribute('data-state', ai.text ? 'done' : (ai.open ? 'open' : 'closed'));
     box.appendChild(el('h4', 'sys-subtitle', t('sysAiTitle')));
