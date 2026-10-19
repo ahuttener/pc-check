@@ -196,18 +196,16 @@ h1 {
 .run-status:empty { display: none; }
 
 /* Shortcut to the system report: the same five devices, one tap picks it and scrolls there */
-.hc-pick { margin-top: 22px; }
-.hc-label { margin: 0 0 8px; color: var(--muted); font-size: 0.9375rem; }
-.hc-os { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-width: 620px; }
-@media (min-width: 600px) { .hc-os { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.hc-pick { margin-top: 20px; }
+.hc-label { margin: 0 0 8px; color: var(--muted); font-size: 0.875rem; }
+.hc-os { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .hc-os-btn {
-  display: flex; align-items: center; justify-content: center; gap: 2px 8px; min-height: 44px; padding: 8px 10px;
-  border-radius: 22px; border: 2px solid var(--line-strong); color: var(--ink); font-weight: 700; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 14px;
+  border-radius: 999px; border: 1px solid var(--line-strong); color: var(--ink); font-size: 0.875rem; font-weight: 600; text-decoration: none;
 }
-.hc-os-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+.hc-os-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
 .hc-os-btn:hover, .hc-os-btn:focus-visible { border-color: var(--action); }
 .hc-os-btn[data-here="true"] { border-color: var(--action); color: var(--action); }
-@media (max-width: 599px) { .hc-os-btn { flex-direction: column; padding: 6px 4px; font-size: 0.9375rem; border-radius: 16px; } }
 
 .ledger-jump { display: none; margin-top: 16px; font-size: 0.9375rem; }
 .old-browser { margin: 18px 0 0; padding: 10px 14px; border-radius: 10px; background: var(--warn-soft); color: var(--ink); font-size: 0.9375rem; max-width: 56ch; }
