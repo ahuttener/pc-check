@@ -515,6 +515,11 @@ h1 {
 
 .foot { max-width: 1152px; margin: 0 auto; padding: 0 16px 40px; color: var(--muted); font-size: 0.9375rem; }
 .foot p { margin: 0; border-top: 1px solid var(--line); padding-top: 18px; }
+.foot-links { display: flex; flex-wrap: wrap; gap: 10px 28px; margin-top: 14px; }
+.foot-links a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--ink); text-decoration: none; font-weight: 600; }
+.foot-links a:hover, .foot-links a:focus-visible { color: var(--action); }
+.foot-links img { width: 20px; height: 20px; flex-shrink: 0; }
+.foot .foot-copy { border-top: 0; padding-top: 4px; font-size: 0.875rem; }
 
 /* Small screens */
 @media (max-width: 899px) {
