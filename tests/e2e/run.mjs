@@ -1260,6 +1260,24 @@ try {
           const bad = (f) => Z.streamEntry(sb, Object.assign({ name: 'x', method: 0, flags: 0, compSize: 10, size: 10, offset: 0 }, f)).then((x) => x.error);
           out.badFields = [await bad({ compSize: -1 }), await bad({ offset: -5 }), await bad({ offset: 1.5 }), await bad({ offset: 1e12 }), await bad({ compSize: 1e12 }),
             await bad({ size: NaN }), await bad({ offset: '0' })];
+          // Past the cap: only battery and diskstats are still read (a busy phone puts them after the first 30 MiB)
+          const readTail = async (b, cap) => {
+            const s = S.androidScanner();
+            const r = await Z.readBugreport(b, { maxBytes: cap, onText: (x) => s.push(x), tailBytes: S.ANDROID_TAIL_CAP, onTail: (x) => s.tail(x) });
+            return { r, scan: ser(s.finish()) };
+          };
+          const bCut = new TextEncoder().encode(t.b.slice(0, t.b.indexOf('DUMP OF SERVICE battery'))).length;
+          out.tailB = await readTail(blobOf(t.z64['set-b.zip']), bCut);
+          out.noTailB = (await readZ(blobOf(t.z64['set-b.zip']), { maxBytes: bCut })).scan;
+          const syn = '== dumpstate: 2026-10-17 21:14:05\\n' + 'x'.repeat(2000) + '\\n------ DUMPSYS (/system/bin/dumpsys) ------\\nDUMP OF SERVICE battery:\\n  health: 2\\n' +
+            '------ EVENT LOG (logcat -b events) ------\\n10-17 20:00:00.000  1000  1000  1000 I am_crash: [1000,123,com.x.app,0,java.lang.X,msg,file,1]\\n' +
+            "------ 0.1s was the duration of 'EVENT LOG' ------\\n------ DUMPSYS (/system/bin/dumpsys) ------\\nDUMP OF SERVICE diskstats:\\nData-Free: 1000K / 10000K total = 10% free\\n";
+          out.tailSyn = await readTail(new Blob([syn]), syn.indexOf('DUMP OF SERVICE battery'));
+          // The cap in the middle of a line, and inside a two-byte character
+          const synU = syn.replace('DUMPSYS (/system/bin/dumpsys) ------\\nDUMP OF SERVICE battery', 'DUMPSYS (/system/bin/dumpsys) ------\\nCafé\\nDUMP OF SERVICE battery');
+          const bytesTo = (s, i) => new TextEncoder().encode(s.slice(0, i)).length;
+          out.tailMid = (await readTail(new Blob([synU]), bytesTo(synU, synU.indexOf('DUMP OF SERVICE battery')) + 7)).scan;
+          out.tailUtf8 = (await readTail(new Blob([synU]), bytesTo(synU, synU.indexOf('é')) + 1)).scan;
           return out;
         })();`), input);
         check('android reader: PCZip and PCSys.androidScanner exist' + tag, r !== null);
@@ -1315,6 +1333,15 @@ try {
           const progOk = bm.prog.length >= 1 && bm.prog.every((p, i) => i === 0 || (p[0] > bm.prog[i - 1][0] && p[1] - bm.prog[i - 1][1] >= 990));
           check('zip reader: bomb stops at 30 MiB' + tag, bm.r.bytes === 31457280 && bm.r.truncated === true && bm.time && bm.time.date === L.aTime && bm.ms < 15000,
             [bm.r, Math.round(bm.ms)]);
+          const tb = r.tailB;
+          check('zip reader: battery and storage after the cap are still read (deflated)' + tag, tb.r.truncated === true &&
+            JSON.stringify(tb.scan.battery) === JSON.stringify(B.battery) && JSON.stringify(tb.scan.storage) === JSON.stringify(B.storage) &&
+            r.noTailB.storage === null && r.noTailB.battery.health === null, [tb.scan.battery, tb.scan.storage, r.noTailB.battery]);
+          const ts = r.tailSyn.scan;
+          check('zip reader: past the cap only battery/diskstats count, a log section there is not read' + tag,
+            ts.battery.health === 2 && ts.storage && ts.storage.freeKb === 1000 && ts.storage.totalKb === 10000 && ts.events === null, ts);
+          check('zip reader: a cap mid-line or inside a UTF-8 character still finds battery and storage' + tag,
+            [r.tailMid, r.tailUtf8].every((x) => x.battery.health === 2 && x.storage && x.storage.freeKb === 1000 && x.events === null), [r.tailMid, r.tailUtf8]);
           check('zip reader: bomb never blocks the page for 500 ms' + tag, bm.maxGap < 500, Math.round(bm.maxGap));
           check('zip reader: progress rises, at most once per second' + tag, progOk, bm.prog.map((p) => [p[0], Math.round(p[1])]));
           const sz = r.sizes;

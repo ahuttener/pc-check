@@ -2304,6 +2304,12 @@
         onProgress: function (bytes) {
           if (token !== androidToken) throw new StaleRead();
           setAndroidStep('reading', ['sysAndroidProgress', Math.floor(bytes / MIB)]);
+        },
+        // Past 30 MB only the battery and storage figures are looked for
+        tailBytes: S.ANDROID_TAIL_CAP,
+        onTail: function (chunk) {
+          if (token !== androidToken) throw new StaleRead();
+          return scanner.tail(chunk);
         }
       });
     }).then(function (r) {

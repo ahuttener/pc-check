@@ -35,7 +35,7 @@
   function CallbackError(error) { this.error = error; }
   function callback(fn, value) {
     try {
-      fn(value);
+      return fn(value);
     } catch (e) {
       throw new CallbackError(e);
     }
@@ -187,6 +187,10 @@
   async function pump(part, inflate, declared, opts) {
     var cap = typeof opts.maxBytes === 'number' && opts.maxBytes >= 0 ? Math.floor(opts.maxBytes) : textCap();
     var limit = Math.min(declared, cap);
+    // Optional tail: past the cap, text goes to onTail (until it returns true) for at most tailBytes more
+    var tailBytes = opts.onTail && typeof opts.tailBytes === 'number' && opts.tailBytes > 0 ? Math.floor(opts.tailBytes) : 0;
+    var end = Math.min(declared, limit + tailBytes);
+    var tailDone = false;
     var count = { input: 0, output: 0 };
     var stream = sourceStream(part);
     if (inflate) stream = stream.pipeThrough(rechunk(INFLATE_STEP, count)).pipeThrough(new DecompressionStream('deflate-raw'));
@@ -196,17 +200,23 @@
     var nextYield = MIB;
     var lastProgress = -Infinity;
     try {
-      while (out < limit) {
+      while (out < end && !tailDone) {
         var step = await reader.read();
         if (step.done) break;
         var chunk = step.value;
         if (!(chunk instanceof Uint8Array)) chunk = new Uint8Array(chunk);
-        if (chunk.length > limit - out) chunk = chunk.subarray(0, limit - out);
+        if (chunk.length > end - out) chunk = chunk.subarray(0, end - out);
+        var head = out < limit ? chunk.subarray(0, Math.min(chunk.length, limit - out)) : chunk.subarray(0, 0);
+        var rest = chunk.subarray(head.length);
         out += chunk.length;
         count.output = out;
-        if (chunk.length && opts.onText) {
-          var s = decoder.decode(chunk, { stream: true });
+        if (head.length && opts.onText) {
+          var s = decoder.decode(head, { stream: true });
           if (s) callback(opts.onText, s);
+        }
+        if (rest.length && tailBytes) {
+          var ts = decoder.decode(rest, { stream: true });
+          if (ts && callback(opts.onTail, ts) === true) tailDone = true;
         }
         if (out >= nextYield) {
           nextYield = (Math.floor(out / MIB) + 1) * MIB;
@@ -219,12 +229,15 @@
         }
       }
       var hit = out >= limit;
-      if (hit) {
+      if (out >= end || tailDone) {
         // Stops the inflater and the file read: a bomb or a lying size costs no more than the cap
         try { await reader.cancel(); } catch (e) { /* already closed */ }
       }
-      var rest = decoder.decode();
-      if (rest && opts.onText) callback(opts.onText, rest);
+      var last = decoder.decode();
+      if (last && !tailDone) {
+        if (out > limit && tailBytes) callback(opts.onTail, last);
+        else if (out <= limit && opts.onText) callback(opts.onText, last);
+      }
       return { bytes: out, truncated: hit && cap < declared };
     } catch (e) {
       try { await reader.cancel(); } catch (e2) { /* already errored */ }
@@ -299,7 +312,7 @@
     opts = opts || {};
     var o = {
       maxBytes: typeof opts.maxBytes === 'number' && opts.maxBytes >= 0 ? opts.maxBytes : textCap(),
-      onText: opts.onText, onProgress: opts.onProgress
+      onText: opts.onText, onProgress: opts.onProgress, onTail: opts.onTail, tailBytes: opts.tailBytes
     };
     try {
       if (!file || typeof file.size !== 'number' || typeof file.slice !== 'function') return { error: 'not_bugreport' };

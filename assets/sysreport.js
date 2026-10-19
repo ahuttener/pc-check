@@ -1002,6 +1002,9 @@
   // only the sections, services and property keys PC Check needs. Nothing else is kept.
   // ---------------------------------------------------------------------------
   var ANDROID_TEXT_CAP = 31457280; // decompressed bytes read from the main entry (30 MiB)
+  // Past the cap, the rest of the text is still streamed, up to this much more, but only to reach the battery and
+  // diskstats services (on a busy phone they sit after the first 30 MiB); the logs there are skipped.
+  var ANDROID_TAIL_CAP = 134217728; // 128 MiB
   var ANDROID_MAX_EVENTS = 10000;  // per list
   var ANDROID_MAX_BOOTS = 64;
   var ANDROID_PROP_CHARS = 64;
@@ -1100,6 +1103,7 @@
     var lines = 0;
     var pending = '';
     var over = false; // the pending line passed LINE_CHARS: the rest of it is dropped
+    var tailMode = false; // past the cap: only service headers and the battery/diskstats lines count
 
     function setProp(key, value) {
       if (!ANDROID_PROPS[key] || key in props) return;
@@ -1229,6 +1233,19 @@
       if (n && line.charCodeAt(n - 1) === 13) line = line.slice(0, --n);
       if (!n) return;
       var c = line.charCodeAt(0);
+      if (tailMode) {
+        // Section headers only end the current service: a log section first seen here is never counted as read
+        if (c === 45 && n >= 14 && line.startsWith('------ ') && line.endsWith(' ------')) { service = ''; return; }
+        if (c === 68 && line.startsWith('DUMP OF SERVICE ')) {
+          var tname = line.slice(16);
+          if (tname.endsWith(':')) tname = tname.slice(0, -1);
+          service = tname.replace(A_SERVICE_PRIORITY, '');
+          return;
+        }
+        if (c === 45 && line.startsWith('--------- ') && line.indexOf(' was the duration of dumpsys ') >= 0) { service = ''; return; }
+        if (service) serviceLine(line);
+        return;
+      }
       if (c === 45 && n >= 14 && line.startsWith('------ ') && line.endsWith(' ------')) { sectionHeader(line); return; }
       if (c === 61 && line.startsWith('== dumpstate:')) {
         seenDumpstate = true;
@@ -1319,7 +1336,14 @@
       };
     }
 
-    return { push: push, finish: finish };
+    // Text after the cap; true once storage is known (diskstats comes after the battery services), so reading can stop
+    function tail(text) {
+      tailMode = true;
+      if (storage === null) push(text);
+      return storage !== null;
+    }
+
+    return { push: push, tail: tail, finish: finish };
   }
 
   function parseAndroidBugreport(text) {
@@ -2742,7 +2766,7 @@
     evaluateMac: evaluateMac,
     IOS_REPORT_HEAD: IOS_REPORT_HEAD, IOS_MAJORS: IOS_MAJORS, parseIosReport: parseIosReport, uniqueIosReports: uniqueIosReports,
     evaluateIos: evaluateIos,
-    ANDROID_TEXT_CAP: ANDROID_TEXT_CAP, androidScanner: androidScanner, parseAndroidBugreport: parseAndroidBugreport,
+    ANDROID_TEXT_CAP: ANDROID_TEXT_CAP, ANDROID_TAIL_CAP: ANDROID_TAIL_CAP, androidScanner: androidScanner, parseAndroidBugreport: parseAndroidBugreport,
     androidBootCause: androidBootCause, evaluateAndroid: evaluateAndroid, ANDROID_REMINDER: ANDROID_REMINDER
   };
 })();
