@@ -140,6 +140,16 @@
         <button id="pdf" class="btn btn-secondary" type="button" data-i18n="pdfBtn" hidden>Download PDF report</button>
         <p id="pdf-hint" class="pdf-hint" data-i18n="pdfHint" hidden>Choose “Save as PDF” in the print window.</p>
       </div>
+      <div class="hc-pick">
+        <p id="hc-label" class="hc-label" data-i18n="healthPick">Health check of your device:</p>
+        <ul class="hc-os" aria-labelledby="hc-label">
+          <li><a class="hc-os-btn" href="#system" data-pick="windows"><svg aria-hidden="true" focusable="false"><use href="#os-windows"></use></svg><span>Windows</span></a></li>
+          <li><a class="hc-os-btn" href="#system" data-pick="mac"><svg aria-hidden="true" focusable="false"><use href="#os-mac"></use></svg><span>Mac</span></a></li>
+          <li><a class="hc-os-btn" href="#system" data-pick="linux"><svg aria-hidden="true" focusable="false"><use href="#os-linux"></use></svg><span>Linux</span></a></li>
+          <li><a class="hc-os-btn" href="#system" data-pick="ios"><svg aria-hidden="true" focusable="false"><use href="#os-phone"></use></svg><span>iPhone</span></a></li>
+          <li><a class="hc-os-btn" href="#system" data-pick="android"><svg aria-hidden="true" focusable="false"><use href="#os-phone"></use></svg><span>Android</span></a></li>
+        </ul>
+      </div>
       <a class="ledger-jump" href="#ledger"><span data-i18n="ledgerJump">Outbound log</span>: <span id="ledger-count-inline">0</span></a>
       <p id="old-browser" class="old-browser" data-i18n="oldBrowser">If the button does nothing, this browser is too old to run the page. That alone is a sign it needs updating.</p>
     </section>

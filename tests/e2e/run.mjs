@@ -2418,6 +2418,17 @@ try {
       check('system: Mac button shows the Mac steps and hides the Windows steps', await page.locator('#sys-mac-steps').isVisible().catch(() => false) && !(await page.locator('#sys-steps').isVisible()));
       await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
       check('system: back to Windows hides the Mac steps', await page.locator('#sys-steps').isVisible().catch(() => false) && !(await page.locator('#sys-mac-steps').isVisible().catch(() => true)));
+      // Top-of-page shortcut: five links to #system, the detected device marked, a click picks it and moves focus there
+      const picks = await page.$$eval('.hc-os-btn', (as) => as.map((a) => [a.dataset.pick, a.getAttribute('href'), a.dataset.here || ''])).catch(() => []);
+      check('system shortcut: five device links to #system, Windows marked as this device', picks.map((p) => p[0]).join(',') === 'windows,mac,linux,ios,android' &&
+        picks.every((p) => p[1] === '#system') && picks.filter((p) => p[2] === 'true').map((p) => p[0]).join(',') === 'windows', picks);
+      await page.click('.hc-os-btn[data-pick="android"]', { timeout: 2000 }).catch(() => {});
+      await page.waitForTimeout(800);
+      const after = await page.evaluate(() => ({ focus: document.activeElement && document.activeElement.id, top: document.getElementById('system').getBoundingClientRect().top,
+        head: document.querySelector('.site-head').getBoundingClientRect().height, hash: location.hash }));
+      check('system shortcut: click picks Android, focuses the report, title below the sticky header', (await pressed(page, 'android')) === 'true' &&
+        await page.locator('#sys-android-steps').isVisible().catch(() => false) && after.focus === 'system' && after.top >= after.head && after.top < after.head + 40 && after.hash === '', after);
+      await page.click('#sys-os-windows', { timeout: 2000 }).catch(() => {});
       await context.close();
     }
     {

@@ -26,6 +26,7 @@
       skip: 'Skip to the checks',
       title: 'PC Check',
       lead: 'Quick checks that run right here in your browser, with nothing to install, plus a health check of your computer or phone from the reports it already keeps. Nothing leaves your device until you click, and everything that does is listed in the outbound log.',
+      healthPick: 'Health check of your device:',
       run: 'Check now',
       running: 'Checking…',
       runAgain: 'Check again',
@@ -2711,6 +2712,20 @@
     $all('.sys-os-btn').forEach(function (b) {
       b.addEventListener('click', function () { selectSysOs(b.getAttribute('data-os')); });
     });
+    // Top-of-page shortcut: picks the device, then goes to the system report (without JS the link still jumps there)
+    $all('.hc-os-btn').forEach(function (a) {
+      a.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        selectSysOs(a.getAttribute('data-pick'));
+        var target = $('#system');
+        var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        // The sticky header would cover the section title (it is taller on phones, where the menu wraps)
+        var head = $('.site-head');
+        var offset = (head ? head.getBoundingClientRect().height : 0) + 12;
+        window.scrollTo({ top: target.getBoundingClientRect().top + window.pageYOffset - offset, behavior: still ? 'auto' : 'smooth' });
+        target.focus({ preventScroll: true });
+      });
+    });
     SYS_KINDS.forEach(function (kind) {
       var input = document.getElementById('sys-file-' + kind);
       var zone = $('#sys-step-' + kind + ' .sys-drop');
@@ -2797,6 +2812,7 @@
     detectOs().then(function (os) {
       state.sys.os = os;
       if (os.family === 'mac' || os.family === 'linux' || os.family === 'ios' || os.family === 'android') state.sys.selected = os.family;
+      $all('.hc-os-btn').forEach(function (a) { if (a.getAttribute('data-pick') === os.family) a.setAttribute('data-here', 'true'); });
       renderSys();
     });
   }
